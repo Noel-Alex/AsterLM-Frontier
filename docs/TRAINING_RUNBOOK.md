@@ -472,3 +472,7 @@ python scripts/needle_test.py \
 - Do not delete the Hugging Face cache while a materializer is running.
 - Keep model YAML and the KDA backend pinned by the checkpoint together.
 - Run `training_preflight.py` before every new stage and after changing dependencies, tokenizer, model, train, or data configs.
+
+## 100B-token overtraining campaign
+
+For the research-grade 18.4B → 50B → 100B scaling study, permanent token milestones, MoE pathway telemetry and private Hugging Face disaster-recovery uploads, follow [100B_EXPERIMENT.md](100B_EXPERIMENT.md).

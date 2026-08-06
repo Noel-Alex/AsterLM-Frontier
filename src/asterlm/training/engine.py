@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import math
+import os
 import random
 import time
 from pathlib import Path
@@ -22,11 +23,13 @@ from .checkpoint import (
     pin_kda_backend_from_checkpoint,
     save_checkpoint,
 )
+from .hub import HubRunSync
 from .metrics import JsonlLogger
 from .precision import PrecisionManager
 from .telemetry import (
     SystemSampler,
     gradient_diagnostics,
+    parameter_diagnostics,
     save_diagnostic_bundle,
     static_system_manifest,
 )
@@ -128,6 +131,13 @@ class Trainer:
         elif initial_checkpoint:
             load_model_weights(self.model, initial_checkpoint)
 
+        self._milestones_remaining = [
+            token for token in train_config.milestone_tokens if token > self.tokens_seen
+        ]
+        self._training_started_monotonic = time.perf_counter()
+        self._logical_parameters = self.model.effective_parameter_count()
+        self._active_parameters = self.model.active_parameter_count()
+
         tokens_per_update = (
             train_config.sequence_length
             * train_config.micro_batch_size
@@ -227,6 +237,22 @@ class Trainer:
         (self.output / "run_manifest.json").write_text(
             json.dumps(manifest, indent=2, default=str), encoding="utf-8"
         )
+
+        self.hub: HubRunSync | None = None
+        hub_repo_id = os.environ.get("ASTERLM_HUB_REPO_ID") or train_config.hub_repo_id
+        if hub_repo_id:
+            try:
+                self.hub = HubRunSync(
+                    repo_id=hub_repo_id,
+                    private=train_config.hub_private,
+                    revision=train_config.hub_revision,
+                    include_optimizer=train_config.hub_include_optimizer,
+                )
+                print(f"Hugging Face experiment backup enabled: {hub_repo_id}")
+            except Exception as exc:
+                if train_config.hub_fail_on_error:
+                    raise
+                print(f"WARNING: Hugging Face backup initialization failed: {exc}")
 
     def _parameter_storage_summary(self) -> dict[str, Any]:
         by_dtype: dict[str, dict[str, int]] = {}
@@ -385,7 +411,13 @@ class Trainer:
         if self.wandb is not None:
             self.wandb.log(payload, step=self.step)
 
-    def _save(self, reason: str) -> Path:
+    def _save(
+        self,
+        reason: str,
+        *,
+        permanent: bool = False,
+        tag: str | None = None,
+    ) -> Path:
         path = save_checkpoint(
             self.train_config.output_dir,
             self.step,
@@ -395,6 +427,9 @@ class Trainer:
             self.train_config,
             self.tokens_seen,
             self.train_config.keep_last_checkpoints,
+            tag=tag,
+            permanent=permanent,
+            reason=reason,
         )
         if self.train_config.save_diagnostic_bundle:
             save_diagnostic_bundle(
@@ -402,6 +437,27 @@ class Trainer:
                 reason=reason,
                 extra={"step": self.step, "tokens_seen": self.tokens_seen, "checkpoint": str(path)},
             )
+
+        should_upload = self.hub is not None and (
+            self.train_config.hub_upload_every_save
+            or (reason.startswith("milestone-") and self.train_config.hub_upload_milestones)
+            or (reason == "complete" and self.train_config.hub_upload_final)
+        )
+        if should_upload and self.hub is not None:
+            try:
+                result = self.hub.sync(
+                    output_dir=self.train_config.output_dir,
+                    checkpoint=path,
+                    reason=reason,
+                    step=self.step,
+                    tokens_seen=self.tokens_seen,
+                )
+                self._log({"hub_sync_seconds": result["seconds"], "hub_sync_ok": 1})
+            except Exception as exc:
+                self._log({"hub_sync_ok": 0, "hub_sync_error": str(exc)})
+                if self.train_config.hub_fail_on_error:
+                    raise
+                print(f"WARNING: Hugging Face checkpoint sync failed: {exc}")
         return path
 
     def _clear_optimizer_state_for(self, parameters: list[torch.nn.Parameter]) -> None:
@@ -499,7 +555,11 @@ class Trainer:
 
                 diagnostics: dict[str, Any] = {}
                 if (self.step + 1) % cfg.diagnostic_interval == 0:
-                    diagnostics = gradient_diagnostics(self.model)
+                    diagnostics = {
+                        **gradient_diagnostics(self.model),
+                        **parameter_diagnostics(self.model),
+                        **self.model.moe_pathway_stats(),
+                    }
                 grad_norm = torch.nn.utils.clip_grad_norm_(
                     self.model.parameters(), cfg.max_grad_norm
                 )
@@ -536,6 +596,21 @@ class Trainer:
                         "effective_batch_tokens": cfg.sequence_length
                         * cfg.micro_batch_size
                         * cfg.gradient_accumulation_steps,
+                        "progress_fraction": (
+                            self.tokens_seen / cfg.max_tokens if cfg.max_tokens else self.step / cfg.max_steps
+                        ),
+                        "tokens_per_logical_parameter": self.tokens_seen / self._logical_parameters,
+                        "tokens_per_active_parameter": self.tokens_seen / self._active_parameters,
+                        "estimated_training_tflops": (
+                            window_tokens / elapsed * 6.0 * self._active_parameters / 1e12
+                        ),
+                        "estimated_cumulative_flops": 6.0 * self._active_parameters * self.tokens_seen,
+                        "wall_clock_total_seconds": time.perf_counter() - self._training_started_monotonic,
+                        "eta_seconds": (
+                            ((cfg.max_tokens - self.tokens_seen) / max(window_tokens / elapsed, 1e-9))
+                            if cfg.max_tokens is not None
+                            else ((cfg.max_steps - self.step) * elapsed / max(1, cfg.log_interval))
+                        ),
                         **clip_stats,
                         **moe_balance_stats,
                         **loqt_stats,
@@ -563,7 +638,24 @@ class Trainer:
                     path = self._save("periodic")
                     print(f"saved {path}")
 
-            path = self._save("complete")
+                while self._milestones_remaining and self.tokens_seen >= self._milestones_remaining[0]:
+                    milestone = self._milestones_remaining.pop(0)
+                    milestone_metrics: dict[str, Any] = {
+                        "event": "token_milestone",
+                        "milestone_tokens": milestone,
+                        "milestone_overshoot_tokens": self.tokens_seen - milestone,
+                    }
+                    if cfg.milestone_eval and self.validation_iterator is not None:
+                        milestone_metrics.update(self.evaluate())
+                    self._log(milestone_metrics)
+                    path = self._save(
+                        f"milestone-{milestone}",
+                        permanent=True,
+                        tag=f"tok-{milestone}",
+                    )
+                    print(f"permanent token milestone saved: {path}")
+
+            path = self._save("complete", permanent=True, tag="final")
             print(f"training complete; final checkpoint: {path}")
         except BaseException as exc:
             if cfg.save_diagnostic_bundle:

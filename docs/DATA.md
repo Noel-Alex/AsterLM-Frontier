@@ -192,3 +192,13 @@ Do not select the final mix using one aggregate loss alone.
 ## Reasoning-model extension
 
 The `reasoning` download profile adds three independently resumable sources under `data/reasoning-frontier`: Mixture-of-Thoughts for cold-start traces, DAPO-Math for exact-answer RL prompts, and the decontaminated tested Python set for executable-code RL. The `all` profile includes these stages without invalidating existing corpus checkpoints. Full preparation and training instructions are in [REASONING_MODEL.md](REASONING_MODEL.md).
+
+## Progressive 50B and 100B overtraining tiers
+
+The repository now supports progressive `overtrain50` and `overtrain100` profiles that expand the same pilot/frontier checkpoints. Use the single-command campaign wrapper:
+
+```bash
+python scripts/data_campaign.py --tier 100b --network-mode low
+```
+
+The complete rationale, source totals, disk policy, cleaning path and training gates are documented in [100B_EXPERIMENT.md](100B_EXPERIMENT.md).

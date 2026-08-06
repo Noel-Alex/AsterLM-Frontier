@@ -201,3 +201,7 @@ python scripts/download_data.py --profile all --validate-first --network-mode lo
 - The LoQT branch is a practical packed-base/low-rank implementation; it is not claimed to reproduce every gradient-SVD refresh detail of the research paper.
 - A 1.5B or 1.9B configuration existing in YAML does not prove that its complete optimizer/activation footprint fits.
 - No trained checkpoint is included. Final quality depends overwhelmingly on tokens, data filtering, curriculum and ablations.
+
+## 100B-token research campaign
+
+AsterLM now includes progressive 50B and 100B mostly-unique corpus tiers, permanent token milestones, MoE pathway/grokking telemetry, dense compute/system diagnostics and resumable private Hugging Face checkpoint backups. The existing 500M pilot is reused in place. See [docs/100B_EXPERIMENT.md](docs/100B_EXPERIMENT.md).

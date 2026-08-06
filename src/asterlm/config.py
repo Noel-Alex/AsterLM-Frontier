@@ -269,6 +269,10 @@ class TrainConfig:
     eval_batches: int = 32
     save_interval: int = 1_000
     keep_last_checkpoints: int = 3
+    # Permanent, token-addressed checkpoints for scaling/grokking analysis. These
+    # survive ordinary rolling-checkpoint retention and can be uploaded to the Hub.
+    milestone_tokens: list[int] = field(default_factory=list)
+    milestone_eval: bool = True
     resume: str | None = None
 
     num_workers: int = 0
@@ -287,6 +291,17 @@ class TrainConfig:
     system_metrics_interval: float = 5.0
     diagnostic_interval: int = 100
     save_diagnostic_bundle: bool = True
+
+    # Optional resilient Hugging Face model-repository synchronization. The repo ID
+    # can also be supplied at runtime through ASTERLM_HUB_REPO_ID.
+    hub_repo_id: str | None = None
+    hub_private: bool = True
+    hub_revision: str = "main"
+    hub_upload_every_save: bool = False
+    hub_upload_milestones: bool = True
+    hub_upload_final: bool = True
+    hub_include_optimizer: bool = True
+    hub_fail_on_error: bool = False
 
     def __post_init__(self) -> None:
         if self.optimizer not in {
@@ -320,6 +335,14 @@ class TrainConfig:
             raise ValueError("batch and sequence dimensions must be positive")
         if self.max_steps <= 0 or (self.max_tokens is not None and self.max_tokens <= 0):
             raise ValueError("max_steps and max_tokens must be positive")
+        if any(token <= 0 for token in self.milestone_tokens):
+            raise ValueError("milestone_tokens must contain only positive integers")
+        if self.milestone_tokens != sorted(set(self.milestone_tokens)):
+            raise ValueError("milestone_tokens must be sorted and unique")
+        if self.max_tokens is not None and any(token > self.max_tokens for token in self.milestone_tokens):
+            raise ValueError("milestone_tokens cannot exceed max_tokens")
+        if not self.hub_revision.strip():
+            raise ValueError("hub_revision cannot be empty")
         if self.warmup_steps < 0:
             raise ValueError("warmup_steps must be non-negative")
         if self.dtype not in {"bfloat16", "float16", "float32"}:

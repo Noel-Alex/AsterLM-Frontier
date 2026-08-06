@@ -42,9 +42,16 @@ def save_checkpoint(
     train_config: TrainConfig,
     tokens_seen: int,
     keep_last: int = 3,
+    *,
+    tag: str | None = None,
+    permanent: bool = False,
+    reason: str = "periodic",
 ) -> Path:
     root = Path(output_dir)
-    checkpoint_dir = root / f"checkpoint-{step:08d}"
+    safe_tag = "" if tag is None else "-" + "".join(
+        char if char.isalnum() or char in {"-", "_"} else "-" for char in tag
+    ).strip("-")
+    checkpoint_dir = root / f"checkpoint-{step:08d}{safe_tag}"
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
     model_path = checkpoint_dir / "model.safetensors"
     try:
@@ -74,10 +81,33 @@ def save_checkpoint(
     (checkpoint_dir / "train_config.yaml").write_text(
         yaml.safe_dump({"train": train_config.to_dict()}, sort_keys=False), encoding="utf-8"
     )
+    (checkpoint_dir / "checkpoint_manifest.json").write_text(
+        json.dumps(
+            {
+                "step": step,
+                "tokens_seen": tokens_seen,
+                "reason": reason,
+                "permanent": permanent,
+                "model_file": model_path.name,
+                "model_bytes": model_path.stat().st_size,
+                "trainer_state_bytes": (checkpoint_dir / "trainer_state.pt").stat().st_size,
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    if permanent:
+        (checkpoint_dir / "KEEP").write_text(reason + "\n", encoding="utf-8")
     (root / "latest.txt").write_text(str(checkpoint_dir.resolve()), encoding="utf-8")
 
-    checkpoints = sorted(root.glob("checkpoint-*"))
-    for old in checkpoints[:-keep_last] if keep_last > 0 else []:
+    # Permanent token milestones and final checkpoints are never removed by rolling
+    # retention. Only ordinary periodic checkpoints count toward keep_last.
+    rolling = [
+        checkpoint
+        for checkpoint in sorted(root.glob("checkpoint-*"))
+        if not (checkpoint / "KEEP").exists()
+    ]
+    for old in rolling[:-keep_last] if keep_last > 0 else []:
         shutil.rmtree(old, ignore_errors=True)
     return checkpoint_dir
 

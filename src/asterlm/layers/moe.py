@@ -63,6 +63,9 @@ class DeepSeekStyleMoE(nn.Module):
         self.last_aux_loss: torch.Tensor | None = None
         self.last_z_loss: torch.Tensor | None = None
         self.last_load: torch.Tensor | None = None
+        # Top-1 expert route for low-frequency pathway/grokking diagnostics.
+        # This is detached and bounded by the current microbatch size.
+        self.last_top1_route: torch.Tensor | None = None
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         original_shape = x.shape
@@ -71,6 +74,7 @@ class DeepSeekStyleMoE(nn.Module):
         affinity = torch.sigmoid(router_logits) if self.router_score == "sigmoid" else F.softmax(router_logits, dim=-1)
         selection_scores = affinity + self.routing_bias if self.balance_strategy in {"bias", "hybrid"} else affinity
         _, top_idx = selection_scores.topk(self.top_k, dim=-1)
+        self.last_top1_route = top_idx[:, 0].detach()
         top_weight = affinity.gather(-1, top_idx)
         top_weight = top_weight / top_weight.sum(dim=-1, keepdim=True).clamp_min(1e-9)
 

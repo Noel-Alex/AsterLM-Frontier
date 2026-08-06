@@ -152,6 +152,45 @@ def gradient_diagnostics(model: torch.nn.Module) -> dict[str, Any]:
     return result
 
 
+@torch.no_grad()
+def parameter_diagnostics(model: torch.nn.Module) -> dict[str, float]:
+    """Low-frequency parameter health metrics grouped by subsystem."""
+    categories: dict[str, dict[str, float]] = {}
+    for name, parameter in model.named_parameters():
+        if not parameter.requires_grad:
+            continue
+        value = parameter.detach().float()
+        lower = name.lower()
+        if ".ffn.experts." in lower or ".ffn.routed." in lower:
+            category = "experts"
+        elif "router" in lower or "routing_bias" in lower:
+            category = "router"
+        elif "mixer" in lower and "kda" in lower:
+            category = "kda"
+        elif "mixer" in lower:
+            category = "attention"
+        elif "embedding" in lower or "lm_head" in lower:
+            category = "embedding_head"
+        else:
+            category = "other"
+        item = categories.setdefault(category, {"sum_sq": 0.0, "count": 0.0, "max_abs": 0.0})
+        item["sum_sq"] += float(value.square().sum())
+        item["count"] += float(value.numel())
+        item["max_abs"] = max(item["max_abs"], float(value.abs().max()))
+
+    result: dict[str, float] = {}
+    total_sq = 0.0
+    total_count = 0.0
+    for category, item in categories.items():
+        total_sq += item["sum_sq"]
+        total_count += item["count"]
+        result[f"param_rms_{category}"] = (item["sum_sq"] / max(item["count"], 1.0)) ** 0.5
+        result[f"param_max_abs_{category}"] = item["max_abs"]
+    result["param_global_l2"] = total_sq**0.5
+    result["param_global_rms"] = (total_sq / max(total_count, 1.0)) ** 0.5
+    return result
+
+
 def save_diagnostic_bundle(output_dir: str | Path, *, reason: str, extra: dict[str, Any] | None = None) -> Path:
     root = Path(output_dir)
     bundles = root / "diagnostics"

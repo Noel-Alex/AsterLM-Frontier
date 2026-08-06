@@ -24,9 +24,24 @@ class Stage:
 VALIDATION_CONFIGS: dict[str, list[str]] = {
     "pilot": ["configs/corpus/corpus_pilot_500m.yaml"],
     "frontier": ["configs/corpus/corpus_frontier_16b.yaml", "configs/corpus/stack_edu_2p4b.yaml"],
+    "overtrain50": ["configs/corpus/corpus_overtrain_50b.yaml", "configs/corpus/stack_edu_6p5b.yaml"],
+    "overtrain100": ["configs/corpus/corpus_overtrain_100b.yaml", "configs/corpus/stack_edu_13b.yaml"],
     "posttrain": ["configs/corpus/posttrain_frontier.yaml"],
     "reasoning": ["configs/corpus/reasoning_frontier.yaml"],
     "benchmarks": ["configs/corpus/decontamination_benchmarks.yaml"],
+}
+
+PROFILE_DISK_ESTIMATES_GIB = {
+    "pilot": 4,
+    "frontier": 110,
+    "overtrain50": 320,
+    "overtrain100": 620,
+    "posttrain": 15,
+    "reasoning": 12,
+    "benchmarks": 2,
+    "all": 140,
+    "campaign50": 350,
+    "campaign100": 660,
 }
 
 
@@ -60,6 +75,38 @@ PROFILES: dict[str, list[Stage]] = {
                 "scripts/prepare_stack_edu_multilang.py",
                 "--config",
                 "configs/corpus/stack_edu_2p4b.yaml",
+            ],
+        ),
+    ],
+    "overtrain50": [
+        corpus_stage("overtrain50", "configs/corpus/corpus_overtrain_50b.yaml", "fineweb_edu"),
+        corpus_stage("overtrain50", "configs/corpus/corpus_overtrain_50b.yaml", "dclm"),
+        corpus_stage("overtrain50", "configs/corpus/corpus_overtrain_50b.yaml", "cosmopedia_v2"),
+        corpus_stage("overtrain50", "configs/corpus/corpus_overtrain_50b.yaml", "finemath_4plus"),
+        Stage(
+            id="overtrain50-stack-edu",
+            profile="overtrain50",
+            command=[
+                sys.executable,
+                "scripts/prepare_stack_edu_multilang.py",
+                "--config",
+                "configs/corpus/stack_edu_6p5b.yaml",
+            ],
+        ),
+    ],
+    "overtrain100": [
+        corpus_stage("overtrain100", "configs/corpus/corpus_overtrain_100b.yaml", "fineweb_edu"),
+        corpus_stage("overtrain100", "configs/corpus/corpus_overtrain_100b.yaml", "dclm"),
+        corpus_stage("overtrain100", "configs/corpus/corpus_overtrain_100b.yaml", "cosmopedia_v2"),
+        corpus_stage("overtrain100", "configs/corpus/corpus_overtrain_100b.yaml", "finemath_4plus"),
+        Stage(
+            id="overtrain100-stack-edu",
+            profile="overtrain100",
+            command=[
+                sys.executable,
+                "scripts/prepare_stack_edu_multilang.py",
+                "--config",
+                "configs/corpus/stack_edu_13b.yaml",
             ],
         ),
     ],
@@ -293,15 +340,34 @@ def execute_stage(
 
 
 def profiles_for(args: argparse.Namespace) -> list[str]:
-    if args.profile != "all":
-        return [args.profile]
-    # Pilot is a progressive first tranche of frontier, not a duplicate output.
-    return ["pilot", "benchmarks", "reasoning", "posttrain", "frontier"]
+    if args.profile == "all":
+        # Original 18.4B campaign retained for compatibility.
+        return ["pilot", "benchmarks", "reasoning", "posttrain", "frontier"]
+    if args.profile == "campaign50":
+        return ["benchmarks", "reasoning", "posttrain", "overtrain50"]
+    if args.profile == "campaign100":
+        return ["benchmarks", "reasoning", "posttrain", "overtrain100"]
+    return [args.profile]
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Start interruption-safe, low-bandwidth AsterLM data downloads")
-    parser.add_argument("--profile", choices=["pilot", "frontier", "posttrain", "reasoning", "benchmarks", "all"], default="pilot")
+    parser.add_argument(
+        "--profile",
+        choices=[
+            "pilot",
+            "frontier",
+            "overtrain50",
+            "overtrain100",
+            "posttrain",
+            "reasoning",
+            "benchmarks",
+            "all",
+            "campaign50",
+            "campaign100",
+        ],
+        default="pilot",
+    )
     parser.add_argument("--network-mode", choices=sorted(NETWORK_MODES), default="low")
     parser.add_argument("--hf-home", default="data/hf-cache")
     parser.add_argument("--allow-external-venv", action="store_true")
@@ -341,7 +407,7 @@ def main() -> None:
             "--output",
             "data/data_preflight.json",
             "--minimum-free-gib",
-            "90" if args.profile == "all" else "5",
+            str(max(5, min(PROFILE_DISK_ESTIMATES_GIB[args.profile], 100))),
         ]
         if args.require_auth:
             preflight.append("--require-auth")
@@ -392,8 +458,7 @@ def main() -> None:
             stages.append(Stage(stage.id, stage.profile, command))
 
     usage = shutil.disk_usage(Path.cwd())
-    estimates_gib = {"pilot": 4, "frontier": 70, "posttrain": 15, "reasoning": 12, "benchmarks": 2, "all": 105}
-    needed = estimates_gib[args.profile]
+    needed = PROFILE_DISK_ESTIMATES_GIB[args.profile]
     print(f"Free disk: {usage.free / 2**30:.1f} GiB; conservative profile estimate: {needed} GiB")
     if not args.dry_run and usage.free / 2**30 < needed:
         raise SystemExit("Not enough free disk for the selected profile")

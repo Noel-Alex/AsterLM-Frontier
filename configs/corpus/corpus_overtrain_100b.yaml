@@ -1,0 +1,43 @@
+corpus:
+  # Progressive expansion of the exact same raw corpus used by the pilot, 18.4B,
+  # and 50B tiers. This is a mostly-unique 87B-token prose/math tranche; the
+  # remaining 13B tokens are supplied by Stack-Edu.
+  output_dir: data/corpus-frontier-16b
+  shard_size_mb: 1024
+  state_flush_documents: 2000
+  sources:
+  - id: fineweb_edu
+    path: HuggingFaceTB/smollm-corpus
+    name: fineweb-edu-dedup
+    split: train
+    text_field: text
+    target_tokens: 54000000000
+    columns: [text, id]
+    shuffle_seed: 1701
+  - id: dclm
+    path: mlfoundations/dclm-baseline-1.0-parquet
+    split: train
+    text_field: text
+    target_tokens: 16000000000
+    columns: [text, id, url, language, language_score, fasttext_score]
+    shuffle_seed: 1702
+  - id: cosmopedia_v2
+    path: HuggingFaceTB/smollm-corpus
+    name: cosmopedia-v2
+    split: train
+    text_field: text
+    target_tokens: 6000000000
+    columns: [text, token_length]
+    token_count_field: token_length
+    shuffle_seed: 1703
+  - id: finemath_4plus
+    path: HuggingFaceTB/finemath
+    name: finemath-4plus
+    split: train
+    text_field: text
+    target_tokens: 11000000000
+    columns: [text, token_count, url, language, language_score, score, int_score]
+    token_count_field: token_count
+    shuffle_seed: 1704
+  checkpoint_seconds: 900
+  checkpoint_documents: 20000

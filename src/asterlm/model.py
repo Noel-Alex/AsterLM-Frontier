@@ -413,6 +413,65 @@ class AsterLM(nn.Module):
 
 
     @torch.no_grad()
+    def moe_pathway_stats(self, sample_tokens: int = 2048) -> dict[str, float]:
+        """Summarize token-to-expert pathways across MoE layers.
+
+        These are inexpensive monitoring signals inspired by recent practical-LLM
+        grokking work. They are not presented as an exact reproduction of any paper's
+        metric definitions; their purpose is to reveal route collapse, instability,
+        and delayed emergence of reusable cross-layer pathways.
+        """
+        routes = [
+            block.ffn.last_top1_route
+            for block in self.blocks
+            if isinstance(block.ffn, DeepSeekStyleMoE)
+            and block.ffn.last_top1_route is not None
+        ]
+        if len(routes) < 2:
+            return {}
+        count = min(route.numel() for route in routes)
+        if count <= 0:
+            return {}
+        count = min(count, sample_tokens)
+        # Evenly sample positions so a long packed sequence is represented end to end.
+        source_count = min(route.numel() for route in routes)
+        indices = torch.linspace(
+            0,
+            source_count - 1,
+            steps=count,
+            device=routes[0].device,
+        ).long()
+        pathway = torch.stack([route.index_select(0, indices) for route in routes], dim=1)
+        adjacent = pathway[:, 1:].eq(pathway[:, :-1]).float().mean()
+
+        pair_count = pathway.shape[0] // 2
+        pair_similarity = torch.tensor(0.0, device=pathway.device)
+        if pair_count:
+            pair_similarity = pathway[:pair_count].eq(pathway[-pair_count:]).float().mean()
+
+        unique_fraction = pathway.shape[0] and (
+            torch.unique(pathway, dim=0).shape[0] / pathway.shape[0]
+        )
+        entropies: list[torch.Tensor] = []
+        for layer in range(pathway.shape[1]):
+            counts = torch.bincount(
+                pathway[:, layer], minlength=self.config.moe_num_experts
+            ).float()
+            probabilities = counts / counts.sum().clamp_min(1.0)
+            entropy = -(probabilities * probabilities.clamp_min(1e-12).log()).sum()
+            entropies.append(entropy / math.log(self.config.moe_num_experts))
+
+        return {
+            "moe_path_adjacent_consistency": float(adjacent),
+            "moe_path_pair_similarity": float(pair_similarity),
+            "moe_path_unique_fraction": float(unique_fraction),
+            "moe_path_layer_entropy_normalized": float(torch.stack(entropies).mean()),
+            "moe_path_tokens_sampled": float(pathway.shape[0]),
+            "moe_path_layers": float(pathway.shape[1]),
+        }
+
+
+    @torch.no_grad()
     def update_moe_router_biases(self) -> dict[str, float]:
         loads = []
         biases = []
