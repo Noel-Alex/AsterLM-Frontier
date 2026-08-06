@@ -1,0 +1,65 @@
+data:
+  seed: 7331
+  shuffle_buffer: 5000
+  min_chars: 16
+  max_chars: 100000
+  quality_filters: false
+  add_eos_between_documents: true
+
+  # A higher-diversity optional SFT mixture. The weights are intentionally
+  # adapted for a sub-1B model rather than copied from SmolLM3-3B.
+  sources:
+    - path: HuggingFaceTB/smol-smoltalk
+      split: train
+      messages_field: messages
+      format: messages
+      weight: 0.30
+
+    - path: HuggingFaceTB/smoltalk2
+      name: SFT
+      split: smoltalk-smollm3_smol-magpie-ultra_no_think
+      messages_field: messages
+      format: messages
+      weight: 0.25
+    - path: HuggingFaceTB/smoltalk2
+      name: SFT
+      split: smoltalk-multilingual-8languages_lang_5_no_think
+      messages_field: messages
+      format: messages
+      weight: 0.12
+    - path: HuggingFaceTB/smoltalk2
+      name: SFT
+      split: OpenHermes-2.5_no_think
+      messages_field: messages
+      format: messages
+      weight: 0.10
+    - path: HuggingFaceTB/smoltalk2
+      name: SFT
+      split: Mixture-of-Thoughts_science_no_think
+      messages_field: messages
+      format: messages
+      weight: 0.08
+    - path: HuggingFaceTB/smoltalk2
+      name: SFT
+      split: smoltalk-smollm3_systemchats-30k_no_think
+      messages_field: messages
+      format: messages
+      weight: 0.05
+    - path: HuggingFaceTB/smoltalk2
+      name: SFT
+      split: tulu-3-sft-personas-instruction-following_no_think
+      messages_field: messages
+      format: messages
+      weight: 0.04
+    - path: HuggingFaceTB/smoltalk2
+      name: SFT
+      split: table-gpt_no_think
+      messages_field: messages
+      format: messages
+      weight: 0.03
+    - path: HuggingFaceTB/smoltalk2
+      name: SFT
+      split: multi-turn-reasoning-if_think
+      messages_field: messages
+      format: messages
+      weight: 0.03

@@ -13,6 +13,14 @@ from typing import Any
 import yaml
 from tqdm import tqdm
 
+from asterlm.data.hf_stream import (
+    MemoryGuard,
+    MemoryPressureError,
+    current_rss_gib,
+    memory_status,
+    open_resumable_hf_stream,
+    release_arrow_memory,
+)
 from asterlm.data.resumable import (
     RetryPolicy,
     ZstdCheckpointWriter,
@@ -22,7 +30,6 @@ from asterlm.data.resumable import (
     dataset_cursor,
     is_retryable_exception,
     newest_committed_cursor,
-    restore_dataset_cursor,
 )
 
 
@@ -86,7 +93,7 @@ def _stored_source_compatible(stored: Any, source: RecordSource) -> bool:
     return True
 
 
-def create_dataset(source: RecordSource, revision: str) -> Any:
+def create_base_dataset(source: RecordSource, revision: str) -> Any:
     import zstandard  # noqa: F401
     from datasets import load_dataset
 
@@ -99,12 +106,7 @@ def create_dataset(source: RecordSource, revision: str) -> Any:
     }
     if source.columns:
         kwargs["columns"] = source.columns
-    dataset = load_dataset(**kwargs)
-    if source.shuffle_seed is not None:
-        # A size-1 buffer only permutes source shards. It avoids a large in-memory
-        # example buffer and keeps cursor-based resume deterministic.
-        dataset = dataset.shuffle(seed=source.shuffle_seed, buffer_size=1)
-    return dataset
+    return load_dataset(**kwargs)
 
 
 def resolve_revision(source: RecordSource) -> str:
@@ -214,6 +216,7 @@ def materialize(
     checkpoint_seconds: float,
     checkpoint_records: int,
     retry_policy: RetryPolicy,
+    max_rss_gib: float | None,
 ) -> dict[str, Any]:
     destination = root / source.id
     destination.mkdir(parents=True, exist_ok=True)
@@ -256,11 +259,26 @@ def materialize(
     )
     failures = 0
     exhausted = False
+    memory_guard = MemoryGuard(max_rss_gib=max_rss_gib)
     try:
         while not target_reached(source, int(state["written"])):
-            dataset = create_dataset(source, revision)
             cursor = newest_committed_cursor(destination, state)
-            dataset = restore_dataset_cursor(dataset, cursor, int(state["seen"]) if cursor is None else 0)
+            dataset, stream_layout = open_resumable_hf_stream(
+                lambda: create_base_dataset(source, revision),
+                seed=source.shuffle_seed,
+                cursor=cursor,
+                fallback_skip=int(state["seen"]) if cursor is None else 0,
+                layout=state.get("hf_stream_layout"),
+            )
+            if state.get("hf_stream_layout") != stream_layout:
+                state["hf_stream_layout"] = stream_layout
+                atomic_write_json(state_path, state)
+            rss = current_rss_gib()
+            tqdm.write(
+                f"{source.id}: stream_layout={stream_layout}; rss={rss:.2f} GiB"
+                if rss is not None
+                else f"{source.id}: stream_layout={stream_layout}"
+            )
             writer = ZstdCheckpointWriter(
                 destination,
                 source.id,
@@ -286,6 +304,27 @@ def materialize(
                             writer.write(output)
                             state["written"] = int(state["written"]) + 1
                             progress.update(1)
+
+                    rss, available, memory_reason = memory_guard.sample(since_checkpoint)
+                    if rss is not None:
+                        progress.set_postfix_str(f"{memory_status(rss, available)} layout={stream_layout}", refresh=False)
+                    if memory_reason:
+                        commit(
+                            dataset,
+                            writer,
+                            state,
+                            state_path,
+                            destination,
+                            complete=False,
+                            reason="memory_pressure",
+                        )
+                        since_checkpoint = 0
+                        raise MemoryPressureError(
+                            f"{source.id}: memory guard triggered ({memory_reason}; {memory_status(rss, available)}; "
+                            f"rss_limit={memory_guard.max_rss_gib:.1f}GiB; "
+                            f"available_floor={memory_guard.min_available_gib:.1f}GiB). "
+                            "Cursor and output were committed."
+                        )
 
                     reached = target_reached(source, int(state["written"]))
                     due = writer.should_checkpoint(checkpoint_seconds) or (
@@ -325,6 +364,10 @@ def materialize(
                 failures = 0
                 if exhausted:
                     break
+            except MemoryPressureError:
+                dataset = None
+                release_arrow_memory()
+                raise
             except KeyboardInterrupt:
                 if writer.is_open or since_checkpoint:
                     commit(dataset, writer, state, state_path, destination, complete=False, reason="keyboard_interrupt")
@@ -345,6 +388,8 @@ def materialize(
                 atomic_write_json(state_path, state)
                 if not is_retryable_exception(exc) or not retry_policy.permits(failures):
                     raise
+                dataset = None
+                release_arrow_memory()
                 delay = retry_policy.delay(failures)
                 tqdm.write(
                     f"{source.id}: transient {type(exc).__name__}: {exc}; "
@@ -379,6 +424,12 @@ def main() -> None:
     parser.add_argument("--max-retries", type=int, default=50, help="0 means unlimited transient retries")
     parser.add_argument("--retry-base-seconds", type=float, default=5.0)
     parser.add_argument("--retry-max-seconds", type=float, default=300.0)
+    parser.add_argument(
+        "--max-rss-gib",
+        type=float,
+        default=None,
+        help="Commit and stop before this process exceeds the RAM limit; default is 72%% of system RAM",
+    )
     args = parser.parse_args()
 
     raw = yaml.safe_load(Path(args.config).read_text(encoding="utf-8"))["records"]
@@ -426,6 +477,7 @@ def main() -> None:
             checkpoint_seconds,
             checkpoint_records,
             retry_policy,
+            args.max_rss_gib,
         )
         manifest["updated_at_unix"] = time.time()
         atomic_write_json(manifest_path, manifest)
@@ -433,7 +485,11 @@ def main() -> None:
 
 
 def _cli_entrypoint() -> None:
-    main()
+    try:
+        main()
+    except MemoryPressureError as exc:
+        print(str(exc), file=sys.stderr, flush=True)
+        raise SystemExit(75) from exc
     # Some pyarrow/datasets/aiohttp combinations have crashed during CPython
     # interpreter finalization *after* every shard and state file was committed.
     # A direct successful process exit avoids that teardown-only failure. Set

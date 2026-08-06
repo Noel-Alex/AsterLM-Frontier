@@ -1,0 +1,35 @@
+data:
+  seed: 1337
+  shuffle_buffer: 10000
+  min_chars: 128
+  max_chars: 200000
+  quality_filters: true
+  add_eos_between_documents: true
+
+  # Runnable directly with Hugging Face streaming. Weights are sampling
+  # probabilities, not corpus sizes.
+  sources:
+    - path: HuggingFaceTB/smollm-corpus
+      name: fineweb-edu-dedup
+      split: train
+      text_field: text
+      weight: 0.70
+    - path: HuggingFaceTB/smollm-corpus
+      name: cosmopedia-v2
+      split: train
+      text_field: text
+      weight: 0.12
+    - path: HuggingFaceTB/finemath
+      name: finemath-4plus
+      split: train
+      text_field: text
+      weight: 0.18
+
+  # For strict evaluation, replace this reused training subset with your own
+  # held-out, revision-pinned JSONL. This default is a pipeline sanity check.
+  validation_sources:
+    - path: HuggingFaceTB/smollm-corpus
+      name: cosmopedia-v2
+      split: train
+      text_field: text
+      weight: 1.0

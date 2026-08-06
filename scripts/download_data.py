@@ -331,6 +331,10 @@ def execute_stage(
         if returncode == 0:
             result["returncode"] = 0
             return result
+        if returncode in {2, 64, 75}:
+            # argparse/preflight errors and the committed memory-safety stop are
+            # deterministic; retrying the same command only wastes time/bandwidth.
+            break
         if attempt < max_attempts:
             delay = min(300.0, retry_seconds * (2 ** (attempt - 1)))
             print(f"Stage {stage.id} exited {returncode}; retrying in {delay:.1f}s", flush=True)
@@ -383,6 +387,12 @@ def main() -> None:
     parser.add_argument("--retry-base-seconds", type=float, default=5.0)
     parser.add_argument("--retry-max-seconds", type=float, default=300.0)
     parser.add_argument("--checkpoint-seconds", type=float, default=900.0)
+    parser.add_argument(
+        "--max-rss-gib",
+        type=float,
+        default=None,
+        help="Pass a hard per-materializer RSS limit; auto-safe default when omitted",
+    )
     parser.add_argument("--manifest", default="data/download_run.json")
     parser.add_argument("--log-dir", default="data/download-logs")
     args = parser.parse_args()
@@ -455,6 +465,8 @@ def main() -> None:
                         str(args.checkpoint_seconds),
                     ]
                 )
+                if args.max_rss_gib is not None:
+                    command.extend(["--max-rss-gib", str(args.max_rss_gib)])
             stages.append(Stage(stage.id, stage.profile, command))
 
     usage = shutil.disk_usage(Path.cwd())

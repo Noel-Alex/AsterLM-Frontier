@@ -1,0 +1,18 @@
+data:
+  seed: 2029
+  shuffle_buffer: 20000
+  min_chars: 32
+  max_chars: 500000
+  quality_filters: false
+  add_eos_between_documents: true
+  sources:
+    - path: data/reasoning/reasoning_sft.jsonl
+      split: train
+      messages_field: messages
+      format: messages
+      weight: 0.75
+    - path: data/reasoning/direct_mode_sft.jsonl
+      split: train
+      messages_field: messages
+      format: messages
+      weight: 0.25

@@ -1,0 +1,30 @@
+data:
+  seed: 1337
+  shuffle_buffer: 10000
+  min_chars: 128
+  max_chars: 500000
+  quality_filters: true
+  add_eos_between_documents: true
+  mask_cross_document_loss: true
+  sources:
+    - path: data/corpus-main-12b/fineweb_edu
+      split: train
+      text_field: text
+      weight: 0.65
+    - path: data/corpus-main-12b/dclm
+      split: train
+      text_field: text
+      weight: 0.10
+    - path: data/corpus-main-12b/cosmopedia_v2
+      split: train
+      text_field: text
+      weight: 0.08
+    - path: data/corpus-main-12b/finemath_4plus
+      split: train
+      text_field: text
+      weight: 0.07
+    - path: data/stack-edu-multilang
+      split: train
+      text_field: text
+      fim_rate: 0.5
+      weight: 0.10

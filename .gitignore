@@ -227,7 +227,7 @@ venv/
 wandb/
 runs/
 checkpoints/
-data/
+/data/
 *.safetensors
 *.pt
 *.pth

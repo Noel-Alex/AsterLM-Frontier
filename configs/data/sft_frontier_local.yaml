@@ -1,0 +1,32 @@
+data:
+  seed: 7331
+  shuffle_buffer: 5000
+  min_chars: 16
+  max_chars: 150000
+  quality_filters: false
+  add_eos_between_documents: true
+  sources:
+    - path: data/posttrain-frontier/smol_smoltalk
+      messages_field: messages
+      format: messages
+      weight: 0.30
+    - path: data/posttrain-frontier/smoltalk2_magpie
+      messages_field: messages
+      format: messages
+      weight: 0.25
+    - path: data/posttrain-frontier/smoltalk2_multilingual
+      messages_field: messages
+      format: messages
+      weight: 0.12
+    - path: data/posttrain-frontier/smoltalk2_science
+      messages_field: messages
+      format: messages
+      weight: 0.11
+    - path: data/posttrain-frontier/smoltalk2_reasoning
+      messages_field: messages
+      format: messages
+      weight: 0.10
+    - path: data/posttrain-frontier/open_thoughts
+      messages_field: conversations
+      format: messages
+      weight: 0.12

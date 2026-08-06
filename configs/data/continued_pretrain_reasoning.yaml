@@ -1,0 +1,23 @@
+data:
+  seed: 4242
+  shuffle_buffer: 5000
+  min_chars: 128
+  max_chars: 200000
+  quality_filters: true
+  add_eos_between_documents: true
+  sources:
+    - path: HuggingFaceTB/smollm-corpus
+      name: fineweb-edu-dedup
+      split: train
+      text_field: text
+      weight: 0.35
+    - path: HuggingFaceTB/finemath
+      name: finemath-4plus
+      split: train
+      text_field: text
+      weight: 0.45
+    - path: open-thoughts/OpenThoughts-114k
+      split: train
+      messages_field: conversations
+      format: messages
+      weight: 0.20

@@ -1,0 +1,36 @@
+data:
+  seed: 1337
+  shuffle_buffer: 10000
+  min_chars: 128
+  max_chars: 200000
+  quality_filters: true
+  add_eos_between_documents: true
+  sources:
+    - path: HuggingFaceTB/smollm-corpus
+      name: fineweb-edu-dedup
+      split: train
+      text_field: text
+      weight: 0.58
+    - path: HuggingFaceTB/smollm-corpus
+      name: cosmopedia-v2
+      split: train
+      text_field: text
+      weight: 0.10
+    - path: HuggingFaceTB/finemath
+      name: finemath-4plus
+      split: train
+      text_field: text
+      weight: 0.14
+    # Create this first with scripts/prepare_stack_edu.py. The materializer
+    # keeps only rows marked permissive by the source dataset.
+    - path: data/stack_edu_python.jsonl
+      split: train
+      text_field: text
+      fim_rate: 0.5
+      weight: 0.18
+  validation_sources:
+    - path: HuggingFaceTB/smollm-corpus
+      name: cosmopedia-v2
+      split: train
+      text_field: text
+      weight: 1.0

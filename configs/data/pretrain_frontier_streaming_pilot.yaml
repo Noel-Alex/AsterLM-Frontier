@@ -1,0 +1,34 @@
+data:
+  seed: 1337
+  shuffle_buffer: 10000
+  min_chars: 128
+  max_chars: 300000
+  quality_filters: true
+  add_eos_between_documents: true
+  mask_cross_document_loss: true
+  sources:
+    - path: HuggingFaceTB/smollm-corpus
+      name: fineweb-edu-dedup
+      split: train
+      text_field: text
+      weight: 0.62
+    - path: mlfoundations/dclm-baseline-1.0-parquet
+      split: train
+      text_field: text
+      weight: 0.12
+    - path: HuggingFaceTB/smollm-corpus
+      name: cosmopedia-v2
+      split: train
+      text_field: text
+      weight: 0.10
+    - path: HuggingFaceTB/finemath
+      name: finemath-4plus
+      split: train
+      text_field: text
+      weight: 0.16
+  validation_sources:
+    - path: HuggingFaceTB/smollm-corpus
+      name: cosmopedia-v2
+      split: train
+      text_field: text
+      weight: 1.0

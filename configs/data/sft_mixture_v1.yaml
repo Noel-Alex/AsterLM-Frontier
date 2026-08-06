@@ -1,0 +1,19 @@
+data:
+  seed: 7331
+  shuffle_buffer: 5000
+  min_chars: 16
+  max_chars: 100000
+  quality_filters: false
+  add_eos_between_documents: true
+  sources:
+    - path: HuggingFaceTB/smol-smoltalk
+      split: train
+      messages_field: messages
+      format: messages
+      weight: 0.75
+    - path: HuggingFaceTB/smoltalk
+      name: all
+      split: train
+      messages_field: messages
+      format: messages
+      weight: 0.25

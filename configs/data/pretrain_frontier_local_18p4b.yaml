@@ -1,0 +1,40 @@
+data:
+  seed: 1337
+  shuffle_buffer: 20000
+  min_chars: 128
+  max_chars: 500000
+  quality_filters: true
+  add_eos_between_documents: true
+  mask_cross_document_loss: true
+  # Sampling weights are intentionally not identical to stored-token proportions:
+  # math/code/structured synthetic text are moderately upsampled for a sub-billion model.
+  sources:
+    - path: data/corpus-frontier-16b/fineweb_edu
+      split: train
+      text_field: text
+      weight: 0.53
+    - path: data/corpus-frontier-16b/dclm
+      split: train
+      text_field: text
+      weight: 0.11
+    - path: data/corpus-frontier-16b/cosmopedia_v2
+      split: train
+      text_field: text
+      weight: 0.09
+    - path: data/corpus-frontier-16b/finemath_4plus
+      split: train
+      text_field: text
+      weight: 0.13
+    - path: data/stack-edu-frontier-2p4b
+      split: train
+      text_field: text
+      fim_rate: 0.5
+      weight: 0.14
+  validation_sources:
+    # Pipeline validation only. The data-prep audit creates true domain holdouts.
+    - path: HuggingFaceTB/smollm-corpus
+      name: cosmopedia-v2
+      split: train
+      text_field: text
+      streaming: true
+      weight: 1.0

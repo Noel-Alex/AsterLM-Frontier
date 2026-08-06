@@ -16,6 +16,14 @@ from typing import Any
 import yaml
 from tqdm import tqdm
 
+from asterlm.data.hf_stream import (
+    MemoryGuard,
+    MemoryPressureError,
+    current_rss_gib,
+    memory_status,
+    open_resumable_hf_stream,
+    release_arrow_memory,
+)
 from asterlm.data.resumable import (
     RetryPolicy,
     ZstdCheckpointWriter,
@@ -25,7 +33,6 @@ from asterlm.data.resumable import (
     dataset_cursor,
     is_retryable_exception,
     newest_committed_cursor,
-    restore_dataset_cursor,
 )
 
 _thread_local = threading.local()
@@ -122,18 +129,17 @@ def stable_seed(language: str) -> int:
     return 3000 + sum((index + 1) * ord(char) for index, char in enumerate(language)) % 100000
 
 
-def create_dataset(language: str, revision: str) -> Any:
+def create_base_dataset(language: str, revision: str) -> Any:
     import zstandard  # noqa: F401
     from datasets import load_dataset
 
-    dataset = load_dataset(
+    return load_dataset(
         "HuggingFaceTB/stack-edu",
         language,
         split="train",
         streaming=True,
         revision=revision,
     )
-    return dataset.shuffle(seed=stable_seed(language), buffer_size=1)
 
 
 def load_state(path: Path, language: str, target_tokens: int) -> dict[str, Any]:
@@ -258,6 +264,7 @@ def materialize_language(
     checkpoint_seconds: float,
     checkpoint_records: int,
     retry_policy: RetryPolicy,
+    max_rss_gib: float | None,
 ) -> dict[str, Any]:
     prefix = language.lower().replace("-", "_")
     root = output / prefix
@@ -290,14 +297,25 @@ def materialize_language(
     )
     failures = 0
     exhausted = False
+    memory_guard = MemoryGuard(max_rss_gib=max_rss_gib)
     try:
         while int(state["estimated_tokens"]) < target_tokens:
-            dataset = create_dataset(language, resolved)
             cursor = newest_committed_cursor(root, state)
-            dataset = restore_dataset_cursor(
-                dataset,
-                cursor,
-                int(state["documents_seen"]) if cursor is None else 0,
+            dataset, stream_layout = open_resumable_hf_stream(
+                lambda: create_base_dataset(language, resolved),
+                seed=stable_seed(language),
+                cursor=cursor,
+                fallback_skip=int(state["documents_seen"]) if cursor is None else 0,
+                layout=state.get("hf_stream_layout"),
+            )
+            if state.get("hf_stream_layout") != stream_layout:
+                state["hf_stream_layout"] = stream_layout
+                atomic_write_json(state_path, state)
+            rss = current_rss_gib()
+            tqdm.write(
+                f"{language}: stream_layout={stream_layout}; rss={rss:.2f} GiB"
+                if rss is not None
+                else f"{language}: stream_layout={stream_layout}"
             )
             writer = ZstdCheckpointWriter(root, prefix, shard_bytes, int(state.get("next_shard_index", 0)))
             pending: set[Future[FetchResult]] = set()
@@ -315,6 +333,31 @@ def materialize_language(
                         if len(pending) >= in_flight:
                             done, pending = wait(pending, return_when=FIRST_COMPLETED)
                             consume_done(done, writer, state, progress)
+
+                        rss, available, memory_reason = memory_guard.sample(records_since_checkpoint)
+                        if rss is not None:
+                            progress.set_postfix_str(
+                                f"{memory_status(rss, available)} layout={stream_layout} pending={len(pending)}",
+                                refresh=False,
+                            )
+                        if memory_reason:
+                            pending = drain_pending(pending, writer, state, progress)
+                            commit(
+                                dataset,
+                                writer,
+                                state,
+                                state_path,
+                                root,
+                                complete=False,
+                                reason="memory_pressure",
+                            )
+                            records_since_checkpoint = 0
+                            raise MemoryPressureError(
+                                f"{language}: memory guard triggered ({memory_reason}; {memory_status(rss, available)}; "
+                                f"rss_limit={memory_guard.max_rss_gib:.1f}GiB; "
+                                f"available_floor={memory_guard.min_available_gib:.1f}GiB). "
+                                "Cursor and output were committed."
+                            )
 
                         due = (
                             writer.should_checkpoint(checkpoint_seconds)
@@ -357,6 +400,10 @@ def materialize_language(
                 failures = 0
                 if exhausted:
                     break
+            except MemoryPressureError:
+                dataset = None
+                release_arrow_memory()
+                raise
             except KeyboardInterrupt:
                 # Executor context waits for already-running requests. Drain completed
                 # outputs before committing the corresponding HF cursor.
@@ -381,6 +428,8 @@ def materialize_language(
                 atomic_write_json(state_path, state)
                 if not is_retryable_exception(exc) or not retry_policy.permits(failures):
                     raise
+                dataset = None
+                release_arrow_memory()
                 delay = retry_policy.delay(failures)
                 tqdm.write(
                     f"{language}: transient {type(exc).__name__}: {exc}; "
@@ -414,6 +463,12 @@ def main() -> None:
     parser.add_argument("--max-retries", type=int, default=50, help="0 means unlimited transient retries")
     parser.add_argument("--retry-base-seconds", type=float, default=5.0)
     parser.add_argument("--retry-max-seconds", type=float, default=300.0)
+    parser.add_argument(
+        "--max-rss-gib",
+        type=float,
+        default=None,
+        help="Commit and stop before this process exceeds the RAM limit; default is 72%% of system RAM",
+    )
     args = parser.parse_args()
 
     raw = yaml.safe_load(Path(args.config).read_text(encoding="utf-8"))["stack_edu"]
@@ -465,6 +520,7 @@ def main() -> None:
             checkpoint_seconds,
             checkpoint_records,
             retry_policy,
+            args.max_rss_gib,
         )
         manifest["updated_at_unix"] = time.time()
         atomic_write_json(manifest_path, manifest)
@@ -472,7 +528,11 @@ def main() -> None:
 
 
 def _cli_entrypoint() -> None:
-    main()
+    try:
+        main()
+    except MemoryPressureError as exc:
+        print(str(exc), file=sys.stderr, flush=True)
+        raise SystemExit(75) from exc
     sys.stdout.flush()
     sys.stderr.flush()
     if os.environ.get("ASTERLM_MATERIALIZER_HARD_EXIT", "1") != "0":
