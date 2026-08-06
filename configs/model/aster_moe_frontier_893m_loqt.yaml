@@ -1,0 +1,71 @@
+model:
+  # Same logical architecture as the 893M/484M-active frontier model, but all FFN and
+  # expert matrices are stored INT4 and trained through periodically merged low-rank
+  # updates. This is a VRAM experiment, not the default quality recipe.
+  vocab_size: 32768
+  d_model: 1152
+  n_layers: 30
+  n_heads: 18
+  head_dim: 64
+  ffn_hidden: 3072
+  max_seq_len: 131072
+  tie_embeddings: true
+  linear_backend: torch
+  ffn_linear_backend: loqt_int4
+  loqt_rank: 64
+  loqt_alpha: 64.0
+  loqt_group_size: 64
+
+  ffn_type: moe
+  moe_first_dense_layers: 2
+  moe_every: 1
+  moe_num_experts: 8
+  moe_top_k: 2
+  moe_shared_experts: 1
+  moe_expert_hidden: 704
+  moe_router_score: sigmoid
+  moe_balance_strategy: hybrid
+  moe_router_bias_update_speed: 0.001
+  moe_aux_loss_weight: 0.0001
+  moe_router_z_loss_weight: 0.00001
+
+  kda_ratio: 3
+  kda_backend: auto
+  kda_expand_v: 1.0
+  kda_short_conv: true
+  kda_conv_size: 4
+  kda_safe_gate: true
+  kda_lower_bound: -5.0
+  kda_allow_negative_eigenvalues: false
+
+  q_lora_rank: 384
+  latent_rms_norm: true
+  latent_rank: 96
+  rope_dim: 32
+  attention_window: 131072
+  sink_tokens: 64
+  attention_gate: true
+  qk_stat_tokens: 24
+  cache_dtype: hadamard_int4
+  cache_group_size: 64
+  cache_recent_tokens: 1024
+  cache_chunk_tokens: 2048
+  cache_quantize_rope: false
+
+  rope_theta: 1000000.0
+  rope_scaling_type: yarn
+  rope_scaling_factor: 16.0
+  rope_original_max_position: 8192
+
+  rms_eps: 1.0e-6
+  norm_type: ssnorm
+  embedding_projection: true
+  residual_dropout: 0.0
+  ffn_dropout: 0.0
+  mtp_depth: 2
+  mtp_rank: 384
+  mtp_loss_weight: 0.12
+  lm_loss_chunk_size: 96
+  qk_clip_tau: 100.0
+  init_std: 0.02
+  gradient_checkpointing: true

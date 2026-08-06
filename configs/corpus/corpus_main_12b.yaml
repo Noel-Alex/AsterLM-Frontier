@@ -1,0 +1,57 @@
+corpus:
+  output_dir: data/corpus-main-12b
+  shard_size_mb: 1024
+  state_flush_documents: 2000
+  sources:
+  - id: fineweb_edu
+    path: HuggingFaceTB/smollm-corpus
+    name: fineweb-edu-dedup
+    split: train
+    text_field: text
+    target_tokens: 7800000000
+    columns:
+    - text
+    - id
+    shuffle_seed: 1701
+  - id: dclm
+    path: mlfoundations/dclm-baseline-1.0-parquet
+    split: train
+    text_field: text
+    target_tokens: 1200000000
+    columns:
+    - text
+    - id
+    - url
+    - language
+    - language_score
+    - fasttext_score
+    shuffle_seed: 1702
+  - id: cosmopedia_v2
+    path: HuggingFaceTB/smollm-corpus
+    name: cosmopedia-v2
+    split: train
+    text_field: text
+    target_tokens: 960000000
+    columns:
+    - text
+    - token_length
+    token_count_field: token_length
+    shuffle_seed: 1703
+  - id: finemath_4plus
+    path: HuggingFaceTB/finemath
+    name: finemath-4plus
+    split: train
+    text_field: text
+    target_tokens: 840000000
+    columns:
+    - text
+    - token_count
+    - url
+    - language
+    - language_score
+    - score
+    - int_score
+    token_count_field: token_count
+    shuffle_seed: 1704
+  checkpoint_seconds: 900
+  checkpoint_documents: 20000

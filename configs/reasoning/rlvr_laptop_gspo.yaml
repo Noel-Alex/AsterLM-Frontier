@@ -1,0 +1,57 @@
+reasoning:
+  output_dir: runs/aster-reasoning-rlvr-gspo
+  tokenizer_path: artifacts/tokenizer.json
+  seed: 2030
+  algorithm: gspo
+  iterations: 200
+  prompts_per_iteration: 8
+  prompt_oversample_factor: 3
+  group_size: 6
+  update_epochs: 1
+  micro_batch_size: 1
+  gradient_accumulation_steps: 8
+
+  max_prompt_tokens: 2048
+  max_completion_tokens: 4096
+  min_completion_tokens: 32
+  temperature: 0.8
+  top_k: 0
+  top_p: 0.95
+  min_p: 0.02
+  repetition_penalty: 1.01
+  prefill_chunk_size: 2048
+
+  clip_low: 0.20
+  clip_high: 0.28
+  # Frozen-reference log probabilities are computed in a separate process, so this
+  # regularizer costs time but not simultaneous model VRAM.
+  kl_beta: 0.001
+  entropy_bonus: 0.0
+  advantage_epsilon: 1.0e-6
+  ratio_log_clip: 20.0
+  normalize_group_std: true
+  dynamic_sampling: true
+  min_group_reward_std: 1.0e-6
+  max_groups_per_update: 0
+
+  correctness_weight: 1.0
+  format_weight: 0.10
+  reasoning_complete_weight: 0.05
+  invalid_penalty: 0.25
+  repetition_penalty_reward: 0.10
+  overlong_buffer_tokens: 384
+  overlong_penalty: 0.25
+  reward_clip_min: -1.0
+  reward_clip_max: 1.25
+
+  force_thinking_prefix: true
+  require_reasoning_tags: true
+  direct_mode_fraction: 0.0
+  answer_style: xml
+
+  checkpoint_every_iterations: 1
+  keep_last_checkpoints: 3
+  save_rollouts: true
+  allow_unsafe_code_verifier: false
+  code_timeout_seconds: 6.0
+  code_memory_mb: 768

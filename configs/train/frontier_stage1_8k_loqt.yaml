@@ -1,0 +1,49 @@
+train:
+  output_dir: runs/aster-frontier-loqt-stage1-8k
+  seed: 1337
+  device: cuda
+  dtype: bfloat16
+  matmul_precision: high
+  compile: false
+  precision_backend: amp
+  activation_offload: true
+  activation_offload_pin_memory: true
+  loqt_merge_interval: 200
+  loqt_merge_on_cpu: true
+  loqt_reset_optimizer_state: true
+
+  sequence_length: 8192
+  micro_batch_size: 1
+  gradient_accumulation_steps: 16
+  max_steps: 200000
+  max_tokens: 16000000000
+
+  # Only adapters, routers, attention, embeddings and sensitive tensors are trainable.
+  optimizer: torchao_adamw8bit
+  adam_lr: 0.0003
+  muon_lr: 0.01
+  min_lr_ratio: 0.1
+  warmup_steps: 2000
+  schedule_type: wsd
+  decay_fraction: 0.1
+  decay_shape: cosine
+  weight_decay: 0.1
+  adam_betas: [0.9, 0.95]
+  adam_eps: 1.0e-8
+  max_grad_norm: 1.0
+
+  qk_clip_interval: 100
+  log_interval: 10
+  eval_interval: 1000
+  eval_batches: 32
+  save_interval: 1000
+  keep_last_checkpoints: 3
+  num_workers: 2
+  pin_memory: true
+  prefetch_factor: 2
+  tokenizer_path: artifacts/tokenizer.json
+  tensorboard: true
+  jsonl_metrics: true
+  system_metrics_interval: 5.0
+  diagnostic_interval: 100
+  save_diagnostic_bundle: true

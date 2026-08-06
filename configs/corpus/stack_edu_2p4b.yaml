@@ -1,0 +1,31 @@
+stack_edu:
+  output_dir: data/stack-edu-frontier-2p4b
+  shard_size_mb: 512
+  workers: 4
+  in_flight: 16
+  languages:
+  - name: Python
+    target_tokens: 760000000
+  - name: Cpp
+    target_tokens: 320000000
+  - name: JavaScript
+    target_tokens: 220000000
+  - name: TypeScript
+    target_tokens: 160000000
+  - name: Java
+    target_tokens: 260000000
+  - name: SQL
+    target_tokens: 180000000
+  - name: Rust
+    target_tokens: 180000000
+  - name: Go
+    target_tokens: 140000000
+  - name: Shell
+    target_tokens: 90000000
+  - name: CSharp
+    target_tokens: 90000000
+  checkpoint_seconds: 900
+  checkpoint_records: 10000
+  connect_timeout_seconds: 60
+  read_timeout_seconds: 600
+  sdk_retries: 20

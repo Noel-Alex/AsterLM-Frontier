@@ -1,0 +1,64 @@
+records:
+  output_dir: data/reasoning-frontier
+  shard_size_mb: 256
+  checkpoint_seconds: 900
+  checkpoint_records: 5000
+  sources:
+  - id: mixture_of_thoughts
+    path: open-r1/Mixture-of-Thoughts
+    name: all
+    split: train
+    target_records: null
+    keep_fields:
+    - messages
+    - num_tokens
+    - source
+    columns:
+    - messages
+    - num_tokens
+    - source
+  - id: dapo_math
+    path: open-r1/DAPO-Math-17k-Processed
+    name: all
+    split: train
+    target_records: null
+    keep_fields:
+    - prompt
+    - solution
+    - data_source
+    - source_prompt
+    - ability
+    - reward_model
+    - extra_info
+    columns:
+    - prompt
+    - solution
+    - data_source
+    - source_prompt
+    - ability
+    - reward_model
+    - extra_info
+  - id: verifiable_python
+    path: open-r1/verifiable-coding-problems-python_decontaminated-tested-shuffled
+    split: train
+    target_records: null
+    keep_fields:
+    - source
+    - task_type
+    - in_source_id
+    - problem
+    - gold_standard_solution
+    - problem_id
+    - metadata
+    - verification_info
+    - test_reward
+    columns:
+    - source
+    - task_type
+    - in_source_id
+    - problem
+    - gold_standard_solution
+    - problem_id
+    - metadata
+    - verification_info
+    - test_reward

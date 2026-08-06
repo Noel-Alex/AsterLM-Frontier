@@ -1,0 +1,50 @@
+AsterLM consistency, data, training, and reasoning audit
+Generated: 2026-08-06
+
+Changed or added files:
+AUDIT_REPORT.md
+DOWNLOAD_FIX.md
+PATCH_MANIFEST.txt
+PROJECT_STATUS.md
+README.md
+START_HERE.md
+configs/corpus/decontamination_benchmarks.yaml
+configs/corpus/posttrain_frontier.yaml
+configs/corpus/reasoning_frontier.yaml
+configs/data/sft_mixture_v2_smoltalk2.yaml
+configs/reasoning/rlvr_laptop_dapo.yaml
+configs/reasoning/rlvr_laptop_dr_grpo.yaml
+configs/reasoning/rlvr_laptop_grpo.yaml
+configs/reasoning/rlvr_laptop_gspo.yaml
+configs/train/dpo_frontier.yaml
+configs/train/sft_frontier.yaml
+docs/TRAINING_RUNBOOK.md
+scripts/clean_corpus.py
+scripts/download_status.py
+scripts/materialize_corpus.py
+scripts/materialize_hf_records.py
+scripts/precompute_dpo_reference.py
+scripts/prepare_frontier_data.py
+scripts/prepare_stack_edu.py
+scripts/prepare_stack_edu_multilang.py
+scripts/train_dpo.py
+scripts/train_pretrain.py
+scripts/train_sft.py
+scripts/training_preflight.py
+src/asterlm/data/mixture.py
+src/asterlm/data/preference.py
+src/asterlm/data/resumable.py
+src/asterlm/data/tokenizer.py
+src/asterlm/reasoning/io.py
+src/asterlm/training/engine.py
+tests/test_data.py
+tests/test_reasoning.py
+tests/test_resumable_downloads.py
+
+Additional release corrections:
+- retained src/asterlm/data and configs/data in the distributable archive
+- preserved global Hugging Face authentication while using a project-local cache
+- rejected mixed checkout/virtual-environment execution
+- disabled retries for deterministic preflight/validation failures
+- restored and tested local reader sharding/control-file filtering
+- restored and tested UltraFeedback message-list response normalization

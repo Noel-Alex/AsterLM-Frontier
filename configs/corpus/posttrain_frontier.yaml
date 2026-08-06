@@ -1,0 +1,75 @@
+records:
+  output_dir: data/posttrain-frontier
+  shard_size_mb: 256
+  state_flush_records: 1000
+  sources:
+  - id: smol_smoltalk
+    path: HuggingFaceTB/smol-smoltalk
+    split: train
+    target_records: null
+    keep_fields:
+    - messages
+    - source
+    shuffle_seed: 2000
+  - id: smoltalk2_magpie
+    path: HuggingFaceTB/smoltalk2
+    name: SFT
+    split: smoltalk_smollm3_smol_magpie_ultra_no_think
+    target_records: 350000
+    keep_fields:
+    - messages
+    - source
+    - chat_template_kwargs
+    shuffle_seed: 2001
+  - id: smoltalk2_multilingual
+    path: HuggingFaceTB/smoltalk2
+    name: SFT
+    split: smoltalk_multilingual_8languages_lang_5_no_think
+    target_records: 160000
+    keep_fields:
+    - messages
+    - source
+    - chat_template_kwargs
+    shuffle_seed: 2002
+  - id: smoltalk2_science
+    path: HuggingFaceTB/smoltalk2
+    name: SFT
+    split: Mixture_of_Thoughts_science_no_think
+    target_records: null
+    keep_fields:
+    - messages
+    - source
+    - chat_template_kwargs
+    shuffle_seed: 2003
+  - id: smoltalk2_reasoning
+    path: HuggingFaceTB/smoltalk2
+    name: SFT
+    split: multi_turn_reasoning_if_think
+    target_records: null
+    keep_fields:
+    - messages
+    - source
+    - chat_template_kwargs
+    shuffle_seed: 2004
+  - id: open_thoughts
+    path: open-thoughts/OpenThoughts-114k
+    split: train
+    target_records: null
+    keep_fields:
+    - conversations
+    - system
+    shuffle_seed: 2005
+  - id: ultrafeedback_binarized
+    path: HuggingFaceH4/ultrafeedback_binarized
+    split: train_prefs
+    target_records: null
+    keep_fields:
+    - prompt
+    - chosen
+    - rejected
+    - messages
+    - score_chosen
+    - score_rejected
+    shuffle_seed: 2006
+  checkpoint_seconds: 900
+  checkpoint_records: 10000

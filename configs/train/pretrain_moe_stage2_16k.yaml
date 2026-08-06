@@ -1,0 +1,38 @@
+train:
+  output_dir: runs/aster-moe-stage2-16k
+  seed: 1338
+  device: cuda
+  dtype: bfloat16
+  matmul_precision: high
+  compile: false
+
+  sequence_length: 16384
+  micro_batch_size: 1
+  gradient_accumulation_steps: 8
+  max_steps: 1000000
+  max_tokens: 500000000
+
+  optimizer: apollo_mini
+  adam_lr: 0.0006
+  adam_betas: [0.9, 0.95]
+  weight_decay: 0.1
+  apollo_rank: 1
+  apollo_scale: 128.0
+  apollo_scale_type: tensor
+  apollo_update_proj_gap: 200
+  max_grad_norm: 1.0
+
+  schedule_type: wsd
+  warmup_steps: 300
+  min_lr_ratio: 0.1
+  decay_fraction: 0.2
+  decay_shape: cosine
+
+  qk_clip_interval: 50
+  log_interval: 5
+  eval_interval: 250
+  eval_batches: 8
+  save_interval: 250
+  keep_last_checkpoints: 3
+  tokenizer_path: artifacts/tokenizer.json
+  wandb_project: asterlm

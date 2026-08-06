@@ -1,0 +1,45 @@
+train:
+  output_dir: runs/aster-reasoning-rlvr
+  seed: 2030
+  device: cuda
+  dtype: bfloat16
+  matmul_precision: high
+  compile: false
+  precision_backend: amp
+  activation_offload: true
+  activation_offload_pin_memory: true
+
+  # RL batches are variable-length, but this records the intended maximum envelope.
+  sequence_length: 8192
+  micro_batch_size: 1
+  gradient_accumulation_steps: 8
+  max_steps: 100000
+  max_tokens: null
+
+  # No critic and no co-resident reference model. Optimizer state is CPU-offloaded.
+  optimizer: torchao_cpu_offload_adamw
+  adam_lr: 0.000003
+  min_lr_ratio: 0.20
+  warmup_steps: 10
+  schedule_type: constant
+  decay_fraction: 0.10
+  decay_shape: cosine
+  weight_decay: 0.0
+  adam_betas: [0.9, 0.95]
+  adam_eps: 1.0e-8
+  max_grad_norm: 0.5
+
+  qk_clip_interval: 20
+  log_interval: 1
+  eval_interval: 100000
+  eval_batches: 0
+  save_interval: 100000
+  keep_last_checkpoints: 3
+  num_workers: 0
+  pin_memory: true
+  tokenizer_path: artifacts/tokenizer.json
+  tensorboard: true
+  jsonl_metrics: true
+  system_metrics_interval: 5.0
+  diagnostic_interval: 10
+  save_diagnostic_bundle: true

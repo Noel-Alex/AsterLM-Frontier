@@ -1,0 +1,48 @@
+model:
+  vocab_size: 32768
+  d_model: 768
+  n_layers: 24
+  n_heads: 12
+  head_dim: 64
+  ffn_hidden: 2048
+  max_seq_len: 8192
+  tie_embeddings: true
+
+  # KDA, KDA, KDA, latent attention; repeated six times.
+  kda_ratio: 3
+  kda_backend: auto
+  kda_expand_v: 1.0
+  kda_short_conv: true
+  kda_conv_size: 4
+  kda_safe_gate: true
+  kda_lower_bound: -5.0
+  kda_allow_negative_eigenvalues: false
+
+  latent_rank: 64
+  rope_dim: 32
+  attention_window: 8192
+  sink_tokens: 64
+  attention_dropout: 0.0
+  attention_gate: true
+  logit_softcap: null
+  qk_stat_tokens: 32
+
+  rope_theta: 1000000.0
+  rope_scaling_type: none
+  rope_scaling_factor: 1.0
+  rope_original_max_position: 8192
+
+  rms_eps: 1.0e-6
+  residual_dropout: 0.0
+  ffn_dropout: 0.0
+  use_block_attnres: false
+  attnres_block_size: 4
+  attnres_key_dim: 64
+
+  mtp_depth: 2
+  mtp_rank: 256
+  lm_loss_chunk_size: 256
+  mtp_loss_weight: 0.15
+  qk_clip_tau: 100.0
+  init_std: 0.02
+  gradient_checkpointing: true

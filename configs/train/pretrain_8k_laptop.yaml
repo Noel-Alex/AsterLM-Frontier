@@ -1,0 +1,30 @@
+train:
+  output_dir: runs/aster-220m-long-context
+  seed: 2026
+  device: cuda
+  dtype: bfloat16
+  compile: false
+  sequence_length: 8192
+  micro_batch_size: 1
+  gradient_accumulation_steps: 16
+  max_steps: 10000
+  max_tokens: 200000000
+  muon_lr: 0.004
+  adam_lr: 0.00012
+  min_lr_ratio: 0.2
+  schedule_type: wsd
+  decay_fraction: 0.1
+  decay_shape: cosine
+  warmup_steps: 50
+  weight_decay: 0.1
+  adam_betas: [0.9, 0.95]
+  muon_momentum: 0.95
+  muon_nesterov: true
+  muon_update_rms: 0.2
+  max_grad_norm: 1.0
+  qk_clip_interval: 50
+  log_interval: 10
+  eval_interval: 500
+  eval_batches: 16
+  save_interval: 500
+  tokenizer_path: artifacts/tokenizer.json

@@ -1,0 +1,29 @@
+stack_edu:
+  output_dir: data/stack-edu-multilang
+  shard_size_mb: 512
+  workers: 4
+  in_flight: 16
+  languages:
+  - name: Python
+    target_tokens: 400000000
+  - name: Cpp
+    target_tokens: 180000000
+  - name: JavaScript
+    target_tokens: 120000000
+  - name: TypeScript
+    target_tokens: 80000000
+  - name: Java
+    target_tokens: 140000000
+  - name: SQL
+    target_tokens: 100000000
+  - name: Rust
+    target_tokens: 80000000
+  - name: Go
+    target_tokens: 50000000
+  - name: Shell
+    target_tokens: 50000000
+  checkpoint_seconds: 900
+  checkpoint_records: 10000
+  connect_timeout_seconds: 60
+  read_timeout_seconds: 600
+  sdk_retries: 20

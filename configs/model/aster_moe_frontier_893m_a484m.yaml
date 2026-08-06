@@ -1,0 +1,81 @@
+model:
+  # Recommended starting point for a 12 GiB RTX 4080 Laptop after the VRAM matrix passes.
+  # Meta-validated size: ~890.3M logical parameters, ~481.5M active parameters/token.
+  vocab_size: 32768
+  d_model: 1152
+  n_layers: 30
+  n_heads: 18
+  head_dim: 64
+  ffn_hidden: 3072
+  max_seq_len: 131072
+  tie_embeddings: true
+  linear_backend: torch
+
+  # Fine-grained, modest MoE: enough inactive capacity to matter without starving dozens
+  # of tiny experts. First two layers remain dense; later layers use top-2 plus shared.
+  ffn_type: moe
+  moe_first_dense_layers: 2
+  moe_every: 1
+  moe_num_experts: 8
+  moe_top_k: 2
+  moe_shared_experts: 1
+  moe_expert_hidden: 704
+  moe_router_score: sigmoid
+  moe_balance_strategy: hybrid
+  moe_router_bias_update_speed: 0.001
+  moe_aux_loss_weight: 0.0001
+  moe_router_z_loss_weight: 0.00001
+
+  # Kimi/Qwen-style hybrid: recurrent finite-state memory in 75% of layers and exact,
+  # content-addressable compressed latent attention in 25%.
+  kda_ratio: 3
+  kda_backend: auto
+  kda_expand_v: 1.0
+  kda_short_conv: true
+  kda_conv_size: 4
+  kda_safe_gate: true
+  kda_lower_bound: -5.0
+  kda_allow_negative_eigenvalues: false
+
+  # MLA-like global layers. The global cache width is only 128 values/token/layer.
+  q_lora_rank: 384
+  latent_rms_norm: true
+  latent_rank: 96
+  rope_dim: 32
+  attention_window: 131072
+  sink_tokens: 64
+  attention_dropout: 0.0
+  attention_gate: true
+  qk_stat_tokens: 24
+
+  # VRAM-first inference cache. The most recent 1K positions remain BF16; older latent
+  # chunks are Hadamard-rotated groupwise INT4. RoPE keys stay BF16 by default.
+  cache_dtype: hadamard_int4
+  cache_group_size: 64
+  cache_recent_tokens: 1024
+  cache_chunk_tokens: 2048
+  cache_quantize_rope: false
+
+  # Train 8K first, then 16K and genuinely train 32K. 64K/128K are only called useful
+  # after retrieval and long-code evaluations pass.
+  rope_theta: 1000000.0
+  rope_scaling_type: yarn
+  rope_scaling_factor: 16.0
+  rope_original_max_position: 8192
+  yarn_beta_fast: 32.0
+  yarn_beta_slow: 1.0
+
+  rms_eps: 1.0e-6
+  norm_type: ssnorm
+  embedding_projection: true
+  residual_dropout: 0.0
+  ffn_dropout: 0.0
+  use_block_attnres: false
+
+  mtp_depth: 2
+  mtp_rank: 384
+  mtp_loss_weight: 0.12
+  lm_loss_chunk_size: 96
+  qk_clip_tau: 100.0
+  init_std: 0.02
+  gradient_checkpointing: true

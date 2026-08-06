@@ -1,0 +1,36 @@
+train:
+  output_dir: runs/probe-apollo-2k
+  seed: 1337
+  device: cuda
+  dtype: bfloat16
+  matmul_precision: high
+  compile: false
+
+  sequence_length: 2048
+  micro_batch_size: 1
+  gradient_accumulation_steps: 8
+  max_steps: 100
+
+  optimizer: apollo_mini
+  adam_lr: 0.003
+  adam_betas: [0.9, 0.95]
+  adam_eps: 1.0e-8
+  weight_decay: 0.1
+  apollo_rank: 1
+  apollo_scale: 128.0
+  apollo_scale_type: tensor
+  apollo_update_proj_gap: 200
+  apollo_scale_front: false
+  max_grad_norm: 1.0
+
+  schedule_type: constant
+  warmup_steps: 0
+  min_lr_ratio: 1.0
+  qk_clip_interval: 50
+  log_interval: 1
+  eval_interval: 1000
+  save_interval: 100
+  keep_last_checkpoints: 1
+
+  num_workers: 0
+  tokenizer_path: artifacts/tokenizer.json

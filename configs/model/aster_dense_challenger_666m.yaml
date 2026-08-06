@@ -1,0 +1,50 @@
+model:
+  # Dense equal-ish-active-compute challenger. Never assume MoE wins at this token budget.
+  vocab_size: 32768
+  d_model: 1280
+  n_layers: 28
+  n_heads: 20
+  head_dim: 64
+  ffn_hidden: 3456
+  max_seq_len: 131072
+  tie_embeddings: true
+  linear_backend: torch
+  ffn_type: dense
+
+  kda_ratio: 3
+  kda_backend: auto
+  kda_expand_v: 1.0
+  kda_short_conv: true
+  kda_conv_size: 4
+  kda_safe_gate: true
+  kda_lower_bound: -5.0
+
+  q_lora_rank: 384
+  latent_rms_norm: true
+  latent_rank: 96
+  rope_dim: 32
+  attention_window: 131072
+  sink_tokens: 64
+  attention_gate: true
+  qk_stat_tokens: 24
+  cache_dtype: hadamard_int4
+  cache_group_size: 64
+  cache_recent_tokens: 1024
+  cache_chunk_tokens: 2048
+  cache_quantize_rope: false
+
+  rope_theta: 1000000.0
+  rope_scaling_type: yarn
+  rope_scaling_factor: 16.0
+  rope_original_max_position: 8192
+
+  rms_eps: 1.0e-6
+  norm_type: ssnorm
+  embedding_projection: true
+  mtp_depth: 2
+  mtp_rank: 384
+  mtp_loss_weight: 0.12
+  lm_loss_chunk_size: 96
+  qk_clip_tau: 100.0
+  init_std: 0.02
+  gradient_checkpointing: true

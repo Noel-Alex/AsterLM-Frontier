@@ -1,0 +1,78 @@
+records:
+  output_dir: data/decontamination-benchmarks
+  shard_size_mb: 64
+  state_flush_records: 250
+  sources:
+  - id: mmlu
+    path: cais/mmlu
+    name: all
+    split: test
+    target_records: null
+    keep_fields:
+    - question
+    - choices
+    - answer
+    - subject
+    shuffle_seed: 2000
+  - id: arc_challenge
+    path: allenai/ai2_arc
+    name: ARC-Challenge
+    split: test
+    target_records: null
+    keep_fields:
+    - question
+    - choices
+    - answerKey
+    shuffle_seed: 2001
+  - id: gsm8k
+    path: openai/gsm8k
+    name: main
+    split: test
+    target_records: null
+    keep_fields:
+    - question
+    - answer
+    shuffle_seed: 2002
+  - id: hellaswag
+    path: Rowan/hellaswag
+    split: validation
+    target_records: null
+    keep_fields:
+    - ctx
+    - endings
+    - label
+    - activity_label
+    shuffle_seed: 2003
+  - id: truthfulqa
+    path: truthfulqa/truthful_qa
+    name: multiple_choice
+    split: validation
+    target_records: null
+    keep_fields:
+    - question
+    - mc1_targets
+    - mc2_targets
+    shuffle_seed: 2004
+  - id: humaneval
+    path: openai/openai_humaneval
+    split: test
+    target_records: null
+    keep_fields:
+    - task_id
+    - prompt
+    - canonical_solution
+    - test
+    shuffle_seed: 2005
+  - id: mbpp
+    path: google-research-datasets/mbpp
+    name: sanitized
+    split: test
+    target_records: null
+    keep_fields:
+    - task_id
+    - prompt
+    - code
+    - test_list
+    shuffle_seed: 2006
+  checkpoint_seconds: 900
+  checkpoint_records: 1000

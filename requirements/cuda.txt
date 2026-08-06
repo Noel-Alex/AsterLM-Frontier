@@ -1,0 +1,7 @@
+-r base.txt
+# FLA supplies the optimized Kimi Delta Attention kernels.
+fla-core>=0.4.0
+transformers>=4.53.3
+accelerate>=1.7
+# Optional: install a matching torchao build for weight-only inference quantization.
+# torchao>=0.11

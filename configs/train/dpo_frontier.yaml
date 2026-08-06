@@ -1,0 +1,36 @@
+train:
+  output_dir: runs/aster-frontier-dpo
+  seed: 2028
+  device: cuda
+  dtype: bfloat16
+  matmul_precision: high
+  compile: false
+  precision_backend: amp
+  sequence_length: 2048
+  micro_batch_size: 1
+  gradient_accumulation_steps: 8
+  max_steps: 2000
+  max_tokens: null
+  optimizer: torchao_cpu_offload_adamw
+  adam_lr: 0.000005
+  min_lr_ratio: 0.10
+  warmup_steps: 50
+  schedule_type: wsd
+  decay_fraction: 0.20
+  decay_shape: cosine
+  weight_decay: 0.01
+  adam_betas: [0.9, 0.95]
+  max_grad_norm: 0.5
+  qk_clip_interval: 50
+  log_interval: 5
+  eval_interval: 2000
+  eval_batches: 0
+  save_interval: 250
+  keep_last_checkpoints: 3
+  num_workers: 0
+  pin_memory: true
+  tokenizer_path: artifacts/tokenizer.json
+  tensorboard: true
+  jsonl_metrics: true
+  diagnostic_interval: 25
+  save_diagnostic_bundle: true

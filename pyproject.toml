@@ -1,0 +1,64 @@
+[build-system]
+requires = ["setuptools>=70", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "asterlm"
+version = "0.1.0"
+description = "A laptop-scale frontier language-model research stack"
+readme = "README.md"
+requires-python = ">=3.11,<3.14"
+license = {text = "MIT"}
+authors = [{name = "AsterLM contributors"}]
+dependencies = [
+  "torch>=2.6",
+  "PyYAML>=6.0",
+  "safetensors>=0.5",
+  "tokenizers>=0.21",
+  "datasets>=3.5",
+  "huggingface-hub>=0.32.0",
+  "fsspec>=2024.9",
+  "pyarrow>=18",
+  "numpy>=2.0",
+  "tqdm>=4.67",
+  "rich>=13.9",
+  "typer>=0.15",
+  "httpx>=0.28",
+  "boto3>=1.35",
+  "zstandard>=0.23",
+  "psutil>=6.1",
+]
+
+[project.optional-dependencies]
+cuda = [
+  "fla-core>=0.4.0",
+  "transformers>=4.53.3",
+  "accelerate>=1.7",
+]
+tracking = ["wandb>=0.19", "tensorboard>=2.18"]
+dev = ["pytest>=8.3", "ruff>=0.11"]
+quant = ["torchao>=0.11"]
+fp8 = ["transformer-engine[pytorch]>=2.6"]
+memory = ["apollo-torch>=1.0", "transformers>=4.53.3"]
+reasoning = ["math-verify>=0.7.0", "sympy>=1.13"]
+frontier = [
+  "torchao>=0.11",
+  "apollo-torch>=1.0",
+  "transformers>=4.53.3",
+  "wandb>=0.19",
+  "tensorboard>=2.18",
+  "math-verify>=0.7.0",
+  "sympy>=1.13",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 110
+target-version = "py311"
