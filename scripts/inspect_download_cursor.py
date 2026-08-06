@@ -7,20 +7,30 @@ import pickle
 from pathlib import Path
 from typing import Any
 
-from asterlm.data.hf_stream import is_legacy_multistream_cursor, is_sequential_cursor
+from asterlm.data.hf_stream import (
+    extract_legacy_resume_plan,
+    is_legacy_multistream_cursor,
+    is_sequential_cursor,
+)
 
 
-def describe(cursor: Any) -> tuple[str, int | None]:
+def describe(cursor: Any) -> tuple[str, int | None, int | None, str | None]:
     if is_sequential_cursor(cursor):
         states = cursor.get("child_states")
-        return "asterlm-sequential-migration", len(states) if isinstance(states, list) else None
+        return (
+            "asterlm-sequential-migration",
+            len(states) if isinstance(states, list) else None,
+            int(cursor.get("pending_cycle_skips", 0)),
+            "asterlm-sequential",
+        )
     if is_legacy_multistream_cursor(cursor):
-        state = cursor.get("examples_iterable", cursor) if isinstance(cursor, dict) else cursor
-        children = state.get("ex_iterables") if isinstance(state, dict) else None
-        return "legacy-hf-multistream", len(children) if isinstance(children, list) else None
+        plan = extract_legacy_resume_plan(cursor)
+        if plan is None:
+            return "legacy-hf-multistream", None, None, None
+        return "legacy-hf-multistream", plan.stream_count, plan.pending_chunks, plan.source
     if isinstance(cursor, dict):
-        return "huggingface-single/bounded", None
-    return type(cursor).__name__, None
+        return "huggingface-single/bounded", None, None, None
+    return type(cursor).__name__, None, None, None
 
 
 def main() -> None:
@@ -55,10 +65,14 @@ def main() -> None:
         raise SystemExit(f"State references missing cursor: {cursor_path}")
     with cursor_path.open("rb") as handle:
         cursor = pickle.load(handle)
-    kind, streams = describe(cursor)
+    kind, streams, pending, source = describe(cursor)
     print(f"cursor_kind:      {kind}")
     if streams is not None:
         print(f"cursor_streams:   {streams}")
+    if pending is not None:
+        print(f"resume_skip_chunks:{pending}")
+    if source is not None:
+        print(f"resume_state_from:{source}")
     if kind == "legacy-hf-multistream":
         print("next_resume:      migrate in place to one active child stream; no full restart")
     elif kind == "asterlm-sequential-migration":

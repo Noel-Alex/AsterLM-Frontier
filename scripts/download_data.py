@@ -380,7 +380,7 @@ def main() -> None:
     parser.add_argument("--skip-preflight", action="store_true")
     parser.add_argument("--require-auth", action="store_true")
     parser.add_argument("--continue-on-error", action="store_true")
-    parser.add_argument("--command-retries", type=int, default=1)
+    parser.add_argument("--command-retries", type=int, default=0)
     parser.add_argument("--command-retry-seconds", type=float, default=30.0)
     parser.add_argument("--interrupt-grace-seconds", type=float, default=300.0)
     parser.add_argument("--max-retries", type=int, default=50, help="Passed to materializers; 0 means unlimited")

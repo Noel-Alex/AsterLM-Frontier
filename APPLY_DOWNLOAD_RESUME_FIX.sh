@@ -56,8 +56,8 @@ Patch validation passed.
 Inspect the existing FineWeb cursor:
   python scripts/inspect_download_cursor.py data/corpus-frontier-16b/fineweb_edu
 
-Restart with a 20 GiB process ceiling:
-  python scripts/download_data.py --profile overtrain100 --require-auth --network-mode low --max-retries 0 --max-rss-gib 20
+Restart with disk + RAM protection (command-level relaunch disabled):
+  ./RUN_100B_SAFE.sh
 
 Before your next push, make sure Git tracks the previously ignored package/config directories:
   git add .gitignore src/asterlm/data configs/data scripts tests/test_hf_stream.py docs/DOWNLOAD_RESUME_MEMORY_FIX.md APPLY_DOWNLOAD_RESUME_FIX.sh
