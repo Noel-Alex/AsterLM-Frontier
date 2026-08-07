@@ -104,12 +104,6 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--profile", default=os.getenv("ASTERLM_PROFILE", "overtrain100"))
     parser.add_argument("--network-mode", default=os.getenv("ASTERLM_NETWORK_MODE", "balanced"))
     parser.add_argument(
-        "--parallel-streams",
-        type=positive_int,
-        default=int(os.getenv("ASTERLM_HF_PARALLEL_STREAMS", "5")),
-        help="Concurrent legacy Parquet child readers. 5 is the fast 32-GiB default; try 6 if RSS stays below the guard.",
-    )
-    parser.add_argument(
         "--allow-ipv6",
         action="store_true",
         help="Do not force IPv4 DNS results. The default avoids broken IPv6 SYN-SENT hangs.",
@@ -130,12 +124,6 @@ def main() -> int:
     )
     env["ASTERLM_FORCE_IPV4"] = "0" if args.allow_ipv6 else "1"
     env["PYTHONUNBUFFERED"] = "1"
-    env["ASTERLM_HF_PARALLEL_STREAMS"] = str(args.parallel_streams)
-    # The original writer used zstd level 6 with threads=0, which explicitly
-    # disables zstd multithreading. A faster level-3, four-worker writer helps
-    # drain a prefetched backlog without materially changing corpus contents.
-    env.setdefault("ASTERLM_ZSTD_LEVEL", "3")
-    env.setdefault("ASTERLM_ZSTD_THREADS", "4")
     command = [
         sys.executable,
         "scripts/download_data.py",
@@ -157,9 +145,7 @@ def main() -> int:
     print(f"Materializer RSS ceiling:{args.max_rss_gib:.1f} GiB")
     print(f"Force IPv4:              {not args.allow_ipv6}")
     print(f"Network mode:            {args.network_mode}")
-    print(f"Concurrent HF readers:   {args.parallel_streams}")
-    print(f"Zstd level/threads:      {env['ASTERLM_ZSTD_LEVEL']}/{env['ASTERLM_ZSTD_THREADS']}")
-    print("Prefetch policy:         one speculative row per active HF child")
+    print("Dataset input shards:    1 active at a time (bounded Arrow memory)")
     print("Command-level relaunch:  disabled")
     print("$", " ".join(command), flush=True)
 

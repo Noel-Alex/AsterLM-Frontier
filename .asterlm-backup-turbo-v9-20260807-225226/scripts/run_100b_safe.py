@@ -104,12 +104,6 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--profile", default=os.getenv("ASTERLM_PROFILE", "overtrain100"))
     parser.add_argument("--network-mode", default=os.getenv("ASTERLM_NETWORK_MODE", "balanced"))
     parser.add_argument(
-        "--parallel-streams",
-        type=positive_int,
-        default=int(os.getenv("ASTERLM_HF_PARALLEL_STREAMS", "5")),
-        help="Concurrent legacy Parquet child readers. 5 is the fast 32-GiB default; try 6 if RSS stays below the guard.",
-    )
-    parser.add_argument(
         "--allow-ipv6",
         action="store_true",
         help="Do not force IPv4 DNS results. The default avoids broken IPv6 SYN-SENT hangs.",
@@ -130,12 +124,23 @@ def main() -> int:
     )
     env["ASTERLM_FORCE_IPV4"] = "0" if args.allow_ipv6 else "1"
     env["PYTHONUNBUFFERED"] = "1"
-    env["ASTERLM_HF_PARALLEL_STREAMS"] = str(args.parallel_streams)
-    # The original writer used zstd level 6 with threads=0, which explicitly
-    # disables zstd multithreading. A faster level-3, four-worker writer helps
-    # drain a prefetched backlog without materially changing corpus contents.
-    env.setdefault("ASTERLM_ZSTD_LEVEL", "3")
-    env.setdefault("ASTERLM_ZSTD_THREADS", "4")
+
+    # Keep one decoded Hugging Face input shard, but make the active remote
+    # Parquet fragment aggressive. This creates a bounded raw-byte backlog
+    # rather than restoring the old ten-decoded-stream RAM explosion.
+    if args.network_mode in {"safe-fast", "fast"}:
+        env.setdefault("ASTERLM_ARROW_IO_THREADS", "24")
+        env.setdefault("ASTERLM_PARQUET_PREFETCH_LIMIT", "8")
+        env.setdefault("ASTERLM_PARQUET_RANGE_MIB", "128")
+    elif args.network_mode == "balanced":
+        env.setdefault("ASTERLM_ARROW_IO_THREADS", "12")
+        env.setdefault("ASTERLM_PARQUET_PREFETCH_LIMIT", "4")
+        env.setdefault("ASTERLM_PARQUET_RANGE_MIB", "96")
+    else:
+        env.setdefault("ASTERLM_ARROW_IO_THREADS", "6")
+        env.setdefault("ASTERLM_PARQUET_PREFETCH_LIMIT", "1")
+        env.setdefault("ASTERLM_PARQUET_RANGE_MIB", "32")
+
     command = [
         sys.executable,
         "scripts/download_data.py",
@@ -157,9 +162,10 @@ def main() -> int:
     print(f"Materializer RSS ceiling:{args.max_rss_gib:.1f} GiB")
     print(f"Force IPv4:              {not args.allow_ipv6}")
     print(f"Network mode:            {args.network_mode}")
-    print(f"Concurrent HF readers:   {args.parallel_streams}")
-    print(f"Zstd level/threads:      {env['ASTERLM_ZSTD_LEVEL']}/{env['ASTERLM_ZSTD_THREADS']}")
-    print("Prefetch policy:         one speculative row per active HF child")
+    print("Dataset input shards:    1 active at a time (bounded Arrow memory)")
+    print(f"Arrow I/O threads:        {env['ASTERLM_ARROW_IO_THREADS']}")
+    print(f"Parquet prefetch ranges:  {env['ASTERLM_PARQUET_PREFETCH_LIMIT']}")
+    print(f"Parquet range size:       {env['ASTERLM_PARQUET_RANGE_MIB']} MiB")
     print("Command-level relaunch:  disabled")
     print("$", " ".join(command), flush=True)
 

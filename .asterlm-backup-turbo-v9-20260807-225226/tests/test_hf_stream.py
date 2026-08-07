@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from copy import deepcopy
-import time
 
 from asterlm.data.hf_stream import (
     ASTERLM_SEQUENTIAL_CURSOR,
@@ -486,45 +485,3 @@ def test_next_shard_restart_does_not_skip_clean_boundary_again():
     stream = SequentializedHfDataset(FakeLegacyDataset(children), cursor, legacy_policy="next-shard")
     assert texts(stream)[0] == "fresh-0"
     assert stream.state_dict()["last_resume_skipped_partial_shards"] == []
-
-
-def test_parallel_prefetch_checkpoint_ignores_unemitted_lookahead(monkeypatch):
-    monkeypatch.setenv("ASTERLM_HF_PARALLEL_STREAMS", "2")
-    cursor = {
-        "examples_iterable": cycling_state(positions=(0, 0), index=0),
-        "epoch": 0,
-    }
-    stream = SequentializedHfDataset(FakeLegacyDataset(), cursor, legacy_policy="exact")
-    iterator = iter(stream)
-
-    assert next(iterator)["text"] == "a0"
-
-    # Give both background readers time to fetch speculative lookahead. The live
-    # child states can now be ahead of what AsterLM has actually emitted.
-    time.sleep(0.05)
-    saved = stream.state_dict()
-
-    assert saved["parallel_streams"] == 2
-    # a0 crossed the iterator boundary, but b0 and a1 must remain uncommitted
-    # even if their futures have already completed.
-    assert saved["child_states"][0]["position"] == 1
-    assert saved["child_states"][1]["position"] == 0
-
-    iterator.close()
-
-    monkeypatch.setenv("ASTERLM_HF_PARALLEL_STREAMS", "1")
-    resumed = SequentializedHfDataset(FakeLegacyDataset(), saved, legacy_policy="exact")
-    assert texts(resumed) == ["a1", "a2", "b0", "b1", "b2"]
-
-
-def test_parallel_prefetch_round_robins_bounded_children(monkeypatch):
-    monkeypatch.setenv("ASTERLM_HF_PARALLEL_STREAMS", "2")
-    cursor = {
-        "examples_iterable": cycling_state(positions=(0, 0), index=0),
-        "epoch": 0,
-    }
-    stream = SequentializedHfDataset(FakeLegacyDataset(), cursor, legacy_policy="exact")
-    assert texts(stream) == ["a0", "b0", "a1", "b1", "a2", "b2"]
-    saved = stream.state_dict()
-    assert saved["exhausted"] == [True, True]
-    assert saved["parallel_streams"] == 2

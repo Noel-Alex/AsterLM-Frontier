@@ -214,9 +214,7 @@ class ZstdCheckpointWriter:
         self.root.mkdir(parents=True, exist_ok=True)
         partial = self.root / f"{self.prefix}-{self.index:05d}.jsonl.zst.partial"
         self.raw = partial.open("wb")
-        level = int(os.getenv("ASTERLM_ZSTD_LEVEL", "6"))
-        threads = int(os.getenv("ASTERLM_ZSTD_THREADS", "0"))
-        compressor = zstd.ZstdCompressor(level=level, threads=threads, write_checksum=True)
+        compressor = zstd.ZstdCompressor(level=6, threads=0, write_checksum=True)
         self.stream = compressor.stream_writer(self.raw, closefd=False)
         self.text = io.TextIOWrapper(self.stream, encoding="utf-8", write_through=True)
         self.uncompressed_bytes = 0

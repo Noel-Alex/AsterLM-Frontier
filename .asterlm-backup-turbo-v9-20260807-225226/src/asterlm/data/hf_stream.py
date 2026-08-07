@@ -1,9 +1,7 @@
 from __future__ import annotations
 
-import concurrent.futures
 import gc
 import os
-from collections import deque
 from copy import deepcopy
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
@@ -315,12 +313,6 @@ class SequentializedHfDataset:
         self._current_child: int
         self._pending_cycle_skips = 0
         self._cycle_index = 0
-        self._parallel_streams = max(1, int(os.getenv("ASTERLM_HF_PARALLEL_STREAMS", "1")))
-        # In parallel mode child iterators may read ahead before their rows are
-        # emitted. These snapshots track only rows that have actually crossed
-        # the AsterLM iterator boundary, so state_dict() never checkpoints
-        # speculative lookahead.
-        self._safe_child_states: list[Any] = []
         requested_policy = (legacy_policy or os.getenv("ASTERLM_LEGACY_RESUME_POLICY", LEGACY_POLICY_NEXT_SHARD)).strip().lower()
         if requested_policy not in {LEGACY_POLICY_EXACT, LEGACY_POLICY_NEXT_SHARD}:
             raise RuntimeError(
@@ -639,133 +631,8 @@ class SequentializedHfDataset:
                     "Legacy cursor asks to skip additional outer chunks, but every child stream is exhausted"
                 )
 
-    def _snapshot_live_child_states(self) -> list[Any]:
-        states: list[Any] = []
-        for child in self._children:
-            method = getattr(child, "state_dict", None)
-            if not callable(method):
-                raise RuntimeError("Hugging Face child stream cannot expose a cursor")
-            states.append(deepcopy(method()))
-        return states
-
-    def _advance_current_child(self) -> None:
-        while self._current_child < len(self._children) and self._exhausted[self._current_child]:
-            self._current_child += 1
-
-    def _iter_parallel(self) -> Iterator[dict[str, Any]]:
-        """Round-robin a bounded number of legacy child readers concurrently.
-
-        Hugging Face's original datasets==5.0.1 shuffle opened ten children at
-        once and was fast, but each child could retain a decoded Parquet row
-        group. Here the active-reader count is explicit and configurable.
-
-        Each worker returns the child's state *after* fetching one row. We only
-        promote that state to ``_safe_child_states`` immediately before yielding
-        that row. Futures for other children are therefore speculative lookahead
-        and never leak into a committed checkpoint.
-        """
-
-        self._advance_current_child()
-        candidates = [
-            index
-            for index in range(self._current_child, len(self._children))
-            if not self._exhausted[index]
-        ]
-        if not candidates:
-            return
-
-        width = min(self._parallel_streams, len(candidates))
-        waiting = deque(candidates)
-        active = deque()
-        iterators: dict[int, Iterator[dict[str, Any]]] = {}
-        futures: dict[int, concurrent.futures.Future[tuple[bool, dict[str, Any] | None, Any]]] = {}
-
-        if not self._safe_child_states:
-            self._safe_child_states = self._snapshot_live_child_states()
-
-        def fetch_one(index: int) -> tuple[bool, dict[str, Any] | None, Any]:
-            iterator = iterators[index]
-            try:
-                row = next(iterator)
-            except StopIteration:
-                state = deepcopy(self._children[index].state_dict())
-                return True, None, state
-            state = deepcopy(self._children[index].state_dict())
-            return False, row, state
-
-        executor = concurrent.futures.ThreadPoolExecutor(
-            max_workers=width,
-            thread_name_prefix="asterlm-hf-prefetch",
-        )
-
-        def activate_one() -> bool:
-            if not waiting:
-                return False
-            index = waiting.popleft()
-            iterator = self._iter_child_rows(index)
-            iterators[index] = iterator
-            futures[index] = executor.submit(fetch_one, index)
-            active.append(index)
-            return True
-
-        for _ in range(width):
-            activate_one()
-
-        try:
-            while active:
-                index = active.popleft()
-                future = futures[index]
-                ended, row, after_state = future.result()
-
-                if ended:
-                    self._safe_child_states[index] = deepcopy(after_state)
-                    self._exhausted[index] = True
-                    futures.pop(index, None)
-                    iterator = iterators.pop(index, None)
-                    if iterator is not None:
-                        close = getattr(iterator, "close", None)
-                        if callable(close):
-                            close()
-                    self._advance_current_child()
-                    activate_one()
-                    continue
-
-                if row is None:
-                    raise RuntimeError("Parallel Hugging Face reader returned an empty non-terminal row")
-
-                # Commit the row's exact child cursor before exposing it to the
-                # caller. The next fetch may now run in parallel, but its live
-                # state stays speculative until that future is selected.
-                self._safe_child_states[index] = deepcopy(after_state)
-                futures[index] = executor.submit(fetch_one, index)
-                active.append(index)
-                yield row
-        finally:
-            # Do not wait indefinitely for a blocked remote read during Ctrl-C.
-            # The outer process-group supervisor has a bounded stop path, and
-            # _safe_child_states already represents the last rows actually
-            # emitted to AsterLM.
-            for future in futures.values():
-                future.cancel()
-            for index, iterator in list(iterators.items()):
-                future = futures.get(index)
-                if future is not None and not future.done():
-                    continue
-                close = getattr(iterator, "close", None)
-                if callable(close):
-                    try:
-                        close()
-                    except (RuntimeError, ValueError):
-                        pass
-            executor.shutdown(wait=False, cancel_futures=True)
-
     def __iter__(self) -> Iterator[dict[str, Any]]:
         self._apply_outer_pending_skips()
-
-        if self._parallel_streams > 1:
-            yield from self._iter_parallel()
-            return
-
         while self._current_child < len(self._children):
             index = self._current_child
             if self._exhausted[index]:
@@ -781,11 +648,12 @@ class SequentializedHfDataset:
                 release_arrow_memory()
 
     def state_dict(self) -> dict[str, Any]:
-        states = (
-            deepcopy(self._safe_child_states)
-            if self._parallel_streams > 1 and self._safe_child_states
-            else self._snapshot_live_child_states()
-        )
+        states: list[Any] = []
+        for child in self._children:
+            method = getattr(child, "state_dict", None)
+            if not callable(method):
+                raise RuntimeError("Hugging Face child stream cannot expose a cursor")
+            states.append(method())
         return {
             "_asterlm_cursor": ASTERLM_SEQUENTIAL_CURSOR,
             "current_child": self._current_child,
@@ -795,7 +663,6 @@ class SequentializedHfDataset:
             "pending_cycle_skips": self._pending_cycle_skips,
             "cycle_index": self._cycle_index,
             "migration_policy": self._migration_policy,
-            "parallel_streams": self._parallel_streams,
             "skipped_partial_shards": deepcopy(self._skipped_partial_shards),
             "last_resume_skipped_partial_shards": deepcopy(self._last_resume_skipped_partial_shards),
         }
