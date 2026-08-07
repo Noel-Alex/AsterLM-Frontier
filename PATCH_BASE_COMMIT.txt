@@ -1,3 +1,5 @@
-Base repository: Noel-Alex/AsterLM-Frontier
-Base commit: 6060c91f975ebc2ad9d34bb6caac26d3893e2b0b
-Patch: bounded HF streaming + recursive nested legacy cursor migration v2
+AsterLM download-resume fix v5 (cumulative)
+
+Designed for the AsterLM-Frontier tree at/after commit 6060c91f975ebc2ad9d34bb6caac26d3893e2b0b and cumulative over fixes v1-v4.
+
+v5 adds an offline next-shard conversion for the exact FineWeb checkpoint-208 legacy cursor. It preserves all finalized local shards and committed token counters while avoiding multi-GiB remote replay. The trade-off is that only the unconsumed tails of the ten partially read remote Parquet files are omitted and replaced by later untouched files from the same source.

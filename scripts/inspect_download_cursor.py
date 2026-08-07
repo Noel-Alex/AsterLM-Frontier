@@ -14,23 +14,27 @@ from asterlm.data.hf_stream import (
 )
 
 
-def describe(cursor: Any) -> tuple[str, int | None, int | None, str | None]:
+def describe(cursor: Any) -> tuple[str, int | None, int | None, str | None, str | None]:
     if is_sequential_cursor(cursor):
         states = cursor.get("child_states")
+        raw_policy = cursor.get("migration_policy")
+        policy = str(raw_policy) if raw_policy not in (None, "") else "exact/unset"
+        kind = "asterlm-next-shard-migration" if policy == "next-shard" else "asterlm-sequential-migration"
         return (
-            "asterlm-sequential-migration",
+            kind,
             len(states) if isinstance(states, list) else None,
             int(cursor.get("pending_cycle_skips", 0)),
             "asterlm-sequential",
+            policy,
         )
     if is_legacy_multistream_cursor(cursor):
         plan = extract_legacy_resume_plan(cursor)
         if plan is None:
-            return "legacy-hf-multistream", None, None, None
-        return "legacy-hf-multistream", plan.stream_count, plan.pending_chunks, plan.source
+            return "legacy-hf-multistream", None, None, None, "next-shard"
+        return "legacy-hf-multistream", plan.stream_count, plan.pending_chunks, plan.source, "next-shard"
     if isinstance(cursor, dict):
-        return "huggingface-single/bounded", None, None, None
-    return type(cursor).__name__, None, None, None
+        return "huggingface-single/bounded", None, None, None, None
+    return type(cursor).__name__, None, None, None, None
 
 
 def main() -> None:
@@ -65,7 +69,7 @@ def main() -> None:
         raise SystemExit(f"State references missing cursor: {cursor_path}")
     with cursor_path.open("rb") as handle:
         cursor = pickle.load(handle)
-    kind, streams, pending, source = describe(cursor)
+    kind, streams, pending, source, policy = describe(cursor)
     print(f"cursor_kind:      {kind}")
     if streams is not None:
         print(f"cursor_streams:   {streams}")
@@ -73,10 +77,20 @@ def main() -> None:
         print(f"resume_skip_chunks:{pending}")
     if source is not None:
         print(f"resume_state_from:{source}")
+    if policy is not None:
+        print(f"migration_policy: {policy}")
     if kind == "legacy-hf-multistream":
-        print("next_resume:      migrate in place to one active child stream; no full restart")
+        print("next_resume:      offline next-shard migration recommended; preserves committed output")
+        print("tradeoff:         omits only the unconsumed tails of the 10 partial remote files")
+    elif kind == "asterlm-next-shard-migration":
+        skipped = cursor.get("skipped_partial_shards", []) if isinstance(cursor, dict) else []
+        latest = cursor.get("last_resume_skipped_partial_shards", []) if isinstance(cursor, dict) else []
+        print(f"partial_files_skipped_total:{len(skipped) if isinstance(skipped, list) else 0}")
+        print(f"partial_files_skipped_last_resume:{len(latest) if isinstance(latest, list) else 0}")
+        print("restart_policy:   automatically advance any newly-partial legacy file on every restart")
+        print("next_resume:      continue from an untouched remote file; no multi-GB row replay")
     elif kind == "asterlm-sequential-migration":
-        print("next_resume:      continue the already-migrated bounded sequential cursor")
+        print("next_resume:      run migrate_legacy_cursor.py offline; this exact cursor may reread large partial files")
     else:
         print("next_resume:      restore the saved bounded/single Hugging Face cursor")
 

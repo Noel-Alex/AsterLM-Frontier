@@ -5,8 +5,10 @@ from copy import deepcopy
 from asterlm.data.hf_stream import (
     ASTERLM_SEQUENTIAL_CURSOR,
     BOUNDED_RESHARD_LAYOUT,
+    LEGACY_NEXT_SHARD_LAYOUT,
     LEGACY_SEQUENTIAL_LAYOUT,
     SequentializedHfDataset,
+    convert_sequential_cursor_to_next_shard,
     extract_legacy_resume_plan,
     is_legacy_multistream_cursor,
     open_resumable_hf_stream,
@@ -210,7 +212,7 @@ def test_outer_rebatched_previous_state_is_authoritative():
 
 
 def test_sequentializes_direct_legacy_cursor_without_duplicates_or_skips():
-    stream = SequentializedHfDataset(FakeLegacyDataset(), legacy_cursor())
+    stream = SequentializedHfDataset(FakeLegacyDataset(), legacy_cursor(), legacy_policy="exact")
     assert texts(stream) == ["a1", "a2", "b1", "b2"]
     cursor = stream.state_dict()
     assert cursor["_asterlm_cursor"] == ASTERLM_SEQUENTIAL_CURSOR
@@ -218,20 +220,20 @@ def test_sequentializes_direct_legacy_cursor_without_duplicates_or_skips():
 
 
 def test_outer_pending_chunks_are_discarded_before_sequential_drain():
-    stream = SequentializedHfDataset(FakeLegacyDataset(), exact_outer_rebatched_cursor())
+    stream = SequentializedHfDataset(FakeLegacyDataset(), exact_outer_rebatched_cursor(), legacy_policy="exact")
     # Old round-robin continuation would yield a1,b1 first, but those two rows
     # were already emitted by the outer wrapper and must be skipped.
     assert texts(stream) == ["a2", "b2"]
 
 
 def test_sequential_cursor_round_trip_after_exact_migration():
-    first = SequentializedHfDataset(FakeLegacyDataset(), exact_outer_rebatched_cursor())
+    first = SequentializedHfDataset(FakeLegacyDataset(), exact_outer_rebatched_cursor(), legacy_policy="exact")
     iterator = iter(first)
     assert next(iterator)["text"] == "a2"
     saved = first.state_dict()
     assert saved["pending_cycle_skips"] == 0
 
-    resumed = SequentializedHfDataset(FakeLegacyDataset(), saved)
+    resumed = SequentializedHfDataset(FakeLegacyDataset(), saved, legacy_policy="exact")
     assert texts(resumed) == ["b2"]
 
 
@@ -259,7 +261,8 @@ def test_new_stream_is_resharded_and_uses_one_input_shard():
     }
 
 
-def test_existing_multistream_cursor_uses_sequential_migration():
+def test_existing_multistream_cursor_can_use_exact_sequential_migration(monkeypatch):
+    monkeypatch.setenv("ASTERLM_LEGACY_RESUME_POLICY", "exact")
     stream, layout = open_resumable_hf_stream(
         FakeLegacyDataset,
         seed=None,
@@ -269,3 +272,216 @@ def test_existing_multistream_cursor_uses_sequential_migration():
     )
     assert layout == LEGACY_SEQUENTIAL_LAYOUT
     assert texts(stream) == ["a2", "b2"]
+
+
+class FakeShardChild:
+    def __init__(self, shards):
+        self.shards = [[dict(row) for row in shard] for shard in shards]
+        self._state_dict = None
+
+    @property
+    def num_shards(self):
+        return len(self.shards)
+
+    def _init_state_dict(self):
+        self._state_dict = {
+            "examples_iterable": {
+                "shard_idx": 0,
+                "shard_example_idx": 0,
+                "type": "ArrowExamplesIterable",
+            },
+            "previous_state": None,
+            "batch_idx": 0,
+            "num_chunks_since_previous_state": 0,
+            "cropped_chunk_length": 0,
+            "type": "RebatchedArrowExamplesIterable",
+        }
+        return self._state_dict
+
+    def load_state_dict(self, state):
+        self._state_dict = deepcopy(state)
+
+    def state_dict(self):
+        return deepcopy(self._state_dict)
+
+    def iter_arrow(self):
+        base = self._state_dict.get("previous_state") or self._state_dict["examples_iterable"]
+        shard_idx = int(base["shard_idx"])
+        row_idx = int(base.get("shard_example_idx", 0))
+        while shard_idx < len(self.shards):
+            shard = self.shards[shard_idx]
+            while row_idx < len(shard):
+                row = shard[row_idx]
+                row_idx += 1
+                self._state_dict["examples_iterable"] = {
+                    "shard_idx": shard_idx,
+                    "shard_example_idx": row_idx,
+                    "type": "ArrowExamplesIterable",
+                }
+                yield f"{shard_idx}:{row_idx - 1}", FakeTable(row)
+            shard_idx += 1
+            row_idx = 0
+            self._state_dict["examples_iterable"] = {
+                "shard_idx": shard_idx,
+                "shard_example_idx": 0,
+                "type": "ArrowExamplesIterable",
+            }
+
+
+def test_default_legacy_migration_skips_only_partial_files_without_remote_replay():
+    children = [
+        FakeShardChild(
+            [
+                [{"text": f"old-{i}"}],
+                [{"text": f"new-{i}-a"}, {"text": f"new-{i}-b"}],
+                [{"text": f"later-{i}"}],
+            ]
+        )
+        for i in range(10)
+    ]
+    stream = SequentializedHfDataset(
+        FakeLegacyDataset(children),
+        user_cursor_shape(),
+        legacy_policy="next-shard",
+    )
+    rows = texts(stream)
+    assert not any(value.startswith("old-") for value in rows)
+    assert rows[:3] == ["new-0-a", "new-0-b", "later-0"]
+    saved = stream.state_dict()
+    assert saved["migration_policy"] == "next-shard"
+    assert len(saved["skipped_partial_shards"]) == 10
+    assert saved["skipped_partial_shards"][0]["rows_already_committed_or_prefetched"] == 414_000
+    assert saved["skipped_partial_shards"][1]["rows_already_committed_or_prefetched"] == 414_000
+    assert saved["skipped_partial_shards"][2]["rows_already_committed_or_prefetched"] == 413_999
+
+
+def test_open_resumable_defaults_to_next_shard_policy(monkeypatch):
+    monkeypatch.delenv("ASTERLM_LEGACY_RESUME_POLICY", raising=False)
+    children = [FakeShardChild([[{"text": "old"}], [{"text": f"new-{i}"}]]) for i in range(10)]
+
+    def factory():
+        return FakeLegacyDataset(children)
+
+    stream, layout = open_resumable_hf_stream(
+        factory,
+        seed=None,
+        cursor=user_cursor_shape(),
+        fallback_skip=0,
+        layout=None,
+    )
+    assert layout == LEGACY_NEXT_SHARD_LAYOUT
+    assert texts(stream)[0] == "new-0"
+
+
+def sequential_v3_cursor(*, rows=413_000, pending=0, current_child=0):
+    states = []
+    for _ in range(10):
+        states.append(
+            {
+                "examples_iterable": {
+                    "shard_idx": 0,
+                    "shard_example_idx": rows,
+                    "type": "ArrowExamplesIterable",
+                },
+                "previous_state": {
+                    "shard_idx": 0,
+                    "shard_example_idx": rows,
+                    "type": "ArrowExamplesIterable",
+                },
+                "batch_idx": rows,
+                "num_chunks_since_previous_state": 0,
+                "cropped_chunk_length": 0,
+                "type": "RebatchedArrowExamplesIterable",
+            }
+        )
+    return {
+        "_asterlm_cursor": ASTERLM_SEQUENTIAL_CURSOR,
+        "current_child": current_child,
+        "exhausted": [False] * 10,
+        "child_states": states,
+        "legacy_stream_count": 10,
+        "pending_cycle_skips": pending,
+        "cycle_index": 0,
+    }
+
+
+def test_v3_v4_sequential_cursor_upgrades_offline_to_next_shard():
+    converted = convert_sequential_cursor_to_next_shard(sequential_v3_cursor(pending=2))
+    assert converted["migration_policy"] == "next-shard"
+    assert converted["pending_cycle_skips"] == 0
+    assert len(converted["skipped_partial_shards"]) == 10
+    for state in converted["child_states"]:
+        base = state["examples_iterable"]
+        assert base["shard_idx"] == 1
+        assert base["shard_example_idx"] == 0
+        assert state["previous_state"] is None
+    assert converted["skipped_partial_shards"][0]["rows_already_committed_or_prefetched"] == 413_001
+    assert converted["skipped_partial_shards"][1]["rows_already_committed_or_prefetched"] == 413_001
+    assert converted["skipped_partial_shards"][2]["rows_already_committed_or_prefetched"] == 413_000
+
+
+def test_sequential_upgrade_does_not_skip_an_untouched_boundary_shard():
+    cursor = sequential_v3_cursor(rows=0)
+    converted = convert_sequential_cursor_to_next_shard(cursor)
+    assert converted["migration_policy"] == "next-shard"
+    assert converted["skipped_partial_shards"] == []
+    for state in converted["child_states"]:
+        assert state["examples_iterable"]["shard_idx"] == 0
+        assert state["examples_iterable"]["shard_example_idx"] == 0
+
+
+def test_sequential_upgrade_preserves_completed_children():
+    cursor = sequential_v3_cursor(rows=413_000, current_child=2)
+    cursor["exhausted"][0] = True
+    cursor["exhausted"][1] = True
+    converted = convert_sequential_cursor_to_next_shard(cursor)
+    assert converted["current_child"] == 2
+    assert len(converted["skipped_partial_shards"]) == 8
+    assert converted["child_states"][0] == cursor["child_states"][0]
+    assert converted["child_states"][1] == cursor["child_states"][1]
+    assert converted["child_states"][2]["examples_iterable"]["shard_idx"] == 1
+
+
+def test_next_shard_policy_is_reapplied_on_every_sequential_restart():
+    # Simulate a cursor that was already migrated, then made progress partway
+    # through the next remote file before checkpointing again.
+    cursor = sequential_v3_cursor(rows=123_456)
+    cursor["migration_policy"] = "next-shard"
+    cursor["skipped_partial_shards"] = [{"stream_index": 0, "partial_shard_index": 0, "next_shard_index": 1}]
+
+    children = [
+        FakeShardChild(
+            [
+                [{"text": f"old0-{i}"}],
+                [{"text": f"partial1-{i}"}],
+                [{"text": f"fresh2-{i}"}],
+            ]
+        )
+        for i in range(10)
+    ]
+    # Make the stored file index 1 to represent progress after the first migration.
+    for state in cursor["child_states"]:
+        state["examples_iterable"]["shard_idx"] = 1
+        state["previous_state"]["shard_idx"] = 1
+
+    stream = SequentializedHfDataset(FakeLegacyDataset(children), cursor, legacy_policy="next-shard")
+    rows = texts(stream)
+    assert rows[0] == "fresh2-0"
+    saved = stream.state_dict()
+    latest = saved["last_resume_skipped_partial_shards"]
+    assert len(latest) == 10
+    assert latest[0]["partial_shard_index"] == 1
+    assert latest[0]["next_shard_index"] == 2
+    assert len(saved["skipped_partial_shards"]) == 11
+
+
+def test_next_shard_restart_does_not_skip_clean_boundary_again():
+    cursor = sequential_v3_cursor(rows=0)
+    cursor["migration_policy"] = "next-shard"
+    for state in cursor["child_states"]:
+        state["examples_iterable"]["shard_idx"] = 1
+        state["previous_state"]["shard_idx"] = 1
+    children = [FakeShardChild([[{"text": "old"}], [{"text": f"fresh-{i}"}]]) for i in range(10)]
+    stream = SequentializedHfDataset(FakeLegacyDataset(children), cursor, legacy_policy="next-shard")
+    assert texts(stream)[0] == "fresh-0"
+    assert stream.state_dict()["last_resume_skipped_partial_shards"] == []

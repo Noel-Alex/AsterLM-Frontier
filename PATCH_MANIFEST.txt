@@ -1,30 +1,33 @@
-AsterLM bounded Hugging Face streaming and exact cursor migration patch v3
-
-Base commit:
-  6060c91f975ebc2ad9d34bb6caac26d3893e2b0b
-
-Critical fixes:
-- recognizes the real datasets==5.0.1 CyclingMultiSources durable shape, which has
-  ex_iterable_idx/previous_states/is_exhausted but no serialized ex_iterables key;
-- selects the outer RebatchedArrowExamplesIterable.previous_state as authoritative
-  instead of the stale nested current snapshot;
-- mirrors the outer wrapper's num_chunks_since_previous_state before changing
-  from round-robin to sequential output order;
-- restores and iterates child RebatchedArrow streams through iter_arrow(), so the
-  child's own previous_state/num_chunks resume semantics are honored;
-- migrates the uploaded 4,847,909,935-token checkpoint with 10 streams and exactly
-  2 pending outer chunks without deleting committed shards;
-- retains max_buffer_input_shards=1 and Parquet row-group resharding for new streams;
-- retains configurable RSS and system-available-memory guards;
-- disables command-level relaunch by default while retaining materializer network retries;
-- includes RUN_100B_SAFE.sh with disk and RAM protection;
-- fixes root-only /data/ Git ignore semantics.
-
-Validation:
-- 71 complete repository tests passed;
-- exact uploaded cursor inspection reports 10 legacy streams, 2 pending chunks,
-  and authoritative state at $.examples_iterable.previous_state;
-- synthetic migration using the exact uploaded cursor advances child 0 and child 1
-  once, then resumes child 0 at row 414000;
-- Python compileall passed;
-- all 63 YAML configurations parsed.
+APPLY_DOWNLOAD_RESUME_FIX.sh
+PATCH_BASE_COMMIT.txt
+PATCH_MANIFEST.txt
+RUN_100B_SAFE.sh
+configs/data/continued_pretrain_reasoning.yaml
+configs/data/pretrain_frontier_local_18p4b.yaml
+configs/data/pretrain_frontier_streaming_pilot.yaml
+configs/data/pretrain_local_main_12b.yaml
+configs/data/pretrain_mixture_v1.yaml
+configs/data/pretrain_mixture_with_code.yaml
+configs/data/reasoning_mode_fusion_local.yaml
+configs/data/reasoning_sft_local.yaml
+configs/data/sft_frontier_local.yaml
+configs/data/sft_mixture_v1.yaml
+configs/data/sft_mixture_v2_smoltalk2.yaml
+docs/DOWNLOAD_RESUME_MEMORY_FIX.md
+scripts/download_data.py
+scripts/inspect_download_cursor.py
+scripts/materialize_corpus.py
+scripts/materialize_hf_records.py
+scripts/migrate_legacy_cursor.py
+scripts/prepare_stack_edu_multilang.py
+scripts/python_startup/sitecustomize.py
+scripts/run_100b_safe.py
+src/asterlm/data/__init__.py
+src/asterlm/data/hf_stream.py
+src/asterlm/data/mixture.py
+src/asterlm/data/packing.py
+src/asterlm/data/preference.py
+src/asterlm/data/quality.py
+src/asterlm/data/resumable.py
+src/asterlm/data/tokenizer.py
+tests/test_hf_stream.py

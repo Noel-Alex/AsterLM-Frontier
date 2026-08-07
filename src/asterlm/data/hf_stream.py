@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import gc
 import os
+from copy import deepcopy
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
@@ -11,6 +12,9 @@ ASTERLM_SEQUENTIAL_CURSOR = "asterlm-hf-sequential-v1"
 BOUNDED_RESHARD_LAYOUT = "bounded-reshard-max1-v1"
 LEGACY_SINGLE_LAYOUT = "legacy-single-max1-v1"
 LEGACY_SEQUENTIAL_LAYOUT = "legacy-multistream-sequential-v1"
+LEGACY_NEXT_SHARD_LAYOUT = "legacy-multistream-next-shard-v1"
+LEGACY_POLICY_EXACT = "exact"
+LEGACY_POLICY_NEXT_SHARD = "next-shard"
 
 
 @dataclass(frozen=True, slots=True)
@@ -296,13 +300,28 @@ class SequentializedHfDataset:
     prefetch while preserving every uncommitted source record.
     """
 
-    def __init__(self, legacy_dataset: Any, cursor: dict[str, Any]) -> None:
+    def __init__(
+        self,
+        legacy_dataset: Any,
+        cursor: dict[str, Any],
+        *,
+        legacy_policy: str | None = None,
+    ) -> None:
         self._dataset = legacy_dataset
         self._children: list[Any]
         self._exhausted: list[bool]
         self._current_child: int
         self._pending_cycle_skips = 0
         self._cycle_index = 0
+        requested_policy = (legacy_policy or os.getenv("ASTERLM_LEGACY_RESUME_POLICY", LEGACY_POLICY_NEXT_SHARD)).strip().lower()
+        if requested_policy not in {LEGACY_POLICY_EXACT, LEGACY_POLICY_NEXT_SHARD}:
+            raise RuntimeError(
+                "ASTERLM_LEGACY_RESUME_POLICY must be next-shard or exact; "
+                f"got {requested_policy!r}"
+            )
+        self._migration_policy = requested_policy
+        self._skipped_partial_shards: list[dict[str, Any]] = []
+        self._last_resume_skipped_partial_shards: list[dict[str, Any]] = []
 
         top = getattr(legacy_dataset, "_ex_iterable", None)
         if top is None:
@@ -324,21 +343,51 @@ class SequentializedHfDataset:
         self._children = children
 
         if is_sequential_cursor(cursor):
+            stored_policy = str(cursor.get("migration_policy", self._migration_policy)).strip().lower()
+            if stored_policy in {LEGACY_POLICY_EXACT, LEGACY_POLICY_NEXT_SHARD}:
+                self._migration_policy = stored_policy
+
+            # A next-shard cursor is a *policy*, not a one-time conversion. Every
+            # later checkpoint can again land partway through a large legacy
+            # Parquet file. Reopening that exact row cursor would reread gigabytes
+            # before yielding one new record. Refresh it locally on every restart
+            # so the active child begins at the next untouched file instead.
+            if self._migration_policy == LEGACY_POLICY_NEXT_SHARD:
+                cursor = convert_sequential_cursor_to_next_shard(cursor)
+
             states = cursor.get("child_states")
             exhausted = cursor.get("exhausted")
             if not isinstance(states, list) or len(states) != len(children):
                 raise RuntimeError("Sequential Hugging Face cursor has an incompatible child count")
             if not isinstance(exhausted, list) or len(exhausted) != len(children):
                 raise RuntimeError("Sequential Hugging Face cursor has invalid exhaustion state")
-            for child, state in zip(children, states):
+
+            self._exhausted = [bool(value) for value in exhausted]
+            for index, (child, state) in enumerate(zip(children, states)):
+                if self._exhausted[index]:
+                    continue
+                # If the policy advanced past the last shard in a legacy child,
+                # mark it exhausted rather than asking datasets to open it.
+                try:
+                    shard_idx, _ = _state_partial_rows(state)
+                except RuntimeError:
+                    shard_idx = -1
+                total_shards = getattr(child, "num_shards", None)
+                if isinstance(total_shards, int) and shard_idx >= total_shards:
+                    self._exhausted[index] = True
+                    continue
                 load = getattr(child, "load_state_dict", None)
                 if not callable(load):
                     raise RuntimeError("Hugging Face child stream cannot restore its cursor")
                 load(state)
-            self._exhausted = [bool(value) for value in exhausted]
             self._current_child = int(cursor.get("current_child", 0))
             self._pending_cycle_skips = max(0, int(cursor.get("pending_cycle_skips", 0)))
             self._cycle_index = int(cursor.get("cycle_index", 0)) % len(children)
+            skipped = cursor.get("skipped_partial_shards")
+            if isinstance(skipped, list):
+                self._skipped_partial_shards = deepcopy(skipped)
+            latest = cursor.get("last_resume_skipped_partial_shards")
+            self._last_resume_skipped_partial_shards = deepcopy(latest) if isinstance(latest, list) else []
             return
 
         plan = extract_legacy_resume_plan(cursor)
@@ -363,10 +412,17 @@ class SequentializedHfDataset:
         if not isinstance(exhausted, list) or len(exhausted) != len(children):
             raise RuntimeError("Legacy Hugging Face cursor has invalid exhaustion state")
 
-        # CyclingMultiSources reads ahead from every child. Its durable
-        # ``previous_states`` entries are the exact states from which the next
-        # record of each child must be produced. Do not load the nested current
-        # child snapshots: those are already ahead of the committed output.
+        self._exhausted = [bool(value) for value in exhausted]
+
+        if self._migration_policy == LEGACY_POLICY_NEXT_SHARD:
+            self._initialize_next_shard_migration(previous_states, plan)
+            return
+
+        # Exact legacy recovery: CyclingMultiSources reads ahead from every
+        # child. Its durable ``previous_states`` entries are the exact states
+        # from which the next record of each child must be produced. This can
+        # require rereading a large partial Parquet file because the HF cursor
+        # stores row counts rather than a byte/row-group offset.
         for child, previous in zip(children, previous_states):
             if previous is None:
                 continue
@@ -375,14 +431,120 @@ class SequentializedHfDataset:
                 raise RuntimeError("Hugging Face child stream cannot restore its cursor")
             load(previous)
 
-        self._exhausted = [bool(value) for value in exhausted]
         self._current_child = 0
         self._pending_cycle_skips = plan.pending_chunks
         self._cycle_index = int(cycling_state.get("ex_iterable_idx", 0)) % len(children)
 
+    @staticmethod
+    def _pending_skips_per_child(plan: LegacyResumePlan, exhausted: list[bool]) -> list[int]:
+        counts = [0] * len(exhausted)
+        remaining = plan.pending_chunks
+        index = int(plan.cycling_state.get("ex_iterable_idx", 0)) % len(exhausted)
+        while remaining > 0:
+            attempts = 0
+            while attempts < len(exhausted) and exhausted[index]:
+                index = (index + 1) % len(exhausted)
+                attempts += 1
+            if attempts >= len(exhausted):
+                raise RuntimeError("Legacy cursor has pending chunks but every stream is exhausted")
+            counts[index] += 1
+            remaining -= 1
+            index = (index + 1) % len(exhausted)
+        return counts
+
+    @staticmethod
+    def _next_shard_state(state: dict[str, Any], outer_pending: int) -> tuple[dict[str, Any], dict[str, Any]]:
+        if state.get("type") == "RebatchedArrowExamplesIterable":
+            base = state.get("previous_state")
+            if not isinstance(base, dict):
+                base = state.get("examples_iterable")
+            if not isinstance(base, dict):
+                raise RuntimeError("Legacy child cursor has no underlying Arrow state")
+            shard_idx = int(base.get("shard_idx", 0))
+            rows_before_wrapper = int(base.get("shard_example_idx", 0))
+            wrapper_rows = int(state.get("num_chunks_since_previous_state", 0))
+            next_base = deepcopy(base)
+            next_base["shard_idx"] = shard_idx + 1
+            next_base["shard_example_idx"] = 0
+            converted = deepcopy(state)
+            converted["examples_iterable"] = deepcopy(next_base)
+            converted["previous_state"] = None
+            converted["batch_idx"] = 0
+            converted["num_chunks_since_previous_state"] = 0
+            converted["cropped_chunk_length"] = 0
+        else:
+            shard_idx = int(state.get("shard_idx", 0))
+            rows_before_wrapper = int(state.get("shard_example_idx", 0))
+            wrapper_rows = 0
+            converted = deepcopy(state)
+            converted["shard_idx"] = shard_idx + 1
+            converted["shard_example_idx"] = 0
+
+        audit = {
+            "partial_shard_index": shard_idx,
+            "next_shard_index": shard_idx + 1,
+            "rows_already_committed_or_prefetched": rows_before_wrapper + wrapper_rows + outer_pending,
+            "outer_pending_rows_discarded_with_partial_shard": outer_pending,
+        }
+        return converted, audit
+
+    def _initialize_next_shard_migration(
+        self,
+        previous_states: list[Any],
+        plan: LegacyResumePlan,
+    ) -> None:
+        """Skip each partially consumed legacy file and continue at its next file."""
+
+        converted_cursor = convert_legacy_cursor_to_next_shard(
+            {
+                "examples_iterable": {
+                    "previous_state": plan.cycling_state,
+                    "num_chunks_since_previous_state": plan.pending_chunks,
+                    "cropped_chunk_length": plan.cropped_chunk_length,
+                    "type": "RebatchedArrowExamplesIterable",
+                },
+                "epoch": 0,
+            }
+        )
+        states = converted_cursor["child_states"]
+        exhausted = converted_cursor["exhausted"]
+        for index, (child, state) in enumerate(zip(self._children, states)):
+            if exhausted[index]:
+                continue
+            total_shards = getattr(child, "num_shards", None)
+            audit = converted_cursor["skipped_partial_shards"][index]
+            if isinstance(total_shards, int):
+                audit["child_total_shards"] = total_shards
+                if int(audit["next_shard_index"]) >= total_shards:
+                    exhausted[index] = True
+                    audit["child_exhausted_after_skip"] = True
+                    continue
+            load = getattr(child, "load_state_dict", None)
+            if not callable(load):
+                raise RuntimeError("Hugging Face child stream cannot restore its cursor")
+            load(state)
+
+        self._exhausted = [bool(value) for value in exhausted]
+        self._current_child = 0
+        self._pending_cycle_skips = 0
+        self._cycle_index = 0
+        self._skipped_partial_shards = deepcopy(converted_cursor["skipped_partial_shards"])
+
     @property
     def resume_mode(self) -> str:
+        if self._migration_policy == LEGACY_POLICY_NEXT_SHARD:
+            return LEGACY_NEXT_SHARD_LAYOUT
         return LEGACY_SEQUENTIAL_LAYOUT
+
+    @property
+    def migration_audit(self) -> dict[str, Any] | None:
+        if self._migration_policy != LEGACY_POLICY_NEXT_SHARD:
+            return None
+        return {
+            "policy": self._migration_policy,
+            "skipped_partial_shards": deepcopy(self._skipped_partial_shards),
+            "last_resume_skipped_partial_shards": deepcopy(self._last_resume_skipped_partial_shards),
+        }
 
     @staticmethod
     def _row_from_arrow_item(item: Any) -> dict[str, Any]:
@@ -500,7 +662,164 @@ class SequentializedHfDataset:
             "legacy_stream_count": len(self._children),
             "pending_cycle_skips": self._pending_cycle_skips,
             "cycle_index": self._cycle_index,
+            "migration_policy": self._migration_policy,
+            "skipped_partial_shards": deepcopy(self._skipped_partial_shards),
+            "last_resume_skipped_partial_shards": deepcopy(self._last_resume_skipped_partial_shards),
         }
+
+def _sequential_pending_skips_per_child(cursor: dict[str, Any], exhausted: list[bool]) -> list[int]:
+    """Distribute any still-pending outer one-row chunks over sequential children."""
+
+    counts = [0] * len(exhausted)
+    remaining = max(0, int(cursor.get("pending_cycle_skips", 0)))
+    if not counts:
+        return counts
+    index = int(cursor.get("cycle_index", 0)) % len(counts)
+    while remaining > 0:
+        attempts = 0
+        while attempts < len(counts) and exhausted[index]:
+            index = (index + 1) % len(counts)
+            attempts += 1
+        if attempts >= len(counts):
+            raise RuntimeError("Sequential cursor has pending chunks but every stream is exhausted")
+        counts[index] += 1
+        remaining -= 1
+        index = (index + 1) % len(counts)
+    return counts
+
+
+def _state_partial_rows(state: dict[str, Any], outer_pending: int = 0) -> tuple[int, int]:
+    """Return (shard_index, rows_into_current_shard) for a real HF child cursor."""
+
+    if state.get("type") == "RebatchedArrowExamplesIterable":
+        base = state.get("previous_state")
+        if not isinstance(base, dict):
+            base = state.get("examples_iterable")
+        if not isinstance(base, dict) or "shard_idx" not in base:
+            raise RuntimeError("Sequential child cursor has no underlying Arrow shard state")
+        shard_idx = int(base.get("shard_idx", 0))
+        rows = int(base.get("shard_example_idx", 0))
+        rows += int(state.get("num_chunks_since_previous_state", 0))
+        rows += outer_pending
+        return shard_idx, rows
+    if "shard_idx" not in state:
+        raise RuntimeError("Sequential child cursor has no Arrow shard index")
+    return int(state.get("shard_idx", 0)), int(state.get("shard_example_idx", 0)) + outer_pending
+
+
+def convert_sequential_cursor_to_next_shard(cursor: Any) -> dict[str, Any]:
+    """Upgrade a v3/v4 exact sequential cursor to the bounded next-shard policy.
+
+    Older AsterLM patches could already rewrite the original Hugging Face cursor
+    into ``asterlm-hf-sequential-v1`` before the offline migration was added.
+    Those cursors have no ``migration_policy`` field and still point inside the
+    same large partial Parquet files. This conversion is entirely local: it
+    advances only child states that are actually partway through a shard and
+    leaves untouched shard-boundary states unchanged.
+    """
+
+    if not is_sequential_cursor(cursor):
+        raise RuntimeError("Cursor is not an AsterLM sequential checkpoint")
+    states = cursor.get("child_states")
+    exhausted = cursor.get("exhausted")
+    if not isinstance(states, list) or not states:
+        raise RuntimeError("Sequential cursor has no child states")
+    if not isinstance(exhausted, list) or len(exhausted) != len(states):
+        raise RuntimeError("Sequential cursor has invalid exhaustion state")
+
+    exhausted_flags = [bool(value) for value in exhausted]
+    current_child = max(0, min(int(cursor.get("current_child", 0)), len(states)))
+    pending_counts = _sequential_pending_skips_per_child(cursor, exhausted_flags)
+    converted_states: list[Any] = []
+    audit: list[dict[str, Any]] = []
+
+    for index, state in enumerate(states):
+        if not isinstance(state, dict):
+            raise RuntimeError(f"Sequential stream {index} has no durable child state")
+        if exhausted_flags[index] or index < current_child:
+            converted_states.append(deepcopy(state))
+            continue
+
+        shard_idx, partial_rows = _state_partial_rows(state, pending_counts[index])
+        if partial_rows <= 0:
+            # Already at the start of an untouched shard: do not skip it.
+            converted_states.append(deepcopy(state))
+            continue
+
+        converted, item = SequentializedHfDataset._next_shard_state(state, pending_counts[index])
+        item["stream_index"] = index
+        item["conversion_source"] = "asterlm-sequential-v3-v4"
+        item["partial_rows_detected"] = partial_rows
+        converted_states.append(converted)
+        audit.append(item)
+
+    result = deepcopy(cursor)
+    previous_audit = cursor.get("skipped_partial_shards")
+    history = deepcopy(previous_audit) if isinstance(previous_audit, list) else []
+    history.extend(deepcopy(audit))
+    result["child_states"] = converted_states
+    result["exhausted"] = exhausted_flags
+    result["current_child"] = current_child
+    result["pending_cycle_skips"] = 0
+    result["cycle_index"] = 0
+    result["migration_policy"] = LEGACY_POLICY_NEXT_SHARD
+    result["skipped_partial_shards"] = history
+    result["last_resume_skipped_partial_shards"] = deepcopy(audit)
+    result["legacy_resume_state_from"] = "asterlm-sequential-v3-v4"
+    result["legacy_outer_pending_chunks"] = max(0, int(cursor.get("pending_cycle_skips", 0)))
+    result["previous_migration_policy"] = cursor.get("migration_policy")
+    return result
+
+
+def convert_legacy_cursor_to_next_shard(cursor: Any) -> dict[str, Any]:
+    """Convert a legacy ten-stream cursor without opening or reading remote data.
+
+    The returned cursor preserves all already committed AsterLM output and starts
+    each legacy child at the file after its partially consumed current file. The
+    unconsumed tails of those few files are intentionally omitted and replaced by
+    later untouched files from the same source.
+    """
+
+    plan = extract_legacy_resume_plan(cursor)
+    if plan is None:
+        raise RuntimeError("Legacy Hugging Face multi-stream cursor structure was not found")
+    previous_states = plan.cycling_state.get("previous_states")
+    exhausted = plan.cycling_state.get("is_exhausted")
+    if not isinstance(previous_states, list) or len(previous_states) != plan.stream_count:
+        raise RuntimeError("Legacy Hugging Face cursor has invalid child lookahead state")
+    if not isinstance(exhausted, list) or len(exhausted) != plan.stream_count:
+        raise RuntimeError("Legacy Hugging Face cursor has invalid exhaustion state")
+    if plan.cropped_chunk_length:
+        raise RuntimeError(
+            "The legacy cursor stopped inside a multi-row Arrow chunk; refusing an offline migration"
+        )
+
+    exhausted_flags = [bool(value) for value in exhausted]
+    outer_counts = SequentializedHfDataset._pending_skips_per_child(plan, exhausted_flags)
+    child_states: list[Any] = []
+    audit: list[dict[str, Any]] = []
+    for index, previous in enumerate(previous_states):
+        if not isinstance(previous, dict):
+            raise RuntimeError(f"Legacy stream {index} has no durable child state")
+        converted, item = SequentializedHfDataset._next_shard_state(previous, outer_counts[index])
+        item["stream_index"] = index
+        child_states.append(converted)
+        audit.append(item)
+
+    return {
+        "_asterlm_cursor": ASTERLM_SEQUENTIAL_CURSOR,
+        "current_child": 0,
+        "exhausted": exhausted_flags,
+        "child_states": child_states,
+        "legacy_stream_count": plan.stream_count,
+        "pending_cycle_skips": 0,
+        "cycle_index": 0,
+        "migration_policy": LEGACY_POLICY_NEXT_SHARD,
+        "skipped_partial_shards": audit,
+        "legacy_resume_state_from": plan.source,
+        "legacy_outer_pending_chunks": plan.pending_chunks,
+    }
+
 
 def bounded_shuffle(dataset: Any, *, seed: int | None, reshard: bool) -> Any:
     """Create a deterministic stream with one active remote input shard.
@@ -545,7 +864,12 @@ def open_resumable_hf_stream(
 
     if is_sequential_cursor(cursor) or is_legacy_multistream_cursor(cursor):
         legacy = legacy_shuffle(base_factory(), seed=seed)
-        return SequentializedHfDataset(legacy, cursor), LEGACY_SEQUENTIAL_LAYOUT
+        adapter = SequentializedHfDataset(
+            legacy,
+            cursor,
+            legacy_policy=os.getenv("ASTERLM_LEGACY_RESUME_POLICY", LEGACY_POLICY_NEXT_SHARD),
+        )
+        return adapter, adapter.resume_mode
 
     if cursor is None and fallback_skip:
         raise RuntimeError(

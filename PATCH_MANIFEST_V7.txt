@@ -1,0 +1,9 @@
+APPLY_DOWNLOAD_RESUME_FIX.sh
+docs/DOWNLOAD_RESUME_MEMORY_FIX.md
+scripts/download_data.py
+scripts/inspect_download_cursor.py
+scripts/migrate_legacy_cursor.py
+scripts/run_100b_safe.py
+src/asterlm/data/hf_stream.py
+tests/test_hf_stream.py
+PATCH_MANIFEST_V7.txt

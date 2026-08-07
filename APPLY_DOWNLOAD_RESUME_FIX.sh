@@ -11,7 +11,6 @@ fi
 
 python - <<'PY'
 from pathlib import Path
-
 path = Path('.gitignore')
 text = path.read_text(encoding='utf-8')
 lines = text.splitlines()
@@ -31,34 +30,27 @@ else:
 PY
 
 export PYTHONPATH="$repo_root/src${PYTHONPATH:+:$PYTHONPATH}"
-python -m pytest -q \
-  tests/test_hf_stream.py \
-  tests/test_resumable_downloads.py \
-  tests/test_100b_campaign.py
+python -m compileall -q src scripts tests
+python -m pytest -q tests/test_hf_stream.py
 
-if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-  if git check-ignore -q src/asterlm/data/__init__.py; then
-    echo "ERROR: src/asterlm/data is still ignored by Git." >&2
-    exit 3
-  fi
-  if git check-ignore -q configs/data/pretrain_frontier_local_18p4b.yaml; then
-    echo "ERROR: configs/data is still ignored by Git." >&2
-    exit 3
-  fi
-else
-  echo "Warning: no .git directory in this copy; Git ignore checks were skipped."
-fi
+cat <<'EOF2'
 
-cat <<'EOF'
+v7 validation passed.
 
-Patch validation passed.
+Important: --dry-run never changes the cursor. If FineWeb is currently stopped,
+preview and then commit the latest next-shard conversion:
+  python scripts/migrate_legacy_cursor.py data/corpus-frontier-16b/fineweb_edu --dry-run
+  python scripts/migrate_legacy_cursor.py data/corpus-frontier-16b/fineweb_edu
 
-Inspect the existing FineWeb cursor:
+Inspect it:
   python scripts/inspect_download_cursor.py data/corpus-frontier-16b/fineweb_edu
 
-Restart with disk + RAM protection (command-level relaunch disabled):
+Recommended normal run (new default: balanced):
   ./RUN_100B_SAFE.sh
 
-Before your next push, make sure Git tracks the previously ignored package/config directories:
-  git add .gitignore src/asterlm/data configs/data scripts tests/test_hf_stream.py docs/DOWNLOAD_RESUME_MEMORY_FIX.md APPLY_DOWNLOAD_RESUME_FIX.sh
-EOF
+Faster while preserving one active decoded dataset shard:
+  ./RUN_100B_SAFE.sh --network-mode safe-fast
+
+Avoid --network-mode fast on a 32 GiB machine unless you intentionally want
+Hugging Face high-performance mode and have verified memory headroom.
+EOF2

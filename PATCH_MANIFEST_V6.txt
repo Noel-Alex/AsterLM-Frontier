@@ -1,0 +1,6 @@
+APPLY_DOWNLOAD_RESUME_FIX.sh
+docs/DOWNLOAD_RESUME_MEMORY_FIX.md
+scripts/inspect_download_cursor.py
+scripts/migrate_legacy_cursor.py
+src/asterlm/data/hf_stream.py
+tests/test_hf_stream.py

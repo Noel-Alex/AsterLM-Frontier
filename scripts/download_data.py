@@ -160,9 +160,17 @@ NETWORK_MODES: dict[str, dict[str, str]] = {
         "HF_XET_NUM_CONCURRENT_RANGE_GETS": "2",
     },
     "balanced": {
-        "HF_HUB_DOWNLOAD_TIMEOUT": "300",
-        "HF_HUB_ETAG_TIMEOUT": "60",
+        "HF_HUB_DOWNLOAD_TIMEOUT": "180",
+        "HF_HUB_ETAG_TIMEOUT": "30",
         "HF_XET_NUM_CONCURRENT_RANGE_GETS": "8",
+    },
+    # Full per-file Xet range concurrency without HF_XET_HIGH_PERFORMANCE.
+    # This is the preferred fast mode for 32 GiB laptops: one decoded dataset
+    # input shard remains active, while byte-range downloads can use the link.
+    "safe-fast": {
+        "HF_HUB_DOWNLOAD_TIMEOUT": "120",
+        "HF_HUB_ETAG_TIMEOUT": "30",
+        "HF_XET_NUM_CONCURRENT_RANGE_GETS": "16",
     },
     "fast": {
         "HF_HUB_DOWNLOAD_TIMEOUT": "120",
@@ -235,7 +243,11 @@ def build_environment(args: argparse.Namespace) -> dict[str, str]:
     # higher priority, and an explicitly supplied HF_TOKEN_PATH is never replaced.
     if not env.get("HF_TOKEN") and not env.get("HF_TOKEN_PATH") and token_path.is_file():
         env["HF_TOKEN_PATH"] = str(token_path.resolve())
-    env.update(NETWORK_MODES[args.network_mode])
+    # Environment variables supplied by the safe supervisor/user override the
+    # profile defaults. This lets us bound broken-connect hangs without changing
+    # the low-bandwidth concurrency policy.
+    for key, value in NETWORK_MODES[args.network_mode].items():
+        env.setdefault(key, value)
     env.setdefault("HF_HUB_VERBOSITY", "warning")
     env.setdefault("PYTHONUNBUFFERED", "1")
     env.setdefault("TOKENIZERS_PARALLELISM", "false")
@@ -355,7 +367,7 @@ def profiles_for(args: argparse.Namespace) -> list[str]:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Start interruption-safe, low-bandwidth AsterLM data downloads")
+    parser = argparse.ArgumentParser(description="Start interruption-safe AsterLM data downloads")
     parser.add_argument(
         "--profile",
         choices=[
@@ -372,7 +384,7 @@ def main() -> None:
         ],
         default="pilot",
     )
-    parser.add_argument("--network-mode", choices=sorted(NETWORK_MODES), default="low")
+    parser.add_argument("--network-mode", choices=sorted(NETWORK_MODES), default="balanced")
     parser.add_argument("--hf-home", default="data/hf-cache")
     parser.add_argument("--allow-external-venv", action="store_true")
     parser.add_argument("--dry-run", action="store_true")

@@ -293,14 +293,29 @@ def materialize(
                 fallback_skip=int(state["documents_seen"]) if cursor is None else 0,
                 layout=state.get("hf_stream_layout"),
             )
+            migration_audit = getattr(dataset, "migration_audit", None)
+            audit_payload = migration_audit if isinstance(migration_audit, dict) else None
+            state_changed = False
             if state.get("hf_stream_layout") != stream_layout:
                 state["hf_stream_layout"] = stream_layout
+                state_changed = True
+            if audit_payload and state.get("legacy_migration") != audit_payload:
+                state["legacy_migration"] = audit_payload
+                state_changed = True
+            if state_changed:
                 atomic_write_json(state_path, state)
             rss = current_rss_gib()
             tqdm.write(
                 f"{source.id}: stream_layout={stream_layout}; "
                 f"rss={rss:.2f} GiB" if rss is not None else f"{source.id}: stream_layout={stream_layout}"
             )
+            if audit_payload:
+                skipped = audit_payload.get("skipped_partial_shards", [])
+                tqdm.write(
+                    f"{source.id}: fast legacy migration preserved all committed local shards and "
+                    f"advanced past {len(skipped)} partially consumed remote files; their unconsumed "
+                    "tails are omitted and replaced by later untouched source files."
+                )
             writer = ZstdCheckpointWriter(
                 source_root,
                 source.id,
