@@ -241,9 +241,10 @@ def default_min_available_gib() -> float | None:
     return max(2.0, min(6.0, total * 0.15))
 
 
-def trim_arrow_memory_pool() -> None:
-    """Return unused Arrow allocator pages without disturbing live iterators."""
+def release_arrow_memory() -> None:
+    """Best-effort release after closing a failed/replaced HF iterator."""
 
+    gc.collect()
     try:
         import pyarrow as pa
 
@@ -252,13 +253,6 @@ def trim_arrow_memory_pool() -> None:
             release()
     except Exception:
         pass
-
-
-def release_arrow_memory() -> None:
-    """Best-effort release after closing a failed/replaced HF iterator."""
-
-    gc.collect()
-    trim_arrow_memory_pool()
 
 
 @dataclass(slots=True)

@@ -107,25 +107,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--parallel-streams",
         type=positive_int,
         default=int(os.getenv("ASTERLM_HF_PARALLEL_STREAMS", "5")),
-        help="Concurrent legacy Parquet child readers. Existing legacy cursors have at most 10 children.",
-    )
-    parser.add_argument(
-        "--parquet-batch-rows",
-        type=positive_int,
-        default=int(os.getenv("ASTERLM_PARQUET_BATCH_ROWS", "16384")),
-        help="Maximum decoded rows retained per active Parquet reader; smaller values reduce RSS.",
-    )
-    parser.add_argument(
-        "--zstd-threads",
-        type=positive_int,
-        default=int(os.getenv("ASTERLM_ZSTD_THREADS", "8")),
-        help="Zstd compression workers used to drain the materializer backlog.",
-    )
-    parser.add_argument(
-        "--zstd-buffer-mib",
-        type=positive_int,
-        default=int(os.getenv("ASTERLM_ZSTD_BUFFER_MIB", "8")),
-        help="Buffered uncompressed output handed to zstd in large chunks.",
+        help="Concurrent legacy Parquet child readers. 5 is the fast 32-GiB default; try 6 if RSS stays below the guard.",
     )
     parser.add_argument(
         "--allow-ipv6",
@@ -149,16 +131,11 @@ def main() -> int:
     env["ASTERLM_FORCE_IPV4"] = "0" if args.allow_ipv6 else "1"
     env["PYTHONUNBUFFERED"] = "1"
     env["ASTERLM_HF_PARALLEL_STREAMS"] = str(args.parallel_streams)
-    env["ASTERLM_PARQUET_BATCH_ROWS"] = str(args.parquet_batch_rows)
-    env.setdefault("ASTERLM_ARROW_CPU_THREADS", "16")
-    env.setdefault("ASTERLM_ARROW_IO_THREADS", "16")
-    env.setdefault("ASTERLM_ARROW_TRIM_RSS_GIB", "10")
-    env.setdefault("ASTERLM_ARROW_TRIM_INTERVAL_SECONDS", "10")
-    # Keep compression quality reasonable, but feed zstd large chunks and let
-    # more CPU workers drain the decoded backlog.
+    # The original writer used zstd level 6 with threads=0, which explicitly
+    # disables zstd multithreading. A faster level-3, four-worker writer helps
+    # drain a prefetched backlog without materially changing corpus contents.
     env.setdefault("ASTERLM_ZSTD_LEVEL", "3")
-    env["ASTERLM_ZSTD_THREADS"] = str(args.zstd_threads)
-    env["ASTERLM_ZSTD_BUFFER_MIB"] = str(args.zstd_buffer_mib)
+    env.setdefault("ASTERLM_ZSTD_THREADS", "4")
     command = [
         sys.executable,
         "scripts/download_data.py",
@@ -181,11 +158,7 @@ def main() -> int:
     print(f"Force IPv4:              {not args.allow_ipv6}")
     print(f"Network mode:            {args.network_mode}")
     print(f"Concurrent HF readers:   {args.parallel_streams}")
-    print(f"Parquet batch rows:      {args.parquet_batch_rows:,}")
-    print(f"Arrow CPU/I/O threads:   {env['ASTERLM_ARROW_CPU_THREADS']}/{env['ASTERLM_ARROW_IO_THREADS']}")
-    print(f"Arrow trim threshold:    {env['ASTERLM_ARROW_TRIM_RSS_GIB']} GiB")
     print(f"Zstd level/threads:      {env['ASTERLM_ZSTD_LEVEL']}/{env['ASTERLM_ZSTD_THREADS']}")
-    print(f"Zstd write buffer:       {args.zstd_buffer_mib} MiB")
     print("Prefetch policy:         one speculative row per active HF child")
     print("Command-level relaunch:  disabled")
     print("$", " ".join(command), flush=True)

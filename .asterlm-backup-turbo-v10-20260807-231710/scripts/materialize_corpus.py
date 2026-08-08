@@ -21,7 +21,6 @@ from asterlm.data.hf_stream import (
     memory_status,
     open_resumable_hf_stream,
     release_arrow_memory,
-    trim_arrow_memory_pool,
 )
 from asterlm.data.resumable import (
     RetryPolicy,
@@ -89,39 +88,7 @@ def create_base_dataset(source: CorpusSource, revision: str) -> Any:
     }
     if source.columns:
         kwargs["columns"] = source.columns
-
-    # A legacy HF child ultimately holds the current Arrow RecordBatch while
-    # RebatchedArrowExamplesIterable emits one Python row at a time.  With ten
-    # concurrent children the default (one full Parquet row group) can retain
-    # many GiB even though AsterLM itself only speculates one row per child.
-    # Cap the decoded batch size without changing source order or accepted rows.
-    batch_rows = max(0, int(os.getenv("ASTERLM_PARQUET_BATCH_ROWS", "0")))
-    if batch_rows:
-        kwargs["batch_size"] = batch_rows
-
-    # Let Arrow use the laptop CPU for column decode/decompression. This is a
-    # single global pool, not N threads per HF reader.
-    try:
-        import pyarrow as pa
-
-        cpu_threads = max(1, int(os.getenv("ASTERLM_ARROW_CPU_THREADS", "0")))
-        io_threads = max(1, int(os.getenv("ASTERLM_ARROW_IO_THREADS", "0")))
-        if cpu_threads:
-            pa.set_cpu_count(cpu_threads)
-        if io_threads:
-            pa.set_io_thread_count(io_threads)
-    except (AttributeError, TypeError, ValueError):
-        pass
-
-    try:
-        return load_dataset(**kwargs)
-    except (TypeError, ValueError) as exc:
-        # Parquet-backed sources accept batch_size; custom builders may not.
-        # Fall back only when that optional tuning argument is the complaint.
-        if "batch_size" not in kwargs or "batch_size" not in str(exc):
-            raise
-        kwargs.pop("batch_size", None)
-        return load_dataset(**kwargs)
+    return load_dataset(**kwargs)
 
 
 def legacy_source_signature(source: CorpusSource) -> dict[str, Any]:
@@ -315,9 +282,6 @@ def materialize(
     failures = 0
     exhausted = False
     memory_guard = MemoryGuard(max_rss_gib=max_rss_gib)
-    trim_rss_gib = float(os.getenv("ASTERLM_ARROW_TRIM_RSS_GIB", "10"))
-    trim_interval_seconds = float(os.getenv("ASTERLM_ARROW_TRIM_INTERVAL_SECONDS", "10"))
-    last_arrow_trim = 0.0
 
     try:
         while int(state["estimated_tokens"]) < source.target_tokens:
@@ -401,14 +365,6 @@ def materialize(
                         progress.set_postfix_str(
                             f"{memory_status(rss, available)} layout={stream_layout}", refresh=False
                         )
-                        now = time.monotonic()
-                        if (
-                            trim_rss_gib > 0
-                            and rss >= trim_rss_gib
-                            and now - last_arrow_trim >= trim_interval_seconds
-                        ):
-                            trim_arrow_memory_pool()
-                            last_arrow_trim = now
                     if memory_reason:
                         commit_checkpoint(
                             dataset=dataset,

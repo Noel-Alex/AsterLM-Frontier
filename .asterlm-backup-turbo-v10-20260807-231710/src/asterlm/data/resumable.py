@@ -184,12 +184,11 @@ def clean_uncommitted_outputs(
 
 
 class ZstdCheckpointWriter:
-    """One-open-shard writer with buffered multi-threaded zstd compression.
+    """One-open-shard writer with zstd frame checksums.
 
-    Output is not considered durable until ``finalize()`` and the caller's
-    atomic state.json update. Buffering several MiB before handing data to zstd
-    dramatically reduces the millions of tiny Python->C writes in the original
-    materializer and gives zstd's worker threads useful chunks to compress.
+    A shard is only considered durable after the caller atomically advances
+    state.json. The caller may safely discard any orphan shard newer than that
+    pointer after an unclean shutdown.
     """
 
     def __init__(self, root: Path, prefix: str, shard_bytes: int, index: int) -> None:
@@ -199,17 +198,17 @@ class ZstdCheckpointWriter:
         self.index = index
         self.raw: Any | None = None
         self.stream: Any | None = None
-        self.pending = bytearray()
-        self.buffer_bytes = max(1, int(os.getenv("ASTERLM_ZSTD_BUFFER_MIB", "8"))) * 2**20
+        self.text: Any | None = None
         self.uncompressed_bytes = 0
         self.records = 0
         self.opened_at = 0.0
 
     @property
     def is_open(self) -> bool:
-        return self.stream is not None
+        return self.text is not None
 
     def _open(self) -> None:
+        import io
         import zstandard as zstd
 
         self.root.mkdir(parents=True, exist_ok=True)
@@ -219,26 +218,18 @@ class ZstdCheckpointWriter:
         threads = int(os.getenv("ASTERLM_ZSTD_THREADS", "0"))
         compressor = zstd.ZstdCompressor(level=level, threads=threads, write_checksum=True)
         self.stream = compressor.stream_writer(self.raw, closefd=False)
-        self.pending.clear()
+        self.text = io.TextIOWrapper(self.stream, encoding="utf-8", write_through=True)
         self.uncompressed_bytes = 0
         self.records = 0
         self.opened_at = time.monotonic()
 
-    def _flush_pending(self) -> None:
-        if self.stream is None or not self.pending:
-            return
-        self.stream.write(self.pending)
-        self.pending.clear()
-
     def write(self, record: dict[str, Any]) -> None:
-        if self.stream is None:
+        if self.text is None:
             self._open()
-        line = (json.dumps(record, ensure_ascii=False, separators=(",", ":")) + "\n").encode("utf-8")
-        self.pending.extend(line)
-        self.uncompressed_bytes += len(line)
+        line = json.dumps(record, ensure_ascii=False, separators=(",", ":")) + "\n"
+        self.text.write(line)
+        self.uncompressed_bytes += len(line.encode("utf-8"))
         self.records += 1
-        if len(self.pending) >= self.buffer_bytes:
-            self._flush_pending()
 
     def should_checkpoint(self, checkpoint_seconds: float) -> bool:
         if not self.is_open:
@@ -248,10 +239,11 @@ class ZstdCheckpointWriter:
         )
 
     def finalize(self) -> dict[str, Any] | None:
-        if self.stream is None:
+        if self.text is None:
             return None
         partial = Path(self.raw.name)
-        self._flush_pending()
+        self.text.flush()
+        self.text.detach()
         self.stream.close()
         self.raw.flush()
         os.fsync(self.raw.fileno())
@@ -267,17 +259,19 @@ class ZstdCheckpointWriter:
             "compressed_bytes": final.stat().st_size,
         }
         self.index += 1
-        self.raw = self.stream = None
-        self.pending.clear()
+        self.raw = self.stream = self.text = None
         self.uncompressed_bytes = 0
         self.records = 0
         self.opened_at = 0.0
         return info
 
     def discard_partial(self) -> None:
-        if self.stream is not None:
+        if self.text is not None:
             partial = Path(self.raw.name)
-            self.pending.clear()
+            try:
+                self.text.detach()
+            except Exception:
+                pass
             try:
                 self.stream.close()
             except Exception:
@@ -287,8 +281,7 @@ class ZstdCheckpointWriter:
             except Exception:
                 pass
             partial.unlink(missing_ok=True)
-        self.raw = self.stream = None
-        self.pending.clear()
+        self.raw = self.stream = self.text = None
 
 
 def retry_loop(
