@@ -719,45 +719,33 @@ class SequentializedHfDataset:
 
         try:
             while active:
-                # v9/v10 waited on readers in deque order. If the next reader
-                # was slow opening a Parquet fragment, the other readers could
-                # saturate the NIC while AsterLM emitted zero rows. Wake on the
-                # first completed child instead.
-                future_to_index = {futures[index]: index for index in active}
-                done, _ = concurrent.futures.wait(
-                    tuple(future_to_index),
-                    return_when=concurrent.futures.FIRST_COMPLETED,
-                )
-                for completed in done:
-                    index = future_to_index[completed]
-                    try:
-                        active.remove(index)
-                    except ValueError:
-                        continue
-                    ended, row, after_state = completed.result()
+                index = active.popleft()
+                future = futures[index]
+                ended, row, after_state = future.result()
 
-                    if ended:
-                        self._safe_child_states[index] = deepcopy(after_state)
-                        self._exhausted[index] = True
-                        futures.pop(index, None)
-                        iterator = iterators.pop(index, None)
-                        if iterator is not None:
-                            close = getattr(iterator, "close", None)
-                            if callable(close):
-                                close()
-                        self._advance_current_child()
-                        activate_one()
-                        continue
-
-                    if row is None:
-                        raise RuntimeError("Parallel Hugging Face reader returned an empty non-terminal row")
-
-                    # Only rows actually exposed to the caller promote the safe
-                    # cursor. The replacement future remains speculative.
+                if ended:
                     self._safe_child_states[index] = deepcopy(after_state)
-                    futures[index] = executor.submit(fetch_one, index)
-                    active.append(index)
-                    yield row
+                    self._exhausted[index] = True
+                    futures.pop(index, None)
+                    iterator = iterators.pop(index, None)
+                    if iterator is not None:
+                        close = getattr(iterator, "close", None)
+                        if callable(close):
+                            close()
+                    self._advance_current_child()
+                    activate_one()
+                    continue
+
+                if row is None:
+                    raise RuntimeError("Parallel Hugging Face reader returned an empty non-terminal row")
+
+                # Commit the row's exact child cursor before exposing it to the
+                # caller. The next fetch may now run in parallel, but its live
+                # state stays speculative until that future is selected.
+                self._safe_child_states[index] = deepcopy(after_state)
+                futures[index] = executor.submit(fetch_one, index)
+                active.append(index)
+                yield row
         finally:
             # Do not wait indefinitely for a blocked remote read during Ctrl-C.
             # The outer process-group supervisor has a bounded stop path, and

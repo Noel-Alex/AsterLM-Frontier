@@ -497,63 +497,34 @@ def test_parallel_prefetch_checkpoint_ignores_unemitted_lookahead(monkeypatch):
     stream = SequentializedHfDataset(FakeLegacyDataset(), cursor, legacy_policy="exact")
     iterator = iter(stream)
 
-    # Wait-any scheduling intentionally does not promise which remote child wins
-    # the first race. It does promise that only the emitted child's cursor is
-    # durable; completed futures from other children remain speculative.
-    first = next(iterator)["text"]
-    assert first in {"a0", "b0"}
+    assert next(iterator)["text"] == "a0"
 
+    # Give both background readers time to fetch speculative lookahead. The live
+    # child states can now be ahead of what AsterLM has actually emitted.
     time.sleep(0.05)
     saved = stream.state_dict()
 
     assert saved["parallel_streams"] == 2
-    if first == "a0":
-        assert saved["child_states"][0]["position"] == 1
-        assert saved["child_states"][1]["position"] == 0
-        expected_resume = ["a1", "a2", "b0", "b1", "b2"]
-    else:
-        assert saved["child_states"][0]["position"] == 0
-        assert saved["child_states"][1]["position"] == 1
-        expected_resume = ["a0", "a1", "a2", "b1", "b2"]
+    # a0 crossed the iterator boundary, but b0 and a1 must remain uncommitted
+    # even if their futures have already completed.
+    assert saved["child_states"][0]["position"] == 1
+    assert saved["child_states"][1]["position"] == 0
 
     iterator.close()
 
     monkeypatch.setenv("ASTERLM_HF_PARALLEL_STREAMS", "1")
     resumed = SequentializedHfDataset(FakeLegacyDataset(), saved, legacy_policy="exact")
-    assert texts(resumed) == expected_resume
+    assert texts(resumed) == ["a1", "a2", "b0", "b1", "b2"]
 
 
-def test_parallel_prefetch_waits_for_any_ready_child_without_reordering_each_child(monkeypatch):
-    class SlowFirstChild(FakeChild):
-        def iter_arrow(self):
-            while self._state_dict["position"] < len(self.values):
-                index = self._state_dict["position"]
-                if index == 0:
-                    # The previous deque-ordered scheduler blocked the entire
-                    # materializer here even if another remote reader was ready.
-                    time.sleep(0.25)
-                self._state_dict["position"] += 1
-                yield str(index), FakeTable(self.values[index])
-
+def test_parallel_prefetch_round_robins_bounded_children(monkeypatch):
     monkeypatch.setenv("ASTERLM_HF_PARALLEL_STREAMS", "2")
     cursor = {
         "examples_iterable": cycling_state(positions=(0, 0), index=0),
         "epoch": 0,
     }
-    children = [
-        SlowFirstChild([{"text": "a0"}, {"text": "a1"}, {"text": "a2"}]),
-        FakeChild([{"text": "b0"}, {"text": "b1"}, {"text": "b2"}]),
-    ]
-    stream = SequentializedHfDataset(FakeLegacyDataset(children), cursor, legacy_policy="exact")
-    output = texts(stream)
-
-    # Cross-child ordering is intentionally readiness-driven. Within each child
-    # the original order is preserved and every row appears exactly once.
-    assert output[0] == "b0"
-    assert [item for item in output if item.startswith("a")] == ["a0", "a1", "a2"]
-    assert [item for item in output if item.startswith("b")] == ["b0", "b1", "b2"]
-    assert sorted(output) == ["a0", "a1", "a2", "b0", "b1", "b2"]
-
+    stream = SequentializedHfDataset(FakeLegacyDataset(), cursor, legacy_policy="exact")
+    assert texts(stream) == ["a0", "b0", "a1", "b1", "a2", "b2"]
     saved = stream.state_dict()
     assert saved["exhausted"] == [True, True]
     assert saved["parallel_streams"] == 2

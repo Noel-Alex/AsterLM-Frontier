@@ -40,25 +40,20 @@ def backup_path(cursor_path: Path, *, sequential: bool = False) -> Path:
     return cursor_path.with_name(f"{cursor_path.stem}.{suffix}.pkl")
 
 
-def print_plan(converted: dict[str, Any], *, verbose: bool = False) -> None:
-    history = converted.get("skipped_partial_shards", [])
-    latest = converted.get("last_resume_skipped_partial_shards")
-    if not isinstance(latest, list):
-        latest = history
+def print_plan(converted: dict[str, Any]) -> None:
+    skipped = converted.get("skipped_partial_shards", [])
     print(f"policy:                  {LEGACY_POLICY_NEXT_SHARD}")
     print(f"legacy_streams:          {converted.get('legacy_stream_count')}")
     print(f"outer_pending_chunks:    {converted.get('legacy_outer_pending_chunks')}")
     print(f"resume_state_from:       {converted.get('legacy_resume_state_from')}")
-    print(f"partial_files_total:     {len(history)}")
-    print(f"partial_files_this_run:  {len(latest)}")
-    if verbose:
-        for item in latest:
-            print(
-                "  stream={stream_index:02d} partial_shard={partial_shard_index} "
-                "-> next_shard={next_shard_index}; prior_rows≈{rows_already_committed_or_prefetched:,}".format(
-                    **item
-                )
+    print(f"partial_files_advanced:  {len(skipped)}")
+    for item in skipped:
+        print(
+            "  stream={stream_index:02d} partial_shard={partial_shard_index} "
+            "-> next_shard={next_shard_index}; prior_rows≈{rows_already_committed_or_prefetched:,}".format(
+                **item
             )
+        )
 
 
 def main() -> None:
@@ -74,11 +69,6 @@ def main() -> None:
         default="data/corpus-frontier-16b/fineweb_edu",
     )
     parser.add_argument("--dry-run", action="store_true")
-    parser.add_argument(
-        "--verbose",
-        action="store_true",
-        help="Print per-file advances. Default output is concise.",
-    )
     parser.add_argument(
         "--restore",
         action="store_true",
@@ -136,7 +126,7 @@ def main() -> None:
         latest = converted.get("last_resume_skipped_partial_shards", [])
         if policy == LEGACY_POLICY_NEXT_SHARD and not latest:
             print("Cursor already uses next-shard policy and is at a clean remote shard boundary; no change made.")
-            print_plan(converted, verbose=args.verbose)
+            print_plan(converted)
             return
         conversion_source = (
             "asterlm-next-shard-refresh"
@@ -156,12 +146,12 @@ def main() -> None:
     print(f"committed_documents:     {int(state.get('documents_seen', 0)):,}")
     print(f"conversion_source:       {conversion_source}")
     print(f"original_cursor_sha256:  {sha256(cursor_path)}")
-    print_plan(converted, verbose=args.verbose)
+    print_plan(converted)
     print()
     print(
         "Trade-off: all committed AsterLM shards are preserved, but the unconsumed tails of the "
         "listed partial remote files are omitted. Later untouched files from the same source replace "
-        "those records toward the configured source target."
+        "those records toward the 54B-token target."
     )
 
     if args.dry_run:

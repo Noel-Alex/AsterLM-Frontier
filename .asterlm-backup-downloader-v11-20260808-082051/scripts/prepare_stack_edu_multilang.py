@@ -133,29 +133,13 @@ def create_base_dataset(language: str, revision: str) -> Any:
     import zstandard  # noqa: F401
     from datasets import load_dataset
 
-    kwargs: dict[str, Any] = {
-        "path": "HuggingFaceTB/stack-edu",
-        "name": language,
-        "split": "train",
-        "streaming": True,
-        "revision": revision,
-    }
-    batch_rows = max(0, int(os.getenv("ASTERLM_PARQUET_BATCH_ROWS", "0")))
-    if batch_rows:
-        kwargs["batch_size"] = batch_rows
-    try:
-        import pyarrow as pa
-        pa.set_cpu_count(max(1, int(os.getenv("ASTERLM_ARROW_CPU_THREADS", "20"))))
-        pa.set_io_thread_count(max(1, int(os.getenv("ASTERLM_ARROW_IO_THREADS", "16"))))
-    except (AttributeError, TypeError, ValueError):
-        pass
-    try:
-        return load_dataset(**kwargs)
-    except (TypeError, ValueError) as exc:
-        if "batch_size" not in kwargs or "batch_size" not in str(exc):
-            raise
-        kwargs.pop("batch_size", None)
-        return load_dataset(**kwargs)
+    return load_dataset(
+        "HuggingFaceTB/stack-edu",
+        language,
+        split="train",
+        streaming=True,
+        revision=revision,
+    )
 
 
 def load_state(path: Path, language: str, target_tokens: int) -> dict[str, Any]:

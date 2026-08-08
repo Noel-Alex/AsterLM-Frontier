@@ -103,8 +103,6 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--profile", default=os.getenv("ASTERLM_PROFILE", "overtrain100"))
     parser.add_argument("--network-mode", default=os.getenv("ASTERLM_NETWORK_MODE", "balanced"))
-    parser.add_argument("--materializer-retries", type=int, default=int(os.getenv("ASTERLM_MATERIALIZER_RETRIES", "2")), help="Transient retries per dataset; 0 means unlimited")
-    parser.add_argument("--skip-stage", action="append", default=[], help="Skip exact download_data.py stage id; repeatable")
     parser.add_argument(
         "--parallel-streams",
         type=positive_int,
@@ -139,8 +137,6 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main() -> int:
     args = build_parser().parse_args()
-    if args.materializer_retries < 0:
-        raise SystemExit("--materializer-retries must be >= 0")
     repo_root = Path(__file__).resolve().parents[1]
     os.chdir(repo_root)
 
@@ -172,24 +168,18 @@ def main() -> int:
         "--network-mode",
         args.network_mode,
         "--max-retries",
-        str(args.materializer_retries),
+        "0",
         "--command-retries",
         "0",
-        "--continue-on-error",
         "--max-rss-gib",
         str(args.max_rss_gib),
     ]
-    for stage_id in args.skip_stage:
-        command.extend(["--skip-stage", stage_id])
 
     print(f"Repository:              {repo_root}")
     print(f"Disk safety floor:       {args.min_free_gib:.0f} GiB")
     print(f"Materializer RSS ceiling:{args.max_rss_gib:.1f} GiB")
     print(f"Force IPv4:              {not args.allow_ipv6}")
     print(f"Network mode:            {args.network_mode}")
-    print(f"Dataset failure retries: {args.materializer_retries} (0 = unlimited)")
-    print(f"Skip stages:             {', '.join(args.skip_stage) if args.skip_stage else '(none)'}")
-    print("Continue after failure:  True")
     print(f"Concurrent HF readers:   {args.parallel_streams}")
     print(f"Parquet batch rows:      {args.parquet_batch_rows:,}")
     print(f"Arrow CPU/I/O threads:   {env['ASTERLM_ARROW_CPU_THREADS']}/{env['ASTERLM_ARROW_IO_THREADS']}")

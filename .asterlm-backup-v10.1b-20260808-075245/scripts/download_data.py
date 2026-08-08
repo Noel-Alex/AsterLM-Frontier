@@ -392,7 +392,6 @@ def main() -> None:
     parser.add_argument("--skip-preflight", action="store_true")
     parser.add_argument("--require-auth", action="store_true")
     parser.add_argument("--continue-on-error", action="store_true")
-    parser.add_argument("--skip-stage", action="append", default=[], help="Skip exact expanded stage id; repeatable")
     parser.add_argument("--command-retries", type=int, default=0)
     parser.add_argument("--command-retry-seconds", type=float, default=30.0)
     parser.add_argument("--interrupt-grace-seconds", type=float, default=300.0)
@@ -482,15 +481,6 @@ def main() -> None:
                     command.extend(["--max-rss-gib", str(args.max_rss_gib)])
             stages.append(Stage(stage.id, stage.profile, command))
 
-    if args.skip_stage:
-        requested_skips = set(args.skip_stage)
-        known_stage_ids = {stage.id for stage in stages}
-        unknown_skips = requested_skips - known_stage_ids
-        if unknown_skips:
-            raise SystemExit("Unknown --skip-stage id(s): " + ", ".join(sorted(unknown_skips)) + ". Available: " + ", ".join(sorted(known_stage_ids)))
-        stages = [stage for stage in stages if stage.id not in requested_skips]
-        print("Skipping stage(s): " + ", ".join(sorted(requested_skips)))
-
     usage = shutil.disk_usage(Path.cwd())
     needed = PROFILE_DISK_ESTIMATES_GIB[args.profile]
     print(f"Free disk: {usage.free / 2**30:.1f} GiB; conservative profile estimate: {needed} GiB")
@@ -508,7 +498,6 @@ def main() -> None:
         "hf_home": env["HF_HOME"],
         "started_at_unix": time.time(),
         "stages": [],
-        "skipped_stages": list(args.skip_stage),
         "free_disk_gib_before": usage.free / 2**30,
         "environment": {
             key: env.get(key)
@@ -546,9 +535,7 @@ def main() -> None:
             atomic_write(path, manifest)
             raise SystemExit(int(result["returncode"]))
 
-    failed_stages = [item.get("id") for item in manifest["stages"] if item.get("returncode") not in (None, 0)]
-    manifest["failed_stages"] = failed_stages
-    manifest["status"] = "partial" if failed_stages else "complete"
+    manifest["status"] = "complete"
     manifest["finished_at_unix"] = time.time()
     manifest["free_disk_gib_after"] = shutil.disk_usage(Path.cwd()).free / 2**30
     atomic_write(path, manifest)

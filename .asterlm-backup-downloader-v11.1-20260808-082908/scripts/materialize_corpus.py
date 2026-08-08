@@ -7,7 +7,6 @@ import json
 import os
 import sys
 import time
-import threading
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
@@ -18,7 +17,6 @@ from tqdm import tqdm
 from asterlm.data.hf_stream import (
     MemoryGuard,
     MemoryPressureError,
-    available_ram_gib,
     current_rss_gib,
     memory_status,
     open_resumable_hf_stream,
@@ -271,110 +269,6 @@ def commit_checkpoint(
     state.update(updated)
 
 
-
-class RuntimeHeartbeat:
-    """Out-of-band progress heartbeat that survives a blocked main I/O thread."""
-
-    def __init__(self, path: Path, source: CorpusSource, state: dict[str, Any], *, interval_seconds: float) -> None:
-        self.path = path
-        self.source = source
-        self.state = state
-        self.interval_seconds = max(0.5, interval_seconds)
-        self.started_at_unix = time.time()
-        self.phase = "starting"
-        self.last_record_unix: float | None = None
-        self._lock = threading.Lock()
-        self._stop = threading.Event()
-        self._thread = threading.Thread(target=self._run, name=f"asterlm-heartbeat-{source.id}", daemon=True)
-        self._last_sample_mono = time.monotonic()
-        self._last_sample_tokens = int(state.get("estimated_tokens", 0))
-        self._ema_rate = 0.0
-
-    def set_phase(self, phase: str) -> None:
-        with self._lock:
-            self.phase = phase
-
-    def mark_record(self) -> None:
-        with self._lock:
-            self.last_record_unix = time.time()
-            self.phase = "streaming"
-
-    @staticmethod
-    def _arrow_stats() -> tuple[float | None, float | None, str | None]:
-        try:
-            import pyarrow as pa
-            pool = pa.default_memory_pool()
-            allocated = float(pool.bytes_allocated()) / 2**30
-            peak_raw = pool.max_memory()
-            peak = float(peak_raw) / 2**30 if peak_raw is not None else None
-            return allocated, peak, str(getattr(pool, "backend_name", "unknown"))
-        except Exception:
-            return None, None, None
-
-    def write(self, *, status: str = "running") -> None:
-        now_mono = time.monotonic()
-        now_unix = time.time()
-        tokens = int(self.state.get("estimated_tokens", 0))
-        dt = max(1e-6, now_mono - self._last_sample_mono)
-        instant = max(0.0, (tokens - self._last_sample_tokens) / dt)
-        if self._ema_rate <= 0:
-            self._ema_rate = instant
-        elif instant > 0:
-            self._ema_rate = 0.70 * self._ema_rate + 0.30 * instant
-        else:
-            self._ema_rate *= 0.85
-        self._last_sample_mono = now_mono
-        self._last_sample_tokens = tokens
-        with self._lock:
-            phase = self.phase
-            last_record = self.last_record_unix
-        arrow_allocated, arrow_peak, arrow_backend = self._arrow_stats()
-        atomic_write_json(self.path, {
-            "version": 1,
-            "pid": os.getpid(),
-            "source": self.source.id,
-            "status": status,
-            "phase": phase,
-            "started_at_unix": self.started_at_unix,
-            "heartbeat_unix": now_unix,
-            "last_record_unix": last_record,
-            "estimated_tokens": tokens,
-            "target_tokens": self.source.target_tokens,
-            "documents_seen": int(self.state.get("documents_seen", 0)),
-            "documents_written": int(self.state.get("documents_written", 0)),
-            "checkpoint_id": int(self.state.get("checkpoint_id", 0)),
-            "token_rate_instant": instant,
-            "token_rate_ema": self._ema_rate,
-            "rss_gib": current_rss_gib(),
-            "available_ram_gib": available_ram_gib(),
-            "arrow_allocated_gib": arrow_allocated,
-            "arrow_peak_gib": arrow_peak,
-            "arrow_memory_backend": arrow_backend,
-            "parallel_streams": int(os.getenv("ASTERLM_HF_PARALLEL_STREAMS", "1")),
-            "parquet_batch_rows": int(os.getenv("ASTERLM_PARQUET_BATCH_ROWS", "0")),
-            "xet_fixed_download_concurrency": os.getenv("HF_XET_FIXED_DOWNLOAD_CONCURRENCY"),
-            "xet_high_performance": os.getenv("HF_XET_HIGH_PERFORMANCE") == "1",
-        })
-
-    def _run(self) -> None:
-        while not self._stop.wait(self.interval_seconds):
-            try:
-                self.write()
-            except Exception:
-                pass
-
-    def start(self) -> None:
-        self.write()
-        self._thread.start()
-
-    def stop(self, status: str) -> None:
-        self._stop.set()
-        try:
-            self.write(status=status)
-        finally:
-            self._thread.join(timeout=2)
-
-
 def materialize(
     source: CorpusSource,
     output_root: Path,
@@ -410,7 +304,6 @@ def materialize(
     state.setdefault("started_at_unix", time.time())
     atomic_write_json(state_path, state)
 
-    progress_enabled = os.getenv("ASTERLM_TQDM", "1").strip().lower() not in {"0", "false", "no", "off"}
     progress = tqdm(
         total=source.target_tokens,
         initial=min(int(state["estimated_tokens"]), source.target_tokens),
@@ -418,15 +311,7 @@ def materialize(
         unit_scale=True,
         desc=source.id,
         dynamic_ncols=True,
-        disable=not progress_enabled,
     )
-    heartbeat = RuntimeHeartbeat(
-        source_root / "runtime.json",
-        source,
-        state,
-        interval_seconds=float(os.getenv("ASTERLM_RUNTIME_HEARTBEAT_SECONDS", "2")),
-    )
-    heartbeat.start()
     failures = 0
     exhausted = False
     memory_guard = MemoryGuard(max_rss_gib=max_rss_gib)
@@ -436,7 +321,6 @@ def materialize(
 
     try:
         while int(state["estimated_tokens"]) < source.target_tokens:
-            heartbeat.set_phase("opening_stream")
             cursor = newest_committed_cursor(source_root, state)
             dataset, stream_layout = open_resumable_hf_stream(
                 lambda: create_base_dataset(source, revision),
@@ -445,7 +329,6 @@ def materialize(
                 fallback_skip=int(state["documents_seen"]) if cursor is None else 0,
                 layout=state.get("hf_stream_layout"),
             )
-            heartbeat.set_phase("streaming")
             migration_audit = getattr(dataset, "migration_audit", None)
             audit_payload = migration_audit if isinstance(migration_audit, dict) else None
             state_changed = False
@@ -478,7 +361,6 @@ def materialize(
             records_since_checkpoint = 0
             try:
                 for record in dataset:
-                    heartbeat.mark_record()
                     state["documents_seen"] = int(state["documents_seen"]) + 1
                     records_since_checkpoint += 1
                     if isinstance(record, dict) and matches_requirements(record, source.require_fields):
@@ -614,7 +496,6 @@ def materialize(
                 dataset = None
                 release_arrow_memory()
                 delay = retry_policy.delay(failures)
-                heartbeat.set_phase("retry_wait")
                 tqdm.write(
                     f"{source.id}: transient {type(exc).__name__}: {exc}; "
                     f"retry {failures} in {delay:.1f}s from saved shard cursor"
@@ -633,9 +514,6 @@ def materialize(
         return state
     finally:
         progress.close()
-        heartbeat.stop(
-            "complete" if int(state.get("estimated_tokens", 0)) >= source.target_tokens else "stopped"
-        )
 
 
 def main() -> None:
