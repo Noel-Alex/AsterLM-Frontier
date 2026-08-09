@@ -1,0 +1,14 @@
+{
+  "src/asterlm/config.py": "e3c9d332e0104dea3261e8f9c45417322c55357fc8197f3fca041a51232a9f9f",
+  "src/asterlm/model.py": "22e64e6ad4867e0f4698aac64e89d5552ae89c1c116124ce5d6aae242f93fb29",
+  "src/asterlm/layers/latent_attention.py": "2132b067489a081dd02cc2c2ee7504f00372ba3ce865bcf9b36b691b6a0d429e",
+  "src/asterlm/layers/latent_moe.py": "95e6532a6508b09dc0089bf3f4ff1fe7d99bce04b682b3179e69cdc03805e475",
+  "src/asterlm/training/engine.py": "224cdf6837683ad27092491f64e8a93eddc5a1d3a319909bbd07f37a09ce31b7",
+  "tests/test_vnext2_core.py": null,
+  "scripts/frontier_vnext2_prepare_proxy.py": null,
+  "scripts/frontier_vnext2_sparse_scout.py": null,
+  "scripts/frontier_vnext2_campaign.py": null,
+  "docs/RESEARCH_CHARTER.md": null,
+  "docs/LONGCAT_LSA_NOTES.md": null,
+  "docs/MTP_RESEARCH_PROTOCOL.md": null
+}

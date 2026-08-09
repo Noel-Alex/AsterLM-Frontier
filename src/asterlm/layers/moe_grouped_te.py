@@ -6,16 +6,16 @@ from torch.nn import functional as F
 
 
 class TEGroupedRoutedExperts:
-    """Transformer Engine grouped execution bridge for Aster routed experts.
+    """Transformer Engine grouped execution bridge for routed experts.
 
-    Aster's existing ``self.routed`` SwiGLU modules remain the authoritative
-    parameter owners. This object is intentionally not an ``nn.Module`` child of
-    ``DeepSeekStyleMoE`` so checkpoint/state-dict/optimizer ownership remains
-    unchanged.
+    Existing expert modules remain the authoritative parameter owners. This bridge is
+    intentionally not registered as a child module by its caller, preserving Aster's
+    optimizer and checkpoint parameter names.
 
-    Ada + delayed-scaling FP8 needs each expert's grouped-GEMM M dimension
-    aligned to 16. The dispatcher below performs that padding with tensor
-    indexing only, then removes dummy rows before weighted top-k accumulation.
+    Ada FP8 grouped wgrad requires the expert M dimension to be divisible by 16. Each
+    expert segment is padded accordingly. Unlike the previous Aster implementation,
+    this version never calls ``Tensor.item()`` to size its packed buffer, eliminating a
+    GPU->CPU synchronization from every MoE invocation.
     """
 
     def __init__(
@@ -40,13 +40,10 @@ class TEGroupedRoutedExperts:
             from transformer_engine.pytorch.ops import GroupedLinear, Sequential, SwiGLU
         except ImportError as exc:
             raise ImportError(
-                "ASTER_MOE_IMPL=grouped requires Transformer Engine with "
+                "Grouped MoE requires Transformer Engine with "
                 "transformer_engine.pytorch.ops.GroupedLinear support."
             ) from exc
 
-        # Meta construction avoids allocating a duplicate set of expert weights.
-        # All registered weight slots are rebound to the already-existing Aster
-        # expert Parameters before execution.
         self.gate_up = GroupedLinear(
             num_groups=self.num_experts,
             in_features=self.dim,
@@ -71,18 +68,13 @@ class TEGroupedRoutedExperts:
             raise RuntimeError(
                 f"Expected {self.num_experts} routed experts, got {len(self.routed_experts)}"
             )
-
         for idx, expert in enumerate(self.routed_experts):
             gate_up = getattr(expert, "gate_up", None)
             down = getattr(expert, "down", None)
             if gate_up is None or down is None:
-                raise RuntimeError(
-                    "Grouped MoE expects SwiGLU experts with gate_up/down projections"
-                )
+                raise RuntimeError("Grouped MoE expects SwiGLU experts with gate_up/down")
             if not hasattr(gate_up, "weight") or not hasattr(down, "weight"):
-                raise RuntimeError(
-                    "Grouped MoE requires explicit expert weight Parameters"
-                )
+                raise RuntimeError("Grouped MoE requires explicit expert weight Parameters")
             setattr(self.gate_up, f"weight{idx}", gate_up.weight)
             setattr(self.down, f"weight{idx}", down.weight)
 
@@ -99,27 +91,7 @@ class TEGroupedRoutedExperts:
         flat: torch.Tensor,
         top_idx: torch.Tensor,
         top_weight: torch.Tensor,
-    ) -> tuple[
-        torch.Tensor,
-        torch.Tensor,
-        torch.Tensor,
-        torch.Tensor,
-        torch.Tensor,
-    ]:
-        """Pack top-k assignments by expert and pad each expert to ``self.align``.
-
-        Returns:
-            packed:
-                Padded expert-sorted input rows.
-            split_sizes:
-                Per-expert padded row counts for TE GroupedLinear.
-            real_positions:
-                Positions of real (non-padding) rows inside ``packed``.
-            sorted_token_idx:
-                Original token index for each real expert-sorted row.
-            sorted_weight:
-                Routing weight corresponding to each real expert-sorted row.
-        """
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         num_tokens = flat.shape[0]
         top_k = top_idx.shape[1]
         num_assignments = num_tokens * top_k
@@ -133,63 +105,45 @@ class TEGroupedRoutedExperts:
         )
         assignment_weight = top_weight.reshape(-1)
 
-        # Sort all top-k assignments once so every expert occupies one contiguous
-        # segment. This replaces the reference path's eight torch.where launches.
         order = torch.argsort(expert_ids)
         sorted_expert_ids = expert_ids.index_select(0, order)
         sorted_token_idx = assignment_token_idx.index_select(0, order)
         sorted_weight = assignment_weight.index_select(0, order)
 
-        counts = torch.bincount(
-            expert_ids,
-            minlength=self.num_experts,
-        ).to(torch.long)
-
+        counts = torch.bincount(expert_ids, minlength=self.num_experts).to(torch.long)
         padded_counts = ((counts + self.align - 1) // self.align) * self.align
-
-        # Give an empty expert one legal all-zero tile. Healthy Aster routing
-        # normally makes this irrelevant, but it avoids backend-specific behavior
-        # for zero-sized grouped GEMMs and keeps the path fail-safe.
+        # Empty experts still receive one legal zero tile. This makes the grouped
+        # kernel path well-defined even under pathological early routing collapse.
         padded_counts = torch.where(
             padded_counts > 0,
             padded_counts,
             torch.full_like(padded_counts, self.align),
         )
-
         padding_per_expert = padded_counts - counts
-        padding_before = (
-            torch.cumsum(padding_per_expert, dim=0) - padding_per_expert
-        )
-
-        # Real rows keep their expert-sorted order; cumulative padding shifts each
-        # expert's segment to its aligned location.
+        padding_before = torch.cumsum(padding_per_expert, dim=0) - padding_per_expert
         real_positions = (
             torch.arange(num_assignments, device=flat.device, dtype=torch.long)
             + padding_before.index_select(0, sorted_expert_ids)
         )
 
-        # A scalar conversion is required to size the packed buffer. This is one
-        # host synchronization per MoE invocation, substantially less CPU launch
-        # work than the original per-expert GEMM loop. We can remove this sync in
-        # a later custom-dispatch kernel if profiling says it matters.
-        total_padded = int(padded_counts.sum().item())
+        # Fixed, shape-derived capacity. Worst-case padding is <= align rows per
+        # expert. Keep the capacity itself aligned and place any remaining slack into
+        # the final expert's zero segment. No device scalar is copied to the host.
+        aligned_assignments = (
+            (num_assignments + self.align - 1) // self.align
+        ) * self.align
+        capacity = aligned_assignments + self.num_experts * self.align
+        capacity_tensor = torch.as_tensor(capacity, device=flat.device, dtype=torch.long)
+        slack = capacity_tensor - padded_counts.sum()
+        split_sizes_long = padded_counts.clone()
+        split_sizes_long[-1] = split_sizes_long[-1] + slack
 
         gathered = flat.index_select(0, sorted_token_idx)
-        packed = flat.new_zeros((total_padded, self.dim))
-        packed = packed.index_copy(0, real_positions, gathered)
+        packed = flat.new_zeros((capacity, self.dim))
+        packed.index_copy_(0, real_positions, gathered)
+        split_sizes = split_sizes_long.to(dtype=torch.int32)
 
-        split_sizes = padded_counts.to(
-            device=flat.device,
-            dtype=torch.int32,
-        )
-
-        return (
-            packed,
-            split_sizes,
-            real_positions,
-            sorted_token_idx,
-            sorted_weight,
-        )
+        return packed, split_sizes, real_positions, sorted_token_idx, sorted_weight
 
     def forward(
         self,
@@ -198,32 +152,15 @@ class TEGroupedRoutedExperts:
         top_weight: torch.Tensor,
     ) -> torch.Tensor:
         if flat.ndim != 2 or flat.shape[-1] != self.dim:
-            raise ValueError(
-                f"Expected routed input [N, {self.dim}], got {tuple(flat.shape)}"
-            )
+            raise ValueError(f"Expected routed input [N, {self.dim}], got {tuple(flat.shape)}")
         if top_idx.ndim != 2 or top_weight.shape != top_idx.shape:
-            raise ValueError(
-                "top_idx and top_weight must have matching [N, top_k] shapes"
-            )
+            raise ValueError("top_idx and top_weight must have matching [N, top_k] shapes")
 
-        # Module.to()/dtype conversion may replace the authoritative Parameters,
-        # so refresh the GroupedLinear aliases immediately before execution.
         self._bind_authoritative_weights()
-
-        (
-            packed,
-            split_sizes,
-            real_positions,
-            sorted_token_idx,
-            sorted_weight,
-        ) = self._dispatch_and_pad(flat, top_idx, top_weight)
-
-        expert_output_padded = self.fused(
-            packed,
-            split_sizes,
-            split_sizes,
+        packed, split_sizes, real_positions, sorted_token_idx, sorted_weight = self._dispatch_and_pad(
+            flat, top_idx, top_weight
         )
-
+        expert_output_padded = self.fused(packed, split_sizes, split_sizes)
         if self.dropout:
             expert_output_padded = F.dropout(
                 expert_output_padded,
@@ -231,17 +168,8 @@ class TEGroupedRoutedExperts:
                 training=bool(self.routed_experts[0].training),
             )
 
-        # Select only real rows before routing-weight application. Dummy rows
-        # therefore have zero upstream gradient and cannot change expert wgrads.
-        expert_output = expert_output_padded.index_select(
-            0,
-            real_positions,
-        )
-        weighted = expert_output * sorted_weight.to(
-            expert_output.dtype
-        ).unsqueeze(-1)
-
-        # Restore original token order and sum top-k expert contributions.
+        expert_output = expert_output_padded.index_select(0, real_positions)
+        weighted = expert_output * sorted_weight.to(expert_output.dtype).unsqueeze(-1)
         routed_out = torch.zeros_like(flat)
         routed_out.index_add_(0, sorted_token_idx, weighted)
         return routed_out

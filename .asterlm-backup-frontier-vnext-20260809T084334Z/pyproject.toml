@@ -31,14 +31,14 @@ dependencies = [
 
 [project.optional-dependencies]
 cuda = [
-  "flash-linear-attention>=0.5.1,<0.6",
+  "fla-core>=0.4.0",
   "transformers>=4.53.3",
   "accelerate>=1.7",
 ]
 tracking = ["wandb>=0.19", "tensorboard>=2.18"]
 dev = ["pytest>=8.3", "ruff>=0.11"]
 quant = ["torchao>=0.11"]
-fp8 = ["transformer-engine[pytorch]>=2.17,<2.18"]
+fp8 = ["transformer-engine[pytorch]>=2.6"]
 memory = ["apollo-torch>=1.0", "transformers>=4.53.3"]
 reasoning = ["math-verify>=0.7.0", "sympy>=1.13"]
 frontier = [

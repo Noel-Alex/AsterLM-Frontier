@@ -1,0 +1,17 @@
+{
+  "src/asterlm/config.py": "85829323607f1d10da496844687f96c203b4bf17c835d67548e1474f853166ee",
+  "src/asterlm/model.py": "1bcf41064cde4d2c9b171944fef2d0db0cb41d0626f920347b13bb1233b2194c",
+  "src/asterlm/layers/latent_attention.py": "9d9ec7c94d8247f37225cfd6054d82dc95b36e864a45ec6045a03018c7024d69",
+  "src/asterlm/layers/moe.py": "63321a4c1beb915dd3b498048c964102525efc61e60f012a75224abd14738128",
+  "src/asterlm/layers/moe_grouped_te.py": "115f7e7d0815df0646b5858143b061d42a70b7204f30c412e6aeea6e805c344c",
+  "src/asterlm/layers/attnres_vnext.py": null,
+  "src/asterlm/layers/gdn2.py": null,
+  "src/asterlm/layers/latent_moe.py": null,
+  "src/asterlm/training/precision.py": "a5bdcd93b45fea54bac1cbe70c526bc447edaa348b477bb730fb4a039b15a5ef",
+  "pyproject.toml": "5995e11b3935b6a00117add8e37ee01a8ae31c1c540a53474edea8d15f187002",
+  "tests/test_vnext_core.py": null,
+  "scripts/frontier_vnext_campaign.py": null,
+  "scripts/frontier_vnext_capabilities.py": null,
+  "scripts/frontier_vnext_cache_projection.py": null,
+  "scripts/frontier_vnext_kernel_profile.py": null
+}

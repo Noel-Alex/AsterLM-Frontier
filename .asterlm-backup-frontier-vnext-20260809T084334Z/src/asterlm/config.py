@@ -26,17 +26,13 @@ class AsterConfig:
     n_heads: int = 12
     head_dim: int = 64
     ffn_hidden: int = 2048
-    ffn_type: str = "dense"  # dense | moe | latent_moe
+    ffn_type: str = "dense"  # dense | moe
     moe_every: int = 1
     moe_first_dense_layers: int = 0
     moe_num_experts: int = 8
     moe_top_k: int = 2
     moe_shared_experts: int = 1
     moe_expert_hidden: int = 512
-    # LatentMoE compresses only the routed branch; router/shared experts stay full-width.
-    latent_moe_dim: int | None = None
-    # Kimi-K3-inspired Stable LatentMoE ablation: RMS-normalize the aggregated routed latent before up-projection.
-    latent_moe_post_norm: bool = False
     moe_aux_loss_weight: float = 0.01
     moe_router_z_loss_weight: float = 0.001
     moe_router_score: str = "sigmoid"  # sigmoid (DeepSeek-style) | softmax
@@ -79,12 +75,6 @@ class AsterConfig:
     logit_softcap: float | None = None
     qk_stat_tokens: int = 32
 
-    # Training-time global-attention backend. Inference keeps the exact latent-cache path.
-    attention_train_backend: str = "sdpa"  # sdpa | absorbed_sdpa | flex_window
-    attention_train_window: int = 4096
-    attention_train_global_stride: int = 0
-    attention_flex_block_size: int = 128
-
     # Inference cache storage. KDA layers use fixed recurrent states; these options
     # apply to the latent/global-attention layers only. `hadamard_int4` is a
     # TurboQuant-inspired, training-free rotated INT4 reference path. It saves VRAM
@@ -117,23 +107,13 @@ class AsterConfig:
     mtp_depth: int = 2
     mtp_rank: int = 256
     mtp_loss_weight: float = 0.15
-    # MTP implementations are ablated independently; DeepSeek-style uses one
-    # sequential future-token module with a full Aster block.
-    mtp_architecture: str = "low_rank"  # low_rank | deepseek
-    mtp_block_kind: str = "latent"  # latent | kda | gdn2
     lm_loss_chunk_size: int = 256
-    # PyTorch 2.13 LinearCrossEntropy avoids materializing [B,T,V] logits.
-    lm_loss_backend: str = "legacy_chunked"  # legacy_chunked | torch_linear_ce
-    linear_ce_chunking_method: str = "auto"
-    linear_ce_acc_policy: str = "compact"
 
     # Stability and execution.
     qk_clip_tau: float = 100.0
     init_std: float = 0.02
     residual_init_scale: float | None = None
     gradient_checkpointing: bool = True
-    # Group multiple transformer blocks behind one checkpoint boundary at long context.
-    checkpoint_segment_size: int = 1
 
     def __post_init__(self) -> None:
         if self.n_heads * self.head_dim != self.d_model:
@@ -142,12 +122,8 @@ class AsterConfig:
             raise ValueError("rope_dim must be a positive even number")
         if self.ffn_hidden <= self.d_model:
             raise ValueError("ffn_hidden should exceed d_model")
-        if self.ffn_type not in {"dense", "moe", "latent_moe"}:
-            raise ValueError("ffn_type must be dense, moe, or latent_moe")
-        if self.ffn_type == "latent_moe":
-            latent_dim = self.latent_moe_dim or (self.d_model // 4)
-            if not 0 < latent_dim < self.d_model:
-                raise ValueError("latent_moe_dim must be in (0, d_model)")
+        if self.ffn_type not in {"dense", "moe"}:
+            raise ValueError("ffn_type must be dense or moe")
         if self.linear_backend not in {"torch", "transformer_engine"}:
             raise ValueError("linear_backend must be torch or transformer_engine")
         if self.ffn_linear_backend not in {None, "torch", "transformer_engine", "loqt_int4"}:
@@ -171,7 +147,7 @@ class AsterConfig:
         if self.kda_ratio < 0:
             raise ValueError("kda_ratio must be non-negative")
         if self.layer_pattern is not None:
-            bad = set(self.layer_pattern) - {"kda", "gdn2", "latent"}
+            bad = set(self.layer_pattern) - {"kda", "latent"}
             if bad:
                 raise ValueError(f"Unsupported layer kinds: {sorted(bad)}")
             if len(self.layer_pattern) != self.n_layers:
@@ -182,14 +158,6 @@ class AsterConfig:
             raise ValueError("rope_scaling_type must be none, linear, or yarn")
         if not 0.0 <= self.attention_dropout < 1.0:
             raise ValueError("attention_dropout must be in [0, 1)")
-        if self.attention_train_backend not in {"sdpa", "absorbed_sdpa", "flex_window"}:
-            raise ValueError("attention_train_backend must be sdpa, absorbed_sdpa, or flex_window")
-        if self.attention_train_window <= 0 or self.attention_flex_block_size <= 0:
-            raise ValueError("training attention window/block size must be positive")
-        if self.attention_train_global_stride < 0:
-            raise ValueError("attention_train_global_stride must be non-negative")
-        if self.attention_train_backend == "flex_window" and self.attention_dropout != 0.0:
-            raise ValueError("vNext flex_window currently requires attention_dropout=0")
         if self.norm_type not in {"rmsnorm", "ssnorm"}:
             raise ValueError("norm_type must be rmsnorm or ssnorm")
         if not 0.0 <= self.residual_dropout < 1.0 or not 0.0 <= self.ffn_dropout < 1.0:
@@ -214,22 +182,10 @@ class AsterConfig:
             raise ValueError("cache_recent_tokens must be non-negative")
         if self.mtp_depth < 0 or self.mtp_rank <= 0 or self.mtp_loss_weight < 0:
             raise ValueError("MTP depth/weight must be non-negative and rank positive")
-        if self.mtp_architecture not in {"low_rank", "deepseek"}:
-            raise ValueError("mtp_architecture must be low_rank or deepseek")
-        if self.mtp_block_kind not in {"latent", "kda", "gdn2"}:
-            raise ValueError("mtp_block_kind must be latent, kda, or gdn2")
-        if self.mtp_architecture == "deepseek" and self.mtp_depth not in {0, 1}:
-            raise ValueError("Aster vNext2 validates DeepSeek-style MTP at depth 1 only")
         if self.lm_loss_chunk_size <= 0:
             raise ValueError("lm_loss_chunk_size must be positive")
-        if self.lm_loss_backend not in {"legacy_chunked", "torch_linear_ce"}:
-            raise ValueError("lm_loss_backend must be legacy_chunked or torch_linear_ce")
-        if self.linear_ce_acc_policy not in {"auto", "compact", "accurate"}:
-            raise ValueError("linear_ce_acc_policy must be auto, compact, or accurate")
         if self.max_seq_len <= 0 or self.vocab_size <= 0 or self.n_layers <= 0:
             raise ValueError("model sizes must be positive")
-        if self.checkpoint_segment_size <= 0:
-            raise ValueError("checkpoint_segment_size must be positive")
 
     @property
     def ffn_backend(self) -> str:
@@ -266,7 +222,6 @@ class TrainConfig:
     compile_mode: str = "default"
     precision_backend: str = "amp"  # amp | transformer_engine_fp8
     fp8_format: str = "hybrid"  # hybrid | e4m3
-    fp8_recipe: str = "delayed"  # delayed | current
     fp8_amax_history_len: int = 1024
     fp8_amax_compute_algo: str = "max"
     activation_offload: bool = False
@@ -362,8 +317,6 @@ class TrainConfig:
             raise ValueError("precision_backend must be amp or transformer_engine_fp8")
         if self.fp8_format not in {"hybrid", "e4m3"}:
             raise ValueError("fp8_format must be hybrid or e4m3")
-        if self.fp8_recipe not in {"delayed", "current"}:
-            raise ValueError("fp8_recipe must be delayed or current")
         if self.fp8_amax_history_len <= 0:
             raise ValueError("fp8_amax_history_len must be positive")
         if self.loqt_merge_interval < 0:

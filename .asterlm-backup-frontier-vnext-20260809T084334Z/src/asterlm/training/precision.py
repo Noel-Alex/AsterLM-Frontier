@@ -32,7 +32,7 @@ class PrecisionManager:
                 raise RuntimeError("Transformer Engine FP8 requires CUDA")
             try:
                 import transformer_engine.pytorch as te
-                from transformer_engine.common.recipe import DelayedScaling, Float8CurrentScaling, Format
+                from transformer_engine.common.recipe import DelayedScaling, Format
             except ImportError as exc:  # pragma: no cover - optional CUDA package
                 raise ImportError(
                     "precision_backend='transformer_engine_fp8' requires Transformer Engine. "
@@ -43,14 +43,11 @@ class PrecisionManager:
                 raise RuntimeError("Transformer Engine FP8 delayed scaling requires SM89 (Ada) or newer")
             fmt = Format.HYBRID if self.config.fp8_format == "hybrid" else Format.E4M3
             self._te = te
-            if self.config.fp8_recipe == "current":
-                self._recipe = Float8CurrentScaling(fp8_format=fmt)
-            else:
-                self._recipe = DelayedScaling(
-                    fp8_format=fmt,
-                    amax_history_len=self.config.fp8_amax_history_len,
-                    amax_compute_algo=self.config.fp8_amax_compute_algo,
-                )
+            self._recipe = DelayedScaling(
+                fp8_format=fmt,
+                amax_history_len=self.config.fp8_amax_history_len,
+                amax_compute_algo=self.config.fp8_amax_compute_algo,
+            )
 
     def forward_context(self) -> ContextManager:
         stack = ExitStack()

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import math
-import os
 from dataclasses import dataclass
 from typing import Any
 
@@ -12,12 +11,10 @@ from torch.utils.checkpoint import checkpoint
 
 from .cache import AsterCache
 from .config import AsterConfig
-from .layers.attnres_vnext import AttnResMix
-from .layers.gdn2 import GDN2
+from .layers.block_attnres import DepthResidualMixer
 from .layers.ffn import SwiGLU
 from .layers.kda import KDA
 from .layers.latent_attention import LatentAttention
-from .layers.latent_moe import LatentMoE
 from .layers.mtp import MultiTokenPredictor
 from .layers.moe import DeepSeekStyleMoE
 from .layers.norm import build_norm
@@ -82,44 +79,19 @@ class AsterBlock(nn.Module):
         self.norm_ffn = build_norm(config.d_model, config.rms_eps, config.norm_type)
         if kind == "kda":
             if kda_idx is None:
-                raise ValueError("recurrent index is required for KDA blocks")
+                raise ValueError("kda_idx is required for KDA blocks")
             self.mixer: nn.Module = KDA(config, kda_idx)
-        elif kind == "gdn2":
-            if kda_idx is None:
-                raise ValueError("recurrent index is required for GDN2 blocks")
-            self.mixer = GDN2(config, kda_idx)
         elif kind == "latent":
             self.mixer = LatentAttention(config, layer_idx)
         else:
             raise ValueError(f"Unknown block kind: {kind}")
         use_moe = (
-            config.ffn_type in {"moe", "latent_moe"}
+            config.ffn_type == "moe"
             and layer_idx >= config.moe_first_dense_layers
             and (layer_idx - config.moe_first_dense_layers) % config.moe_every == 0
         )
-        if use_moe and config.ffn_type == "latent_moe":
-            self.ffn = LatentMoE(
-                dim=config.d_model,
-                latent_dim=config.latent_moe_dim or (config.d_model // 4),
-                expert_hidden=config.moe_expert_hidden,
-                num_experts=config.moe_num_experts,
-                top_k=config.moe_top_k,
-                shared_experts=config.moe_shared_experts,
-                dropout=config.ffn_dropout,
-                router_score=config.moe_router_score,
-                balance_strategy=config.moe_balance_strategy,
-                bias_update_speed=config.moe_router_bias_update_speed,
-                linear_backend=config.ffn_backend,
-                moe_impl=os.environ.get("ASTER_MOE_IMPL", "reference").strip().lower(),
-                loqt_rank=config.loqt_rank,
-                loqt_alpha=config.loqt_alpha,
-                loqt_group_size=config.loqt_group_size,
-                init_std=config.init_std,
-                norm_eps=config.rms_eps,
-                post_norm=config.latent_moe_post_norm,
-            )
-        elif use_moe:
-            self.ffn = DeepSeekStyleMoE(
+        self.ffn = (
+            DeepSeekStyleMoE(
                 config.d_model,
                 config.moe_expert_hidden,
                 config.moe_num_experts,
@@ -135,8 +107,8 @@ class AsterBlock(nn.Module):
                 config.loqt_group_size,
                 config.init_std,
             )
-        else:
-            self.ffn = SwiGLU(
+            if use_moe
+            else SwiGLU(
                 config.d_model,
                 config.ffn_hidden,
                 config.ffn_dropout,
@@ -146,14 +118,8 @@ class AsterBlock(nn.Module):
                 loqt_group_size=config.loqt_group_size,
                 init_std=config.init_std,
             )
+        )
         self.residual_dropout = nn.Dropout(config.residual_dropout)
-        self.use_attnres = config.use_block_attnres
-        if self.use_attnres:
-            self.attn_res_mix = AttnResMix(config.d_model, config.rms_eps)
-            self.ffn_res_mix = AttnResMix(config.d_model, config.rms_eps)
-        else:
-            self.attn_res_mix = None
-            self.ffn_res_mix = None
 
     def forward(
         self,
@@ -163,7 +129,7 @@ class AsterBlock(nn.Module):
         use_cache: bool = False,
     ) -> torch.Tensor:
         normed = self.norm_mixer(hidden)
-        if self.kind in {"kda", "gdn2"}:
+        if self.kind == "kda":
             mixed = self.mixer(normed, cache=cache, use_cache=use_cache)
         else:
             layer_cache = None if cache is None else cache.latent_layer(self.layer_idx)
@@ -171,58 +137,6 @@ class AsterBlock(nn.Module):
         hidden = hidden + self.residual_dropout(mixed)
         hidden = hidden + self.residual_dropout(self.ffn(self.norm_ffn(hidden)))
         return hidden
-
-    def forward_attnres(
-        self,
-        hidden: torch.Tensor,
-        position_ids: torch.Tensor,
-        depth_states: list[torch.Tensor] | None,
-        cache: AsterCache | None = None,
-        use_cache: bool = False,
-        attnres_block_size: int = 4,
-    ) -> tuple[torch.Tensor, list[torch.Tensor]]:
-        """Faithful Block AttnRes over attention and FFN sublayers.
-
-        ``hidden`` carries the running prefix sum. ``depth_states`` stores only
-        completed block summaries, matching the current FLA/KDA reference.
-        """
-        if self.attn_res_mix is None or self.ffn_res_mix is None:
-            raise RuntimeError("AttnRes sublayers were not initialized")
-
-        prefix_sum: torch.Tensor | None = hidden
-        states = None if depth_states is None else list(depth_states)
-
-        # First attention sublayer is a single-source identity in AttnRes. Bypass
-        # the mixer, but move the embedding into the completed-state list exactly
-        # as the reference implementation does.
-        if states is None:
-            attn_input = self.norm_mixer(prefix_sum)
-            states = [prefix_sum]
-            prefix_sum = None
-        else:
-            residuals = [*states, prefix_sum]
-            if (2 * self.layer_idx) % attnres_block_size == 0:
-                states = residuals
-                prefix_sum = None
-            attn_input = self.norm_mixer(self.attn_res_mix(residuals))
-
-        if self.kind in {"kda", "gdn2"}:
-            mixed = self.mixer(attn_input, cache=cache, use_cache=use_cache)
-        else:
-            layer_cache = None if cache is None else cache.latent_layer(self.layer_idx)
-            mixed = self.mixer(attn_input, position_ids, cache=layer_cache, use_cache=use_cache)
-        mixed = self.residual_dropout(mixed)
-        prefix_sum = mixed if prefix_sum is None else prefix_sum + mixed
-
-        residuals = [*states, prefix_sum]
-        if (2 * self.layer_idx + 1) % attnres_block_size == 0:
-            states = residuals
-            prefix_sum = None
-        ffn_input = self.norm_ffn(self.ffn_res_mix(residuals))
-        ffn_out = self.residual_dropout(self.ffn(ffn_input))
-        prefix_sum = ffn_out if prefix_sum is None else prefix_sum + ffn_out
-        return prefix_sum, states
-
 
 
 class AsterLM(nn.Module):
@@ -243,66 +157,50 @@ class AsterLM(nn.Module):
         self.embedding_dropout = nn.Dropout(config.residual_dropout)
 
         blocks: list[AsterBlock] = []
-        recurrent_idx = 0
-        self.n_kda_layers = 0
-        self.n_gdn2_layers = 0
+        kda_idx = 0
         for layer_idx, kind in enumerate(config.pattern):
-            idx = recurrent_idx if kind in {"kda", "gdn2"} else None
-            blocks.append(AsterBlock(config, kind, layer_idx, idx))
-            if kind in {"kda", "gdn2"}:
-                recurrent_idx += 1
+            blocks.append(AsterBlock(config, kind, layer_idx, kda_idx if kind == "kda" else None))
             if kind == "kda":
-                self.n_kda_layers += 1
-            elif kind == "gdn2":
-                self.n_gdn2_layers += 1
+                kda_idx += 1
         self.blocks = nn.ModuleList(blocks)
+        self.n_kda_layers = kda_idx
 
         self.use_block_attnres = config.use_block_attnres
         self.attnres_block_size = config.attnres_block_size
-        self.final_attnres = AttnResMix(config.d_model, config.rms_eps) if self.use_block_attnres else None
+        if self.use_block_attnres:
+            n_groups = math.ceil(config.n_layers / config.attnres_block_size)
+            self.depth_mixers = nn.ModuleList(
+                [
+                    DepthResidualMixer(
+                        config.d_model,
+                        config.attnres_key_dim,
+                        max_states=group_idx + 1,
+                        eps=config.rms_eps,
+                        norm_type=config.norm_type,
+                    )
+                    for group_idx in range(1, n_groups)
+                ]
+            )
+        else:
+            self.depth_mixers = nn.ModuleList()
 
         self.final_norm = build_norm(config.d_model, config.rms_eps, config.norm_type)
         self.lm_head = nn.Linear(config.d_model, config.vocab_size, bias=False)
         if config.tie_embeddings:
             self.lm_head.weight = self.token_embedding.weight
 
-        self.mtp = None
-        self.mtp_hnorm = None
-        self.mtp_enorm = None
-        self.mtp_eh_proj = None
-        self.mtp_deepseek_block = None
-        self.mtp_final_norm = None
-        if config.mtp_depth > 0:
-            if config.mtp_architecture == "low_rank":
-                self.mtp = MultiTokenPredictor(
-                    config.d_model,
-                    config.mtp_rank,
-                    config.mtp_depth,
-                    config.rms_eps,
-                    config.linear_backend,
-                    config.norm_type,
-                )
-            else:
-                # DeepSeek-V3-style sequential MTP: normalize the main hidden state
-                # and the *actual future token embedding*, concatenate, project 2d->d,
-                # run one full model block, final-normalize, then reuse the LM head.
-                self.mtp_hnorm = build_norm(config.d_model, config.rms_eps, config.norm_type)
-                self.mtp_enorm = build_norm(config.d_model, config.rms_eps, config.norm_type)
-                from .layers.linear import build_linear
-                self.mtp_eh_proj = build_linear(
-                    2 * config.d_model,
-                    config.d_model,
-                    bias=False,
-                    backend=config.linear_backend,
-                )
-                recurrent_idx = self.n_kda_layers + self.n_gdn2_layers
-                self.mtp_deepseek_block = AsterBlock(
-                    config,
-                    config.mtp_block_kind,
-                    config.n_layers,
-                    recurrent_idx if config.mtp_block_kind in {"kda", "gdn2"} else None,
-                )
-                self.mtp_final_norm = build_norm(config.d_model, config.rms_eps, config.norm_type)
+        self.mtp = (
+            MultiTokenPredictor(
+                config.d_model,
+                config.mtp_rank,
+                config.mtp_depth,
+                config.rms_eps,
+                config.linear_backend,
+                config.norm_type,
+            )
+            if config.mtp_depth > 0
+            else None
+        )
         self.apply(self._initialize_module)
         self._initialize_embedding_projections()
         self._scale_residual_projections()
@@ -341,11 +239,7 @@ class AsterLM(nn.Module):
 
     @property
     def uses_fla(self) -> bool:
-        return any(
-            (isinstance(block.mixer, KDA) and block.mixer.uses_fla)
-            or isinstance(block.mixer, GDN2)
-            for block in self.blocks
-        )
+        return any(isinstance(block.mixer, KDA) and block.mixer.uses_fla for block in self.blocks)
 
     def make_cache(self) -> AsterCache:
         return AsterCache.create(use_fla=self.uses_fla, config=self.config)
@@ -384,71 +278,13 @@ class AsterLM(nn.Module):
         position_ids: torch.Tensor,
         cache: AsterCache | None,
         use_cache: bool,
-        depth_states: list[torch.Tensor] | None = None,
-    ):
-        checkpointed = self.config.gradient_checkpointing and self.training and not use_cache
-        if self.use_block_attnres:
-            states = None if depth_states is None else list(depth_states)
-            if checkpointed:
-                def custom_forward(h: torch.Tensor, p: torch.Tensor, *state_tensors: torch.Tensor):
-                    out, new_states = block.forward_attnres(
-                        h,
-                        p,
-                        list(state_tensors) if state_tensors else None,
-                        cache=None,
-                        use_cache=False,
-                        attnres_block_size=self.attnres_block_size,
-                    )
-                    return (out, *new_states)
-
-                result = _aster_activation_checkpoint(
-                    self.config, custom_forward, hidden, position_ids, *(states or [])
-                )
-                if torch.is_tensor(result):
-                    return result, None
-                return result[0], list(result[1:])
-            return block.forward_attnres(
-                hidden,
-                position_ids,
-                states,
-                cache=cache,
-                use_cache=use_cache,
-                attnres_block_size=self.attnres_block_size,
-            )
-
-        if checkpointed:
+    ) -> torch.Tensor:
+        if self.config.gradient_checkpointing and self.training and not use_cache:
             def custom_forward(h: torch.Tensor, p: torch.Tensor) -> torch.Tensor:
                 return block(h, p, cache=None, use_cache=False)
 
-            # CRITICAL: return the checkpointed result. The previous implementation
-            # discarded it and ran every block a second time without checkpointing.
-            return _aster_activation_checkpoint(self.config, custom_forward, hidden, position_ids)
+            _aster_activation_checkpoint(self.config, custom_forward, hidden, position_ids)
         return block(hidden, position_ids, cache=cache, use_cache=use_cache)
-
-
-    def _run_block_segment(
-        self,
-        blocks: list[AsterBlock],
-        hidden: torch.Tensor,
-        position_ids: torch.Tensor,
-    ) -> torch.Tensor:
-        """Checkpoint several consecutive blocks behind one saved boundary.
-
-        Per-block checkpointing still retains one [B,T,D] input at every layer.
-        At very long context those boundaries alone become multiple GiB. Segmenting
-        reduces that storage while keeping exactly the same block equations.
-        """
-        if not blocks:
-            return hidden
-
-        def custom_forward(h: torch.Tensor, p: torch.Tensor) -> torch.Tensor:
-            for segment_block in blocks:
-                h = segment_block(h, p, cache=None, use_cache=False)
-            return h
-
-        return _aster_activation_checkpoint(
-            self.config, custom_forward, hidden, position_ids
-        )
 
     def _projected_cross_entropy(
         self,
@@ -462,24 +298,6 @@ class AsterLM(nn.Module):
         training. Chunking limits peak logits memory; checkpointing avoids retaining
         each chunk's softmax activations until backward.
         """
-        if self.config.lm_loss_backend == "torch_linear_ce":
-            linear_ce = getattr(F, "linear_cross_entropy", None)
-            options_cls = getattr(nn, "LinearCrossEntropyOptions", None)
-            if linear_ce is None or options_cls is None:
-                raise RuntimeError("torch_linear_ce requires PyTorch 2.13+ LinearCrossEntropy")
-            options = options_cls(
-                chunking_method=self.config.linear_ce_chunking_method,
-                acc_policy=self.config.linear_ce_acc_policy,
-            )
-            return linear_ce(
-                hidden.reshape(-1, hidden.shape[-1]),
-                self.lm_head.weight,
-                labels.reshape(-1),
-                reduction="mean",
-                ignore_index=ignore_index,
-                options=options,
-            )
-
         chunk_size = self.config.lm_loss_chunk_size
         losses: list[torch.Tensor] = []
         valid = labels.ne(ignore_index).sum().clamp_min(1)
@@ -529,38 +347,19 @@ class AsterLM(nn.Module):
         position_ids = torch.arange(start, start + seq_len, device=input_ids.device).unsqueeze(0).expand(bsz, -1)
 
         hidden = self.embedding_dropout(self.embedding_in_proj(self.token_embedding(input_ids)))
-        depth_states: list[torch.Tensor] | None = None
-        if (
-            not self.use_block_attnres
-            and self.config.gradient_checkpointing
-            and self.training
-            and not use_cache
-            and self.config.checkpoint_segment_size > 1
-        ):
-            segment_size = self.config.checkpoint_segment_size
-            for start_idx in range(0, len(self.blocks), segment_size):
-                segment = list(self.blocks[start_idx : start_idx + segment_size])
-                hidden = self._run_block_segment(segment, hidden, position_ids)
-        else:
-            for block in self.blocks:
-                if self.use_block_attnres:
-                    hidden, depth_states = self._run_block(
-                        block,
-                        hidden,
-                        position_ids,
-                        cache,
-                        use_cache,
-                        depth_states=depth_states,
-                    )
-                else:
-                    hidden = self._run_block(block, hidden, position_ids, cache, use_cache)
+        depth_states: list[torch.Tensor] = [hidden]
+        depth_mixer_idx = 0
+        for layer_idx, block in enumerate(self.blocks):
+            if (
+                self.use_block_attnres
+                and layer_idx > 0
+                and layer_idx % self.attnres_block_size == 0
+            ):
+                depth_states.append(hidden)
+                hidden = self.depth_mixers[depth_mixer_idx](depth_states)
+                depth_mixer_idx += 1
+            hidden = self._run_block(block, hidden, position_ids, cache, use_cache)
 
-        if self.use_block_attnres:
-            assert self.final_attnres is not None
-            hidden = self.final_attnres([*(depth_states or []), hidden])
-        # Keep the raw backbone state for faithful sequential MTP. The main LM head
-        # still consumes the ordinary final-normalized state.
-        backbone_hidden = hidden
         hidden = self.final_norm(hidden)
         # Callers such as RLVR can request normalized hidden states and compute only
         # selected-token log-probabilities in bounded vocabulary chunks.  Defaults
@@ -573,15 +372,7 @@ class AsterLM(nn.Module):
         main_loss = None
         mtp_loss = None
         total_loss = None
-        moe_modules = [
-            block.ffn for block in self.blocks
-            if isinstance(block.ffn, (DeepSeekStyleMoE, LatentMoE))
-        ]
-        if (
-            self.mtp_deepseek_block is not None
-            and isinstance(self.mtp_deepseek_block.ffn, (DeepSeekStyleMoE, LatentMoE))
-        ):
-            moe_modules.append(self.mtp_deepseek_block.ffn)
+        moe_modules = [block.ffn for block in self.blocks if isinstance(block.ffn, DeepSeekStyleMoE)]
         router_aux_loss = None
         router_z_loss = None
         expert_load = None
@@ -609,77 +400,27 @@ class AsterLM(nn.Module):
             if router_z_loss is not None:
                 total_loss = total_loss + self.config.moe_router_z_loss_weight * router_z_loss
 
-        if self.config.mtp_depth > 0 and (labels is not None or return_mtp):
-            if self.config.mtp_architecture == "low_rank":
-                if self.mtp is None:
-                    raise RuntimeError("low-rank MTP module was not initialized")
-                losses: list[torch.Tensor] = []
-                future = hidden
-                for head_idx, head in enumerate(self.mtp.heads):
-                    if self.config.gradient_checkpointing and self.training:
-                        future = _aster_activation_checkpoint(self.config, head, future)
-                    else:
-                        future = head(future)
-                    if return_mtp and mtp_logits is not None:
-                        mtp_logits.append(self.lm_head(self.embedding_out_proj(future)))
-                    if labels is not None:
-                        shift = head_idx + 1
-                        if labels.shape[1] > shift:
-                            losses.append(
-                                self._projected_cross_entropy(
-                                    self.embedding_out_proj(future[:, :-shift]),
-                                    labels[:, shift:],
-                                    ignore_index,
-                                )
+        if self.mtp is not None and (labels is not None or return_mtp):
+            losses: list[torch.Tensor] = []
+            future = hidden
+            for head_idx, head in enumerate(self.mtp.heads):
+                if self.config.gradient_checkpointing and self.training:
+                    future = _aster_activation_checkpoint(self.config, head, future)
+                else:
+                    future = head(future)
+                if return_mtp and mtp_logits is not None:
+                    mtp_logits.append(self.lm_head(self.embedding_out_proj(future)))
+                if labels is not None:
+                    shift = head_idx + 1
+                    if labels.shape[1] > shift:
+                        losses.append(
+                            self._projected_cross_entropy(
+                                self.embedding_out_proj(future[:, :-shift]), labels[:, shift:], ignore_index
                             )
-                if losses:
-                    mtp_loss = torch.stack(losses).mean()
-                    total_loss = total_loss + self.config.mtp_loss_weight * mtp_loss
-            else:
-                if return_mtp and labels is None:
-                    raise RuntimeError(
-                        "DeepSeek-style MTP drafting is staged: it needs the proposed next-token "
-                        "embedding and its own incremental cache. The existing full-prefix reference "
-                        "verifier is intentionally not reused as a fake speed path."
-                    )
-                if labels is not None and labels.shape[1] > 1:
-                    assert self.mtp_hnorm is not None
-                    assert self.mtp_enorm is not None
-                    assert self.mtp_eh_proj is not None
-                    assert self.mtp_deepseek_block is not None
-                    assert self.mtp_final_norm is not None
-                    # At source position i, combine h_i with the actual token t_{i+1}
-                    # embedding and predict t_{i+2}. Roll position IDs in lockstep.
-                    future_embed = self.embedding_in_proj(self.token_embedding(input_ids[:, 1:]))
-                    future_embed = self.embedding_dropout(future_embed)
-                    fused = torch.cat(
-                        (
-                            self.mtp_enorm(future_embed),
-                            self.mtp_hnorm(backbone_hidden[:, :-1]),
-                        ),
-                        dim=-1,
-                    )
-                    mtp_hidden = self.mtp_eh_proj(fused)
-                    mtp_positions = position_ids[:, 1:]
-                    if self.config.gradient_checkpointing and self.training:
-                        def mtp_forward(h: torch.Tensor, p: torch.Tensor) -> torch.Tensor:
-                            return self.mtp_deepseek_block(h, p, cache=None, use_cache=False)
-                        mtp_hidden = _aster_activation_checkpoint(
-                            self.config, mtp_forward, mtp_hidden, mtp_positions
                         )
-                    else:
-                        mtp_hidden = self.mtp_deepseek_block(
-                            mtp_hidden, mtp_positions, cache=None, use_cache=False
-                        )
-                    mtp_hidden = self.mtp_final_norm(mtp_hidden)
-                    target = labels[:, 1:].clone()
-                    # If the main transition h_i -> token_{i+1} is masked (e.g. an
-                    # EOS/document boundary), do not let MTP leap across that boundary.
-                    target = target.masked_fill(labels[:, :-1].eq(ignore_index), ignore_index)
-                    mtp_loss = self._projected_cross_entropy(
-                        self.embedding_out_proj(mtp_hidden), target, ignore_index
-                    )
-                    total_loss = total_loss + self.config.mtp_loss_weight * mtp_loss
+            if losses:
+                mtp_loss = torch.stack(losses).mean()
+                total_loss = total_loss + self.config.mtp_loss_weight * mtp_loss
 
         if use_cache and cache is not None:
             cache.seen_tokens += seq_len
@@ -709,7 +450,7 @@ class AsterLM(nn.Module):
         routes = [
             block.ffn.last_top1_route
             for block in self.blocks
-            if isinstance(block.ffn, (DeepSeekStyleMoE, LatentMoE))
+            if isinstance(block.ffn, DeepSeekStyleMoE)
             and block.ffn.last_top1_route is not None
         ]
         if len(routes) < 2:
@@ -760,20 +501,12 @@ class AsterLM(nn.Module):
     def update_moe_router_biases(self) -> dict[str, float]:
         loads = []
         biases = []
-        candidate_moe = [
-            block.ffn for block in self.blocks
-            if isinstance(block.ffn, (DeepSeekStyleMoE, LatentMoE))
-        ]
-        if (
-            self.mtp_deepseek_block is not None
-            and isinstance(self.mtp_deepseek_block.ffn, (DeepSeekStyleMoE, LatentMoE))
-        ):
-            candidate_moe.append(self.mtp_deepseek_block.ffn)
-        for moe in candidate_moe:
-            load = moe.update_routing_bias()
-            if load is not None:
-                loads.append(load)
-                biases.append(moe.routing_bias)
+        for block in self.blocks:
+            if isinstance(block.ffn, DeepSeekStyleMoE):
+                load = block.ffn.update_routing_bias()
+                if load is not None:
+                    loads.append(load)
+                    biases.append(block.ffn.routing_bias)
         if not loads:
             return {}
         load = torch.stack(loads).mean(dim=0)
@@ -804,7 +537,7 @@ class AsterLM(nn.Module):
 
         total = effective_parameter_count(self)
         for block in self.blocks:
-            if isinstance(block.ffn, (DeepSeekStyleMoE, LatentMoE)):
+            if isinstance(block.ffn, DeepSeekStyleMoE):
                 total -= effective_parameter_count(block.ffn)
                 total += block.ffn.active_parameter_count()
         return total
@@ -816,15 +549,12 @@ class AsterLM(nn.Module):
             "effective_parameters": self.effective_parameter_count(),
             "layers": len(pattern),
             "kda_layers": pattern.count("kda"),
-            "gdn2_layers": pattern.count("gdn2"),
             "latent_attention_layers": pattern.count("latent"),
             "mtp_depth": self.config.mtp_depth,
-            "mtp_architecture": self.config.mtp_architecture,
-            "mtp_block_kind": self.config.mtp_block_kind,
             "fla_enabled": self.uses_fla,
             "max_sequence_length": self.config.max_seq_len,
             "ffn_type": self.config.ffn_type,
-            "moe_layers": sum(isinstance(block.ffn, (DeepSeekStyleMoE, LatentMoE)) for block in self.blocks),
+            "moe_layers": sum(isinstance(block.ffn, DeepSeekStyleMoE) for block in self.blocks),
             "active_parameters_estimate": self.active_parameter_count(),
             "attention_window": self.config.attention_window,
             "latent_cache_width": self.config.latent_rank + self.config.rope_dim,

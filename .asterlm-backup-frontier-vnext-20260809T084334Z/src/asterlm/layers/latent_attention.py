@@ -35,11 +35,6 @@ class LatentAttention(nn.Module):
         self.dropout_p = config.attention_dropout
         self.logit_softcap = config.logit_softcap
         self.qk_stat_tokens = config.qk_stat_tokens
-        self.train_attention_backend = config.attention_train_backend
-        self.train_attention_window = config.attention_train_window
-        self.train_global_stride = config.attention_train_global_stride
-        self.flex_block_size = config.attention_flex_block_size
-        self._flex_mask_cache: dict[tuple[int, int, int, int, str], object] = {}
 
         q_dim = self.n_heads * (self.head_dim + self.rope_dim)
         backend = config.linear_backend
@@ -118,118 +113,6 @@ class LatentAttention(nn.Module):
         maxima = logits.amax(dim=(0, 2, 3)).detach().to(self.last_max_logits.device)
         self.last_max_logits.copy_(torch.maximum(self.last_max_logits, maxima))
 
-    def _flex_attention(
-        self,
-        query: torch.Tensor,
-        key: torch.Tensor,
-        value: torch.Tensor,
-    ) -> torch.Tensor:
-        """Causal local+sinks+landmarks block-sparse attention for long training."""
-        try:
-            from torch.nn.attention.flex_attention import create_block_mask, flex_attention
-        except ImportError as exc:
-            raise RuntimeError("flex_window requires PyTorch FlexAttention") from exc
-
-        bsz, heads, q_len, _ = query.shape
-        kv_len = key.shape[-2]
-        if q_len != kv_len:
-            raise RuntimeError("vNext flex_window currently supports no-past training/eval only")
-        window = min(self.train_attention_window, kv_len)
-        sinks = min(self.sink_tokens, kv_len)
-        stride = self.train_global_stride
-        cache_key = (q_len, kv_len, window, stride, str(query.device))
-        block_mask = self._flex_mask_cache.get(cache_key)
-        if block_mask is None:
-            def mask_mod(b, h, q_idx, kv_idx):
-                del b, h
-                causal = kv_idx <= q_idx
-                local = kv_idx >= (q_idx - window + 1)
-                sink = kv_idx < sinks
-                landmark = (kv_idx % stride == 0) if stride > 0 else torch.zeros_like(causal)
-                return causal & (local | sink | landmark)
-
-            block_mask = create_block_mask(
-                mask_mod,
-                # The mask is independent of batch/head; broadcasting a single
-                # block mask avoids H copies at very long sequence lengths.
-                B=None,
-                H=None,
-                Q_LEN=q_len,
-                KV_LEN=kv_len,
-                device=query.device,
-                BLOCK_SIZE=self.flex_block_size,
-                _compile=False,
-            )
-            self._flex_mask_cache[cache_key] = block_mask
-        return flex_attention(query, key, value, block_mask=block_mask)
-
-    def _record_qk_statistics_absorbed(
-        self,
-        q_latent: torch.Tensor,
-        q_rope: torch.Tensor,
-        latent: torch.Tensor,
-        k_rope: torch.Tensor,
-        scale: float,
-    ) -> None:
-        """Record the same sampled QK maxima without reconstructing full per-head K."""
-        if not self.training or self.qk_stat_tokens <= 0:
-            return
-        t = q_latent.shape[1]
-        n = min(t, self.qk_stat_tokens)
-        idx = torch.linspace(0, t - 1, n, device=q_latent.device).round().long()
-        ql = q_latent[:, idx].float()
-        qr = q_rope[:, idx].float()
-        lk = latent[:, idx].float()
-        rk = k_rope[:, idx].float()
-        logits = (
-            torch.einsum("bihl,bjl->bhij", ql, lk)
-            + torch.einsum("bihr,bjr->bhij", qr, rk)
-        ) * scale
-        maxima = logits.amax(dim=(0, 2, 3)).detach().to(self.last_max_logits.device)
-        self.last_max_logits.copy_(torch.maximum(self.last_max_logits, maxima))
-
-    def _absorbed_train_attention(
-        self,
-        q_content: torch.Tensor,
-        q_rope: torch.Tensor,
-        latent: torch.Tensor,
-        k_rope: torch.Tensor,
-    ) -> torch.Tensor:
-        """Exact MLA absorption for no-past causal training/evaluation.
-
-        Rather than materializing H copies of K/V content, absorb W_k into the
-        query and apply W_v after attention. The latent KV stream is one shared
-        head, so this is exact MQA/GQA algebra. Value rows are padded to the Q/K
-        head width before SDPA because CUDA fused SDPA kernels are more reliably
-        selected when Q/K/V head widths match; the extra channels are sliced away.
-        """
-        bsz, q_len, _, _ = q_content.shape
-        wk = self.k_up.weight.view(self.n_heads, self.head_dim, self.latent_rank)
-        wv = self.v_up.weight.view(self.n_heads, self.head_dim, self.latent_rank)
-        q_latent = torch.einsum("bthd,hdl->bthl", q_content, wk)
-        scale = 1.0 / math.sqrt(self.head_dim + self.rope_dim)
-        self._record_qk_statistics_absorbed(q_latent, q_rope, latent, k_rope, scale)
-
-        query = torch.cat((q_latent, q_rope), dim=-1).transpose(1, 2)
-        key = torch.cat((latent, k_rope), dim=-1).unsqueeze(1)
-        qk_width = query.shape[-1]
-        if self.latent_rank < qk_width:
-            value = F.pad(latent, (0, qk_width - self.latent_rank)).unsqueeze(1)
-        else:
-            value = latent.unsqueeze(1)
-
-        context = F.scaled_dot_product_attention(
-            query,
-            key,
-            value,
-            dropout_p=self.dropout_p if self.training else 0.0,
-            is_causal=q_len > 1,
-            scale=scale,
-            enable_gqa=True,
-        )[..., : self.latent_rank]
-        context = context.transpose(1, 2)
-        return torch.einsum("bthl,hdl->bthd", context, wv)
-
     def _full_attention(
         self,
         q_content: torch.Tensor,
@@ -239,12 +122,6 @@ class LatentAttention(nn.Module):
         previous: LatentLayerCache | None,
     ) -> torch.Tensor:
         bsz, q_len, _, _ = q_content.shape
-        if (
-            self.train_attention_backend == "absorbed_sdpa"
-            and (previous is None or previous.length == 0)
-            and self.logit_softcap is None
-        ):
-            return self._absorbed_train_attention(q_content, q_rope, latent, k_rope)
         if previous is not None and previous.length:
             previous_latent = previous.materialize_latent(dtype=latent.dtype, device=latent.device)
             previous_rope = previous.materialize_rope(dtype=k_rope.dtype, device=k_rope.device)
@@ -275,14 +152,7 @@ class LatentAttention(nn.Module):
             k_index = torch.arange(total, device=query.device).unsqueeze(0)
             allowed = k_index <= (past_len + q_index)
 
-        if (
-            self.train_attention_backend == "flex_window"
-            and past_len == 0
-            and q_len > 1
-            and self.logit_softcap is None
-        ):
-            out = self._flex_attention(query, key, value)
-        elif self.logit_softcap is None:
+        if self.logit_softcap is None:
             out = F.scaled_dot_product_attention(
                 query,
                 key,

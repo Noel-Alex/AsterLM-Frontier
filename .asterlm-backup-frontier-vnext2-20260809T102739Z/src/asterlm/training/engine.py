@@ -563,17 +563,6 @@ class Trainer:
                 grad_norm = torch.nn.utils.clip_grad_norm_(
                     self.model.parameters(), cfg.max_grad_norm
                 )
-                if not torch.isfinite(grad_norm).all():
-                    bad_grads: list[str] = []
-                    for name, parameter in self.model.named_parameters():
-                        if parameter.grad is not None and not torch.isfinite(parameter.grad).all():
-                            bad_grads.append(name)
-                            if len(bad_grads) >= 12:
-                                break
-                    raise FloatingPointError(
-                        f"Non-finite gradients before optimizer.step at step {self.step}; "
-                        f"grad_norm={float(grad_norm)}; first_bad_grad_tensors={bad_grads}"
-                    )
                 started = time.perf_counter()
                 self.optimizer.step()
                 window_optimizer_s += time.perf_counter() - started

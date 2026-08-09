@@ -35,8 +35,6 @@ class AsterConfig:
     moe_expert_hidden: int = 512
     # LatentMoE compresses only the routed branch; router/shared experts stay full-width.
     latent_moe_dim: int | None = None
-    # Kimi-K3-inspired Stable LatentMoE ablation: RMS-normalize the aggregated routed latent before up-projection.
-    latent_moe_post_norm: bool = False
     moe_aux_loss_weight: float = 0.01
     moe_router_z_loss_weight: float = 0.001
     moe_router_score: str = "sigmoid"  # sigmoid (DeepSeek-style) | softmax
@@ -80,7 +78,7 @@ class AsterConfig:
     qk_stat_tokens: int = 32
 
     # Training-time global-attention backend. Inference keeps the exact latent-cache path.
-    attention_train_backend: str = "sdpa"  # sdpa | absorbed_sdpa | flex_window
+    attention_train_backend: str = "sdpa"  # sdpa | flex_window
     attention_train_window: int = 4096
     attention_train_global_stride: int = 0
     attention_flex_block_size: int = 128
@@ -117,10 +115,6 @@ class AsterConfig:
     mtp_depth: int = 2
     mtp_rank: int = 256
     mtp_loss_weight: float = 0.15
-    # MTP implementations are ablated independently; DeepSeek-style uses one
-    # sequential future-token module with a full Aster block.
-    mtp_architecture: str = "low_rank"  # low_rank | deepseek
-    mtp_block_kind: str = "latent"  # latent | kda | gdn2
     lm_loss_chunk_size: int = 256
     # PyTorch 2.13 LinearCrossEntropy avoids materializing [B,T,V] logits.
     lm_loss_backend: str = "legacy_chunked"  # legacy_chunked | torch_linear_ce
@@ -182,8 +176,8 @@ class AsterConfig:
             raise ValueError("rope_scaling_type must be none, linear, or yarn")
         if not 0.0 <= self.attention_dropout < 1.0:
             raise ValueError("attention_dropout must be in [0, 1)")
-        if self.attention_train_backend not in {"sdpa", "absorbed_sdpa", "flex_window"}:
-            raise ValueError("attention_train_backend must be sdpa, absorbed_sdpa, or flex_window")
+        if self.attention_train_backend not in {"sdpa", "flex_window"}:
+            raise ValueError("attention_train_backend must be sdpa or flex_window")
         if self.attention_train_window <= 0 or self.attention_flex_block_size <= 0:
             raise ValueError("training attention window/block size must be positive")
         if self.attention_train_global_stride < 0:
@@ -214,12 +208,6 @@ class AsterConfig:
             raise ValueError("cache_recent_tokens must be non-negative")
         if self.mtp_depth < 0 or self.mtp_rank <= 0 or self.mtp_loss_weight < 0:
             raise ValueError("MTP depth/weight must be non-negative and rank positive")
-        if self.mtp_architecture not in {"low_rank", "deepseek"}:
-            raise ValueError("mtp_architecture must be low_rank or deepseek")
-        if self.mtp_block_kind not in {"latent", "kda", "gdn2"}:
-            raise ValueError("mtp_block_kind must be latent, kda, or gdn2")
-        if self.mtp_architecture == "deepseek" and self.mtp_depth not in {0, 1}:
-            raise ValueError("Aster vNext2 validates DeepSeek-style MTP at depth 1 only")
         if self.lm_loss_chunk_size <= 0:
             raise ValueError("lm_loss_chunk_size must be positive")
         if self.lm_loss_backend not in {"legacy_chunked", "torch_linear_ce"}:
