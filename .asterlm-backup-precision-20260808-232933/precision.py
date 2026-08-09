@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 from contextlib import ExitStack, nullcontext
-from dataclasses import dataclass, field
-from typing import Any, ContextManager
+from dataclasses import dataclass
+from typing import ContextManager
 
 import torch
 
@@ -21,8 +21,6 @@ class PrecisionManager:
     config: TrainConfig
     device: torch.device
     autocast_dtype: torch.dtype
-    _te: Any = field(init=False, default=None, repr=False)
-    _recipe: Any = field(init=False, default=None, repr=False)
 
     def __post_init__(self) -> None:
         self._te = None
@@ -66,13 +64,6 @@ class PrecisionManager:
     def activation_context(self) -> ContextManager:
         if not self.config.activation_offload or self.device.type != "cuda":
             return nullcontext()
-        if self.config.precision_backend == "transformer_engine_fp8":
-            raise RuntimeError(
-                "Generic save_on_cpu activation offload is disabled for Transformer Engine FP8 "
-                "because this combination produced non-finite gradients in Aster. "
-                "Run FP8 without --activation-offload until the TE-native selective "
-                "CPU-offload path is integrated."
-            )
         # save_on_cpu is exact: activations are copied back before their backward use.
         # It trades PCIe bandwidth and host RAM for VRAM, matching the project's
         # "must fit, may run slowly" objective.

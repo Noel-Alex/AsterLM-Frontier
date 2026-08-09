@@ -1,13 +1,11 @@
 from __future__ import annotations
 
-import os
 import torch
 from torch import nn
 from torch.nn import functional as F
 
 from .ffn import SwiGLU
 from .linear import build_linear
-from .moe_grouped_te import TEGroupedRoutedExperts
 
 
 class DeepSeekStyleMoE(nn.Module):
@@ -64,27 +62,6 @@ class DeepSeekStyleMoE(nn.Module):
         self.shared = nn.ModuleList(
             [SwiGLU(dim, expert_hidden, dropout, linear_backend, **ffn_kwargs) for _ in range(shared_experts)]
         )
-        requested_impl = os.environ.get("ASTER_MOE_IMPL", "reference").strip().lower()
-        if requested_impl not in {"reference", "grouped"}:
-            raise ValueError(
-                "ASTER_MOE_IMPL must be either 'reference' or 'grouped', "
-                f"got {requested_impl!r}"
-            )
-        if requested_impl == "grouped" and linear_backend != "transformer_engine":
-            raise ValueError(
-                "ASTER_MOE_IMPL=grouped currently requires linear_backend='transformer_engine'"
-            )
-        self.moe_impl = requested_impl
-        self._grouped_routed = None
-        if self.moe_impl == "grouped":
-            self._grouped_routed = TEGroupedRoutedExperts(
-                self.routed,
-                dim=dim,
-                expert_hidden=expert_hidden,
-                num_experts=num_experts,
-                dropout=dropout,
-                align=16,
-            )
         self.last_aux_loss: torch.Tensor | None = None
         self.last_z_loss: torch.Tensor | None = None
         self.last_load: torch.Tensor | None = None
@@ -116,20 +93,16 @@ class DeepSeekStyleMoE(nn.Module):
         top_weight = affinity.gather(-1, top_idx)
         top_weight = top_weight / top_weight.sum(dim=-1, keepdim=True).clamp_min(1e-9)
 
-        if self.moe_impl == "grouped":
-            if self._grouped_routed is None:
-                raise RuntimeError("Grouped MoE bridge was not initialized")
-            routed_out = self._grouped_routed(flat, top_idx, top_weight)
-        else:
-            routed_out = torch.zeros_like(flat)
-            # Reference dispatch: each expert receives only the tokens routed to it.
-            for expert_idx, expert in enumerate(self.routed):
-                token_idx, slot_idx = torch.where(top_idx == expert_idx)
-                if token_idx.numel() == 0:
-                    continue
-                expert_out = self._run_expert(expert, flat.index_select(0, token_idx))
-                weight = top_weight[token_idx, slot_idx].to(expert_out.dtype).unsqueeze(-1)
-                routed_out.index_add_(0, token_idx, expert_out * weight)
+        routed_out = torch.zeros_like(flat)
+        # Reference dispatch: each expert receives only the tokens routed to it.
+        for expert_idx, expert in enumerate(self.routed):
+            token_idx, slot_idx = torch.where(top_idx == expert_idx)
+            if token_idx.numel() == 0:
+                continue
+            expert_input = flat.index_select(0, token_idx)
+            expert_out = self._run_expert(expert, expert_input)
+            weight = top_weight[token_idx, slot_idx].to(expert_out.dtype).unsqueeze(-1)
+            routed_out.index_add_(0, token_idx, expert_out * weight)
 
         shared_out = torch.zeros_like(flat)
         for expert in self.shared:

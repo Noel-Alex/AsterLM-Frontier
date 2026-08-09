@@ -1,0 +1,224 @@
+version: 1
+reviewed: "2026-08-08"
+
+presets:
+  current_materialized:
+    label: "Use what is already materialized"
+    description: "Reads durable state.json files and uses their actual token counts. No invented target and no forced repetition."
+    dynamic: true
+  original_100b:
+    label: "Aster 100B research mix"
+    description: "Original controlled overtraining mixture."
+    sources:
+      fineweb_edu: 54000000000
+      dclm: 16000000000
+      cosmopedia_v2: 6000000000
+      finemath_4plus: 11000000000
+      stack_edu: 13000000000
+  balanced_50b:
+    label: "Balanced 50B"
+    description: "General/educational heavy, with deliberate math and code."
+    sources:
+      fineweb_edu: 25000000000
+      dclm: 8000000000
+      cosmopedia_v2: 3000000000
+      finemath_4plus: 6000000000
+      nemotron_cc_code: 8000000000
+  laptop_20b:
+    label: "Laptop 20B"
+    description: "A compact serious pretraining run for rapid architecture iteration."
+    sources:
+      fineweb_edu: 10000000000
+      dclm: 3000000000
+      cosmopedia_v2: 2000000000
+      finemath_4plus: 3000000000
+      nemotron_cc_code: 2000000000
+  math_code_30b:
+    label: "Math + code 30B"
+    description: "Capability-focused mixture; useful for small reasoning/coding models."
+    sources:
+      fineweb_edu: 8000000000
+      dclm: 3000000000
+      nemotron_cc_math_4plus: 9000000000
+      openwebmath: 4000000000
+      nemotron_cc_code: 6000000000
+
+datasets:
+  fineweb_edu:
+    label: "FineWeb-Edu Dedup"
+    category: "educational web"
+    path: "HuggingFaceTB/smollm-corpus"
+    name: "fineweb-edu-dedup"
+    split: "train"
+    text_field: "text"
+    columns: ["text", "id"]
+    shuffle_seed: 1701
+    ready: true
+    gated: false
+    notes: "Existing Aster source. High-quality educational web."
+  dclm:
+    label: "DCLM Baseline 1.0"
+    category: "general web"
+    path: "mlfoundations/dclm-baseline-1.0-parquet"
+    split: "train"
+    text_field: "text"
+    columns: ["text", "id", "url", "language", "language_score", "fasttext_score"]
+    shuffle_seed: 1702
+    ready: true
+    gated: false
+    notes: "Existing Aster source; broad web diversity."
+  cosmopedia_v2:
+    label: "Cosmopedia v2"
+    category: "synthetic exposition"
+    path: "HuggingFaceTB/smollm-corpus"
+    name: "cosmopedia-v2"
+    split: "train"
+    text_field: "text"
+    token_count_field: "token_length"
+    columns: ["text", "token_length"]
+    shuffle_seed: 1703
+    ready: true
+    gated: false
+    notes: "Existing Aster source; synthetic educational exposition."
+  stack_edu:
+    label: "Stack-Edu"
+    category: "permissive code"
+    path: "HuggingFaceTB/stack-edu"
+    split: "train"
+    text_field: "text"
+    shuffle_seed: 1750
+    ready: true
+    gated: false
+    notes: "Existing Aster code source. Its current materializer fetches Software Heritage blobs after streaming metadata, so throughput can be dramatically lower than direct-Parquet sources. Resume only if you want this exact provenance; otherwise use a faster code source."
+  finemath_4plus:
+    label: "FineMath 4+"
+    category: "math"
+    path: "HuggingFaceTB/finemath"
+    name: "finemath-4plus"
+    split: "train"
+    text_field: "text"
+    token_count_field: "token_count"
+    columns: ["text", "token_count", "url", "language", "language_score", "score", "int_score"]
+    shuffle_seed: 1704
+    ready: true
+    gated: false
+    notes: "Existing Aster source. Durable partial materialization is usable even if the remote stream exhausts below the original target."
+  openwebmath:
+    label: "OpenWebMath"
+    category: "math"
+    path: "open-web-math/open-web-math"
+    split: "train"
+    text_field: "text"
+    columns: ["text", "url", "date", "metadata"]
+    shuffle_seed: 1710
+    ready: true
+    gated: false
+    known_tokens: 14700000000
+    notes: "6.3M documents / ~14.7B tokens. Useful replacement/fill for math."
+  nemotron_cc_math_4plus:
+    label: "Nemotron-CC-Math 4+"
+    category: "math"
+    path: "nvidia/Nemotron-CC-Math-v1"
+    name: "4plus"
+    split: "train"
+    text_field: "text"
+    shuffle_seed: 1711
+    ready: false
+    gated: true
+    known_tokens: 52000000000
+    notes: "High-quality 4+/5 math subset. Requires accepting NVIDIA's dataset agreement and validating access/schema."
+  nemotron_cc_code:
+    label: "Nemotron-CC-Code v1"
+    category: "code"
+    path: "nvidia/Nemotron-CC-Code-v1"
+    name: "train"
+    split: "train"
+    text_field: "text"
+    columns: ["text", "metadata", "uuid"]
+    shuffle_seed: 1712
+    ready: false
+    gated: true
+    known_tokens: 427900000000
+    notes: "Direct Parquet Common Crawl code; potentially much faster than Stack-Edu per-blob reconstruction. Requires NVIDIA dataset agreement."
+  zyda2:
+    label: "Zyda-2"
+    category: "general web"
+    path: "Zyphra/Zyda-2"
+    split: "train"
+    text_field: "text"
+    shuffle_seed: 1713
+    ready: false
+    gated: false
+    notes: "Strong per-token open mixture, but heterogeneous component schemas require Advanced/custom validation."
+
+posttrain:
+  smol_smoltalk: {label: "Smol-SmolTalk", profile: "posttrain"}
+  smoltalk2_magpie: {label: "SmolTalk2 Magpie", profile: "posttrain"}
+  smoltalk2_multilingual: {label: "SmolTalk2 Multilingual", profile: "posttrain"}
+  smoltalk2_science: {label: "SmolTalk2 Science", profile: "posttrain"}
+  smoltalk2_reasoning: {label: "SmolTalk2 Reasoning", profile: "posttrain"}
+  open_thoughts: {label: "OpenThoughts 114K", profile: "posttrain"}
+  ultrafeedback_binarized: {label: "UltraFeedback Binarized", profile: "posttrain"}
+
+reasoning:
+  mixture_of_thoughts: {label: "Mixture of Thoughts", profile: "reasoning"}
+  dapo_math: {label: "DAPO Math", profile: "reasoning"}
+  verifiable_python: {label: "Verifiable Python", profile: "reasoning"}
+
+capability_research:
+  - id: kimi_kda
+    label: "Kimi Delta Attention / Kimi Linear"
+    status: "implemented"
+    detail: "Aster uses fla.layers.kda.KimiDeltaAttention when fla-core is available; PyTorch fallback is correctness-only."
+  - id: mla
+    label: "MLA-style latent attention + absorbed decode"
+    status: "implemented"
+    detail: "Low-rank latent KV, decoupled RoPE channel, online chunk softmax decode, quantized hot/cold cache."
+  - id: mtp
+    label: "Multi-Token Prediction training"
+    status: "implemented"
+    detail: "Auxiliary MTP heads and loss are trained with the base model."
+  - id: mtp_spec
+    label: "MTP self-speculative decoding"
+    status: "reference"
+    detail: "Exact greedy reference exists, but current verifier re-runs full prefixes and is not a production speed path."
+  - id: deepspec
+    label: "DeepSpec / DSpark / DFlash / Eagle3"
+    status: "not-integrated"
+    detail: "DeepSeek DeepSpec currently targets Qwen/Gemma families. Aster does not yet have a compatible DSpark/DFlash target adapter."
+  - id: gdn2
+    label: "Gated DeltaNet-2"
+    status: "research"
+    detail: "May 2026 result improves erase/write control over KDA. Not in Aster stable model; official code uses NVIDIA Source Code License-NC."
+  - id: lca
+    label: "Latent-Condensed Attention"
+    status: "research"
+    detail: "ACL 2026 MLA-native condensation. Candidate future long-context inference experiment."
+  - id: nha
+    label: "Native Hybrid Attention"
+    status: "research"
+    detail: "ACL 2026 hybrid linear/full attention. Aster currently follows Kimi's layerwise KDA/MLA hybrid."
+  - id: robsa
+    label: "RoBSA sparse MLA decoding"
+    status: "research"
+    detail: "ACL 2026 training-free blockwise sparse MLA decoding. Not integrated; a plausible inference-only experiment for Aster's latent attention layers."
+  - id: moe
+    label: "DeepSeek-style sparse MoE"
+    status: "reference"
+    detail: "Routing/balance logic is implemented, but expert dispatch uses a Python per-expert loop rather than fused grouped GEMM."
+  - id: kv_int4
+    label: "Hadamard INT4 latent KV cache"
+    status: "implemented"
+    detail: "Recent cache stays BF16; older latent chunks can use Hadamard-rotated INT4."
+  - id: yarn
+    label: "YaRN long-context RoPE scaling"
+    status: "implemented"
+    detail: "Configured; useful 64K/128K still requires retrieval/long-code proof."
+  - id: fp8
+    label: "Transformer Engine FP8 experiment"
+    status: "optional"
+    detail: "Backend/config path exists; requires compatible Transformer Engine and live GPU validation."
+  - id: loqt
+    label: "LoQT / low-bit FFN experiment"
+    status: "experimental"
+    detail: "Separate model lineage; do not mix with ordinary BF16 checkpoints."

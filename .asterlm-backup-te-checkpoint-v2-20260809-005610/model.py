@@ -44,32 +44,6 @@ def _masked_cross_entropy(logits: torch.Tensor, labels: torch.Tensor, ignore_ind
     valid = flat_labels.ne(ignore_index)
     return losses.sum() / valid.sum().clamp_min(1)
 
-def _aster_activation_checkpoint(
-    config: AsterConfig,
-    function,
-    *args: torch.Tensor,
-):
-    # Use TE-aware activation recomputation when Transformer Engine is active.
-    uses_te = (
-        config.linear_backend == "transformer_engine"
-        or config.ffn_backend == "transformer_engine"
-    )
-    if uses_te:
-        try:
-            import transformer_engine.pytorch as te
-        except ImportError as exc:
-            raise ImportError(
-                "Transformer Engine checkpointing requested but transformer_engine "
-                "is not importable."
-            ) from exc
-        return te.distributed.checkpoint(
-            function,
-            *args,
-            use_reentrant=False,
-        )
-    return checkpoint(function, *args, use_reentrant=False)
-
-
 class AsterBlock(nn.Module):
     def __init__(self, config: AsterConfig, kind: str, layer_idx: int, kda_idx: int | None) -> None:
         super().__init__()
@@ -283,7 +257,7 @@ class AsterLM(nn.Module):
             def custom_forward(h: torch.Tensor, p: torch.Tensor) -> torch.Tensor:
                 return block(h, p, cache=None, use_cache=False)
 
-            _aster_activation_checkpoint(self.config, custom_forward, hidden, position_ids)
+            return checkpoint(custom_forward, hidden, position_ids, use_reentrant=False)
         return block(hidden, position_ids, cache=cache, use_cache=use_cache)
 
     def _projected_cross_entropy(
@@ -405,7 +379,7 @@ class AsterLM(nn.Module):
             future = hidden
             for head_idx, head in enumerate(self.mtp.heads):
                 if self.config.gradient_checkpointing and self.training:
-                    future = _aster_activation_checkpoint(self.config, head, future)
+                    future = checkpoint(head, future, use_reentrant=False)
                 else:
                     future = head(future)
                 if return_mtp and mtp_logits is not None:

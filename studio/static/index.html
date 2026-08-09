@@ -1,0 +1,552 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <meta name="color-scheme" content="light" />
+  <title>AsterLM Studio</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <div id="app-shell">
+    <aside class="rail">
+      <div class="brand">
+        <div class="brand-mark">A*</div>
+        <div>
+          <div class="brand-name">AsterLM</div>
+          <div class="brand-sub">Frontier Studio</div>
+        </div>
+      </div>
+      <nav id="nav">
+        <button class="nav-item active" data-page="overview"><span>01</span>Overview</button>
+        <button class="nav-item" data-page="data"><span>02</span>Data</button>
+        <button class="nav-item" data-page="pipeline"><span>03</span>Pipeline</button>
+        <button class="nav-item" data-page="architecture"><span>04</span>Architecture</button>
+        <button class="nav-item" data-page="training"><span>05</span>Training</button>
+        <button class="nav-item" data-page="experiments"><span>06</span>Experiments</button>
+        <button class="nav-item" data-page="inference"><span>07</span>Inference</button>
+        <button class="nav-item" data-page="logs"><span>08</span>Logs</button>
+        <button class="nav-item" data-page="settings"><span>09</span>Settings</button>
+      </nav>
+      <div class="rail-foot">
+        <div class="live-dot"></div>
+        <div>
+          <div id="studio-status">LOCAL CONTROL PLANE</div>
+          <small id="last-refresh">waiting…</small>
+        </div>
+      </div>
+    </aside>
+
+    <main>
+      <header class="masthead">
+        <div>
+          <div class="kicker">RESEARCH SYSTEM / SINGLE-GPU FRONTIER LAB</div>
+          <h1 id="page-title">The state of the experiment.</h1>
+        </div>
+        <div class="mast-actions">
+          <button class="ghost" data-goto="logs">View live jobs</button>
+          <button class="ink" data-action="capability-audit">Run capability audit</button>
+        </div>
+      </header>
+
+      <div id="notice-stack"></div>
+
+      <section class="page active" id="page-overview">
+        <div class="hero-grid">
+          <article class="feature-card">
+            <div class="eyebrow">RAW CORPUS</div>
+            <div class="mega-number" id="raw-total">—</div>
+            <div class="feature-caption">materialized tokens currently available</div>
+            <canvas id="corpus-mini-chart" width="820" height="160"></canvas>
+          </article>
+          <article class="quote-card">
+            <div class="eyebrow">NEXT BEST ACTION</div>
+            <h2 id="next-action-title">Read the machine.</h2>
+            <p id="next-action-copy">Studio is collecting durable data state, active jobs, runs and hardware telemetry.</p>
+            <button class="text-button" data-goto="pipeline">Open the pipeline →</button>
+          </article>
+        </div>
+
+        <div class="section-heading">
+          <div>
+            <div class="kicker">LIVE DESK</div>
+            <h2>Machine & campaign.</h2>
+          </div>
+          <p>One glance for the things that can ruin a long run: disk, memory, GPU, stalled jobs and incomplete sources.</p>
+        </div>
+        <div class="stats-grid" id="system-stats"></div>
+
+        <div class="two-col">
+          <article class="paper-panel">
+            <div class="panel-head">
+              <div>
+                <div class="eyebrow">PRETRAINING DATA</div>
+                <h3>Materialization ledger</h3>
+              </div>
+              <button class="ghost small" data-goto="data">Manage data</button>
+            </div>
+            <div id="overview-datasets" class="ledger"></div>
+          </article>
+          <article class="paper-panel">
+            <div class="panel-head">
+              <div>
+                <div class="eyebrow">ACTIVE WORK</div>
+                <h3>Job desk</h3>
+              </div>
+              <button class="ghost small" data-goto="logs">All logs</button>
+            </div>
+            <div id="overview-jobs" class="job-list"></div>
+          </article>
+        </div>
+
+        <article class="paper-panel">
+          <div class="panel-head">
+            <div>
+              <div class="eyebrow">LATEST TRAINING</div>
+              <h3>Experiment pulse</h3>
+            </div>
+            <button class="ghost small" data-goto="experiments">Inspect runs</button>
+          </div>
+          <div id="latest-run-summary" class="run-summary empty-state">No training run metrics yet.</div>
+        </article>
+      </section>
+
+      <section class="page" id="page-data">
+        <div class="editorial-lede">
+          <div>
+            <div class="kicker">DATA FOUNDRY</div>
+            <h2>Choose the corpus,<br/>not merely a preset.</h2>
+          </div>
+          <p>Every source gets its own target. Existing materialization is reused. Studio refuses to imply that a larger training-token budget means unique data unless you explicitly permit repetition.</p>
+        </div>
+
+        <article class="paper-panel">
+          <div class="panel-head">
+            <div>
+              <div class="eyebrow">PRESETS</div>
+              <h3>Starting points, not cages</h3>
+            </div>
+          </div>
+          <div id="preset-grid" class="preset-grid"></div>
+        </article>
+
+        <div class="section-heading">
+          <div>
+            <div class="kicker">SOURCE CATALOG</div>
+            <h2>Pretraining sources.</h2>
+          </div>
+          <p>Catalog status distinguishes working integrations from gated or advanced candidates. A source can be configured independently and stopped without disturbing another source.</p>
+        </div>
+        <div id="dataset-catalog" class="dataset-grid"></div>
+
+        <article class="paper-panel custom-source">
+          <div class="panel-head">
+            <div>
+              <div class="eyebrow">ADVANCED</div>
+              <h3>Add any Hugging Face text dataset</h3>
+            </div>
+            <span class="status-pill warning">validate schema first</span>
+          </div>
+          <div class="form-grid cols-4">
+            <label>Local source ID<input id="custom-source-id" placeholder="my_dataset"/></label>
+            <label>HF dataset repo<input id="custom-source-path" placeholder="org/dataset"/></label>
+            <label>Config / subset<input id="custom-source-name" placeholder="optional"/></label>
+            <label>Split<input id="custom-source-split" value="train"/></label>
+            <label>Text field<input id="custom-source-text" value="text"/></label>
+            <label>Target tokens<input id="custom-source-target" type="number" value="1000000000" step="100000000"/></label>
+            <label>Shuffle seed<input id="custom-source-seed" type="number" value="1901"/></label>
+            <label>Columns (comma separated)<input id="custom-source-columns" placeholder="text,id,url"/></label>
+          </div>
+          <div class="button-row">
+            <button class="ink" id="custom-download-button">Create config & download</button>
+          </div>
+        </article>
+
+        <div class="two-col">
+          <article class="paper-panel">
+            <div class="panel-head">
+              <div><div class="eyebrow">AUXILIARY DATA</div><h3>Benchmarks & alignment</h3></div>
+            </div>
+            <div class="action-list">
+              <div><strong>Decontamination benchmarks</strong><span>MMLU, ARC, GSM8K, HellaSwag, TruthfulQA, HumanEval, MBPP</span><button data-profile="benchmarks" class="ghost small profile-download">Download</button></div>
+              <div><strong>Post-training</strong><span>SmolTalk / SmolTalk2 / OpenThoughts / UltraFeedback</span><button data-profile="posttrain" class="ghost small profile-download">Download</button></div>
+              <div><strong>Reasoning</strong><span>Mixture-of-Thoughts / DAPO Math / verifiable Python</span><button data-profile="reasoning" class="ghost small profile-download">Download</button></div>
+            </div>
+          </article>
+          <article class="paper-panel">
+            <div class="panel-head">
+              <div><div class="eyebrow">CURRENT LEDGER</div><h3>What exists on disk</h3></div>
+            </div>
+            <div id="data-ledger" class="ledger"></div>
+          </article>
+        </div>
+      </section>
+
+      <section class="page" id="page-pipeline">
+        <div class="editorial-lede">
+          <div>
+            <div class="kicker">PIPELINE</div>
+            <h2>Raw text is not<br/>training data.</h2>
+          </div>
+          <p>Verification, benchmark decontamination, deterministic holdouts, deduplication and tokenizer generation are first-class stages. Raw materialization remains untouched.</p>
+        </div>
+
+        <div class="timeline" id="pipeline-timeline">
+          <div class="timeline-step"><span>01</span><strong>Verify</strong><p>Decompress finalized frames and validate their checksums.</p></div>
+          <div class="timeline-step"><span>02</span><strong>Benchmarks</strong><p>Acquire held-out benchmark examples before cleaning.</p></div>
+          <div class="timeline-step"><span>03</span><strong>Clean</strong><p>Deduplicate, redact, decontaminate and split validation.</p></div>
+          <div class="timeline-step"><span>04</span><strong>Tokenizer</strong><p>Train the 32,768-token Aster vocabulary with reasoning/FIM controls.</p></div>
+          <div class="timeline-step"><span>05</span><strong>Gate</strong><p>Capability audit, hardware probe and architecture experiments.</p></div>
+        </div>
+
+        <article class="paper-panel">
+          <div class="panel-head">
+            <div><div class="eyebrow">1 / INTEGRITY</div><h3>Verify materialized shards</h3></div>
+          </div>
+          <div id="verify-source-list" class="check-grid"></div>
+          <div class="button-row">
+            <button id="verify-selected-last" class="ghost">Quick / last shard</button>
+            <button id="verify-selected-full" class="ink">Full verification</button>
+          </div>
+        </article>
+
+        <article class="paper-panel">
+          <div class="panel-head">
+            <div><div class="eyebrow">2–3 / CLEANING PLAN</div><h3>Build the actual train mixture</h3></div>
+          </div>
+          <p class="muted">Weights below are independent from raw token counts. Default “materialized” weights use each source’s existing token count. Stack-Edu can simply be omitted.</p>
+          <div id="clean-source-grid" class="clean-grid"></div>
+          <div class="form-grid cols-4">
+            <label>Plan name<input id="clean-name" value="aster-materialized"/></label>
+            <label>Validation fraction<input id="validation-fraction" type="number" value="0.005" step="0.001"/></label>
+            <label>PII policy<select id="pii-mode"><option value="redact">redact</option><option value="drop">drop</option><option value="keep">keep</option></select></label>
+            <label>Clean output<input id="clean-output" value="data/clean-aster-materialized"/></label>
+          </div>
+          <div class="button-row">
+            <button id="make-clean-plan" class="ghost">Save plan</button>
+            <button id="start-clean" class="ink">Save plan & clean</button>
+          </div>
+          <div id="clean-plan-result" class="code-note"></div>
+        </article>
+
+        <article class="paper-panel">
+          <div class="panel-head">
+            <div><div class="eyebrow">4 / TOKENIZER</div><h3>Train tokenizer</h3></div>
+          </div>
+          <div class="form-grid cols-4">
+            <label>Clean DataConfig<input id="tokenizer-data" value="configs/studio/data/aster-materialized_clean.yaml"/></label>
+            <label>Output<input id="tokenizer-output" value="artifacts/tokenizer.json"/></label>
+            <label>Vocabulary<input id="tokenizer-vocab" type="number" value="32768"/></label>
+            <label>Sample documents<input id="tokenizer-documents" type="number" value="1000000"/></label>
+          </div>
+          <div class="button-row"><button id="train-tokenizer" class="ink">Train tokenizer</button></div>
+        </article>
+
+        <article class="paper-panel">
+          <div class="panel-head">
+            <div><div class="eyebrow">5 / LIVE GATE</div><h3>Audit before a long run</h3></div>
+          </div>
+          <div class="button-row wrap">
+            <button class="ghost" data-action="capability-audit">Capability audit</button>
+            <button class="ghost" data-action="capability-smoke">Audit + smoke tests</button>
+            <button class="ghost" data-action="hardware-probe">Hardware probe</button>
+            <button class="ghost" data-action="frontier-matrix">Quick VRAM matrix</button>
+          </div>
+        </article>
+      </section>
+
+      <section class="page" id="page-architecture">
+        <div class="editorial-lede">
+          <div>
+            <div class="kicker">MODEL LAB</div>
+            <h2>Claim only what<br/>the code can do.</h2>
+          </div>
+          <p>Aster’s stable frontier candidate really has KDA, MLA-like latent attention, MTP training and compressed latent KV. Production DeepSpec and fused MoE kernels are still gaps. The Studio keeps that distinction visible.</p>
+        </div>
+
+        <div id="capability-summary" class="stats-grid"></div>
+        <div id="capability-table" class="capability-grid"></div>
+
+        <article class="paper-panel">
+          <div class="panel-head">
+            <div><div class="eyebrow">RUNTIME STACK</div><h3>Install what the model can actually use</h3></div>
+            <span class="status-pill ref">keeps existing PyTorch</span>
+          </div>
+          <p class="muted">The live audit found the model code, but not several optional runtime packages. Studio 1.1 dry-runs pip first and refuses any install plan that would replace your working PyTorch/CUDA build.</p>
+          <div class="button-row wrap">
+            <button class="ink runtime-install" data-runtime-profile="kda">Install KDA / Flash Linear Attention</button>
+            <button class="ghost runtime-install" data-runtime-profile="apollo">Install APOLLO</button>
+            <button class="ghost runtime-install" data-runtime-profile="tracking">Install W&B + TensorBoard</button>
+            <button class="ghost runtime-install" data-runtime-profile="torchao">Install TorchAO experiment</button>
+            <button class="ghost runtime-install" data-runtime-profile="fp8">Install Transformer Engine FP8</button>
+            <button class="ghost runtime-install" data-runtime-profile="reasoning">Install reasoning extras</button>
+          </div>
+          <div class="warning-box">Start with KDA, then re-run Capability Audit + the quick VRAM matrix. APOLLO/tracking come next. TorchAO and FP8 are deliberately separate experiments. Every profile dry-runs pip first and refuses changes to PyTorch, Triton, Datasets, PyArrow, Hugging Face Hub or Zstandard.</div>
+        </article>
+
+        <div class="two-col">
+          <article class="paper-panel">
+            <div class="panel-head"><div><div class="eyebrow">MODEL CONFIGS</div><h3>Architecture presets</h3></div></div>
+            <div id="model-config-list" class="config-list"></div>
+          </article>
+          <article class="paper-panel">
+            <div class="panel-head"><div><div class="eyebrow">CONFIG EDITOR</div><h3 id="config-editor-title">Select a model</h3></div></div>
+            <div class="form-grid cols-2">
+              <label>Save as<input id="config-save-name" placeholder="my_frontier_variant"/></label>
+              <label>Kind<select id="config-kind"><option value="model">model</option><option value="train">train</option><option value="data">data</option><option value="reasoning">reasoning</option></select></label>
+            </div>
+            <textarea id="config-editor" class="json-editor" spellcheck="false" placeholder="Select a config. Studio edits a parsed JSON representation and saves it as YAML under configs/studio/."></textarea>
+            <div class="button-row"><button id="save-config" class="ink">Save Studio copy</button></div>
+          </article>
+        </div>
+      </section>
+
+      <section class="page" id="page-training">
+        <div class="editorial-lede">
+          <div>
+            <div class="kicker">TRAINING DESK</div>
+            <h2>Budget tokens<br/>with intent.</h2>
+          </div>
+          <p>The scheduler derives 8K / 16K / 32K stages from the training-token budget. It refuses accidental repetition when the requested budget exceeds declared available data.</p>
+        </div>
+
+        <article class="paper-panel">
+          <div class="panel-head">
+            <div><div class="eyebrow">CURRICULUM GENERATOR</div><h3>Make a token-honest training plan</h3></div>
+            <span id="available-token-badge" class="status-pill">— available</span>
+          </div>
+          <div class="form-grid cols-4">
+            <label>Run name<input id="plan-name" value="aster-materialized"/></label>
+            <label>Total training tokens<input id="plan-tokens" type="number" step="1000000000"/></label>
+            <label>Available unique-ish tokens<input id="plan-available" type="number" step="1000000000"/></label>
+            <label>Periodic checkpoint interval (tokens)<input id="plan-checkpoint-tokens" type="number" value="25000000" step="5000000"/></label>
+            <label class="span-2">Clean DataConfig<input id="plan-data" value="configs/studio/data/aster-materialized_clean.yaml"/></label>
+            <label class="toggle-label"><input id="allow-repeat" type="checkbox"/><span>Allow intentional repetition</span></label>
+          </div>
+          <div class="button-row"><button id="generate-plan" class="ink">Generate 8K → 16K → 32K plan</button></div>
+          <div id="training-plan-result"></div>
+        </article>
+
+        <div class="two-col">
+          <article class="paper-panel">
+            <div class="panel-head"><div><div class="eyebrow">PREFLIGHT</div><h3>Prove the run can start</h3></div></div>
+            <div class="stack-form">
+              <label>Model config<input id="train-model" value="configs/model/aster_moe_frontier_893m_a484m.yaml"/></label>
+              <label>Train config<input id="train-config" value="configs/train/frontier_100b_stage1_8k.yaml"/></label>
+              <label>Data config<input id="train-data" value="configs/data/pretrain_frontier_clean.yaml"/></label>
+            </div>
+            <div class="button-row"><button id="training-preflight" class="ghost">Run preflight</button></div>
+          </article>
+
+          <article class="paper-panel">
+            <div class="panel-head"><div><div class="eyebrow">LAUNCH</div><h3>Pretraining</h3></div></div>
+            <div class="stack-form">
+              <label>Resume same stage<input id="train-resume" placeholder="optional runs/..."/></label>
+              <label>Initialize new stage from<input id="train-init" placeholder="optional runs/..."/></label>
+              <label>Private HF backup repo<input id="train-hub" placeholder="optional user/AsterLM-run"/></label>
+            </div>
+            <div class="warning-box">Studio Stop waits for the next safe optimizer-update boundary, writes a fresh model+optimizer+RNG checkpoint, then exits. Periodic checkpoints remain an additional safety net.</div>
+            <div class="button-row"><button id="start-pretrain" class="ink">Start pretraining</button></div>
+          </article>
+        </div>
+
+        <article class="paper-panel">
+          <div class="panel-head">
+            <div><div class="eyebrow">POST-TRAINING</div><h3>SFT · DPO · reasoning RL</h3></div>
+          </div>
+          <div class="posttrain-grid">
+            <div>
+              <h4>Instruction SFT</h4>
+              <label>Checkpoint<input id="sft-checkpoint" placeholder="runs/aster-...-base"/></label>
+              <label>Train config<input id="sft-train" value="configs/train/sft_frontier.yaml"/></label>
+              <label>Data config<input id="sft-data" value="configs/data/sft_frontier_local.yaml"/></label>
+              <button id="start-sft" class="ghost">Start SFT</button>
+            </div>
+            <div>
+              <h4>DPO</h4>
+              <label>Checkpoint<input id="dpo-checkpoint" placeholder="runs/aster-...-sft"/></label>
+              <label>Train config<input id="dpo-train" value="configs/train/dpo_frontier.yaml"/></label>
+              <label>Raw preferences<input id="dpo-raw" value="data/posttrain-frontier/ultrafeedback_binarized"/></label>
+              <label>Scored preferences<input id="dpo-data" value="data/posttrain-frontier/ultrafeedback_reference_scored.jsonl"/></label>
+              <div class="button-row wrap"><button id="score-dpo" class="ghost">Score reference</button><button id="start-dpo" class="ghost">Start DPO</button></div>
+            </div>
+            <div>
+              <h4>Reasoning</h4>
+              <label>Base checkpoint<input id="reason-checkpoint" placeholder="runs/aster-...-base"/></label>
+              <label>RL config<input id="reason-config" value="configs/reasoning/rlvr_laptop_gspo.yaml"/></label>
+              <label>Stop after cycles<input id="reason-cycles" type="number" value="2"/></label>
+              <button id="start-reasoning" class="ghost">Run reasoning pipeline</button>
+            </div>
+          </div>
+        </article>
+      </section>
+
+      <section class="page" id="page-experiments">
+        <div class="editorial-lede">
+          <div>
+            <div class="kicker">OBSERVATORY</div>
+            <h2>Loss is only<br/>one signal.</h2>
+          </div>
+          <p>Inspect tokens/sec, data wait, forward/backward/optimizer time, gradients, MoE routing, LR, VRAM, temperature, power, eval loss and permanent token milestones from the same page.</p>
+        </div>
+
+        <div class="experiment-layout">
+          <aside class="run-sidebar">
+            <div class="panel-head"><div><div class="eyebrow">RUNS</div><h3>Experiment archive</h3></div></div>
+            <div id="run-list" class="run-list"></div>
+          </aside>
+          <div class="experiment-main">
+            <article class="paper-panel">
+              <div class="panel-head">
+                <div><div class="eyebrow">METRICS</div><h3 id="selected-run-title">Select a run</h3></div>
+                <div class="metric-picker">
+                  <select id="metric-a"><option value="loss">loss</option><option value="eval_main_loss">eval loss</option><option value="tokens_per_second">tokens/s</option><option value="cuda_peak_allocated_gb">VRAM</option><option value="grad_norm_clipped">grad norm</option><option value="estimated_training_tflops">TFLOP/s</option></select>
+                  <select id="metric-x"><option value="tokens_seen">tokens</option><option value="step">step</option><option value="wall_clock_total_seconds">wall time</option></select>
+                </div>
+              </div>
+              <canvas id="metrics-chart" width="1100" height="420"></canvas>
+              <div id="metric-snapshot" class="metric-snapshot"></div>
+            </article>
+            <article class="paper-panel">
+              <div class="panel-head"><div><div class="eyebrow">CHECKPOINTS</div><h3>Durable model history</h3></div></div>
+              <div id="checkpoint-table" class="checkpoint-table"></div>
+            </article>
+            <article class="paper-panel">
+              <div class="panel-head"><div><div class="eyebrow">EXPERIMENT TOOLS</div><h3>Before & after the long run</h3></div></div>
+              <div class="button-row wrap">
+                <button class="ghost" data-action="hardware-probe">Hardware probe</button>
+                <button class="ghost" data-action="frontier-matrix">VRAM matrix</button>
+                <button id="run-ablations" class="ghost">100M quality ablations</button>
+              </div>
+              <div class="form-grid cols-2">
+                <label>HF backup repo<input id="hub-sync-repo" placeholder="user/AsterLM-run"/></label>
+                <label>Run directory<input id="hub-sync-run" placeholder="runs/aster-..."/></label>
+              </div>
+              <div class="button-row"><button id="hub-sync" class="ghost">Sync run to Hugging Face</button></div>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <section class="page" id="page-inference">
+        <div class="editorial-lede">
+          <div>
+            <div class="kicker">INFERENCE LAB</div>
+            <h2>Quality, context<br/>& speed together.</h2>
+          </div>
+          <p>The reference MTP verifier is exposed, but Studio labels it correctly: it is not DeepSpec-level production acceleration yet. Cache quantization and long-context tests remain separately measurable.</p>
+        </div>
+
+        <article class="paper-panel">
+          <div class="form-grid cols-4">
+            <label class="span-2">Checkpoint<input id="infer-checkpoint" placeholder="runs/... or checkpoint-..."/></label>
+            <label>Cache<select id="infer-cache"><option value="hadamard_int4">Hadamard INT4</option><option value="bfloat16">BF16</option><option value="int8">INT8</option></select></label>
+            <label>Max new tokens<input id="infer-max" type="number" value="256"/></label>
+          </div>
+          <label>Prompt<textarea id="infer-prompt" class="prompt-box">Explain why hybrid recurrent/attention language models can be efficient at long context.</textarea></label>
+          <div class="button-row wrap">
+            <button id="run-infer" class="ink">Generate</button>
+            <button id="run-benchmark" class="ghost">Benchmark</button>
+            <button id="run-speculative" class="ghost">MTP speculative benchmark</button>
+            <button id="run-cache-benchmark" class="ghost">KV-cache benchmark</button>
+            <button id="run-needle" class="ghost">8K / 16K / 32K needle test</button>
+          </div>
+          <div class="warning-box">“MTP speculative” currently measures Aster’s exact reference verifier. It does not imply DSpark/DFlash/DeepSpec integration.</div>
+        </article>
+        <div class="two-col">
+          <article class="paper-panel">
+            <div class="panel-head"><div><div class="eyebrow">REASONING EVAL</div><h3>Verifier-style evaluation</h3></div></div>
+            <div class="stack-form">
+              <label>Model config<input id="eval-reason-model" value="configs/model/aster_moe_frontier_893m_a484m.yaml"/></label>
+              <label>Evaluation data<input id="eval-reason-data" value="data/reasoning/rlvr_prompts.jsonl"/></label>
+              <label>Samples per prompt<input id="eval-reason-samples" type="number" value="4"/></label>
+              <label>Prompt limit<input id="eval-reason-limit" type="number" value="100"/></label>
+            </div>
+            <div class="button-row"><button id="run-reason-eval" class="ghost">Evaluate reasoning</button></div>
+          </article>
+          <article class="paper-panel">
+            <div class="panel-head"><div><div class="eyebrow">EXPORT</div><h3>Preserve master; derive optimized copies</h3></div></div>
+            <div class="stack-form">
+              <label>OSP output<input id="osp-output" value="artifacts/aster-studio-osp-folded"/></label>
+              <label>TorchAO input<input id="torchao-input" value="artifacts/aster-studio-osp-folded"/></label>
+              <label>INT4 output<input id="torchao-output" value="artifacts/aster-studio-int4.safetensors"/></label>
+            </div>
+            <div class="button-row wrap"><button id="export-osp" class="ghost">OSP fold</button><button id="export-int4" class="ghost">TorchAO INT4</button></div>
+          </article>
+        </div>
+      </section>
+
+      <section class="page" id="page-logs">
+        <div class="editorial-lede">
+          <div>
+            <div class="kicker">OPERATIONS</div>
+            <h2>Every process,<br/>one desk.</h2>
+          </div>
+          <p>Studio-launched work gets a durable job record and a plain-text log. Network and GPU jobs are resource-locked to reduce accidental collisions.</p>
+        </div>
+        <div class="logs-layout">
+          <aside class="paper-panel">
+            <div class="panel-head"><div><div class="eyebrow">JOBS</div><h3>Process history</h3></div></div>
+            <div id="job-history" class="job-list"></div>
+          </aside>
+          <article class="terminal-panel">
+            <div class="terminal-head">
+              <div><span class="term-dot"></span><strong id="log-title">Select a job</strong></div>
+              <button id="stop-job" class="danger small" disabled>Stop selected</button>
+            </div>
+            <pre id="log-output">No job selected.</pre>
+          </article>
+        </div>
+      </section>
+
+      <section class="page" id="page-settings">
+        <div class="editorial-lede">
+          <div>
+            <div class="kicker">CONTROL ROOM</div>
+            <h2>Aggressive,<br/>not reckless.</h2>
+          </div>
+          <p>These are Studio defaults for newly launched jobs. Existing subprocesses keep the settings they started with.</p>
+        </div>
+        <article class="paper-panel">
+          <div class="panel-head"><div><div class="eyebrow">DOWNLOAD ENGINE</div><h3>Throughput & memory</h3></div></div>
+          <div class="form-grid cols-4">
+            <label>Parallel readers<input id="set-readers" type="number"/></label>
+            <label>Parquet batch rows<input id="set-batch-rows" type="number"/></label>
+            <label>Xet concurrency<input id="set-xet" type="number"/></label>
+            <label>RSS ceiling GiB<input id="set-rss" type="number" step="0.5"/></label>
+            <label>Arrow CPU threads<input id="set-arrow-cpu" type="number"/></label>
+            <label>Arrow I/O threads<input id="set-arrow-io" type="number"/></label>
+            <label>Zstd threads<input id="set-zstd" type="number"/></label>
+            <label>Stall timeout seconds<input id="set-stall" type="number"/></label>
+          </div>
+        </article>
+        <article class="paper-panel">
+          <div class="panel-head"><div><div class="eyebrow">TRAINING</div><h3>Checkpoint policy</h3></div></div>
+          <div class="form-grid cols-4">
+            <label>Checkpoint interval tokens<input id="set-checkpoint-tokens" type="number" step="50000000"/></label>
+            <label>Keep latest rolling checkpoints<input id="set-keep" type="number"/></label>
+          </div>
+          <div class="button-row"><button id="save-settings" class="ink">Save Studio settings</button></div>
+        </article>
+        <article class="paper-panel">
+          <div class="panel-head"><div><div class="eyebrow">SAFETY</div><h3>Non-negotiables</h3></div></div>
+          <div class="rules">
+            <p><strong>Raw data is never deleted by Studio.</strong> Cleaning writes a derivative corpus.</p>
+            <p><strong>No implicit token repetition.</strong> The training-plan generator refuses a budget above declared materialized tokens unless you check the explicit repeat box.</p>
+            <p><strong>Stock configs stay stock.</strong> UI edits are written under <code>configs/studio/</code>.</p>
+            <p><strong>DeepSpec is not mislabeled.</strong> Experimental/research gaps stay visible until an Aster-compatible implementation and benchmark exist.</p>
+          </div>
+        </article>
+      </section>
+
+      <footer>
+        <span>AsterLM Studio 1.1</span>
+        <span>local-first · additive · research controls</span>
+      </footer>
+    </main>
+  </div>
+
+  <div id="toast-root"></div>
+  <script src="/app.js"></script>
+</body>
+</html>

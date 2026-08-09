@@ -1,0 +1,1277 @@
+#!/usr/bin/env python
+from __future__ import annotations
+
+import argparse
+import collections
+import json
+import math
+import mimetypes
+import os
+import re
+import shutil
+import signal
+import subprocess
+import sys
+import threading
+import time
+import uuid
+import webbrowser
+from http import HTTPStatus
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+from typing import Any
+from urllib.parse import parse_qs, urlparse
+
+import yaml
+
+ROOT = Path(__file__).resolve().parents[1]
+STUDIO_ROOT = ROOT / "data" / "aster-studio"
+LOG_ROOT = STUDIO_ROOT / "logs"
+JOB_STATE = STUDIO_ROOT / "jobs.json"
+SETTINGS_PATH = STUDIO_ROOT / "settings.json"
+CATALOG_PATH = ROOT / "studio" / "catalog.yaml"
+STATIC_ROOT = ROOT / "studio" / "static"
+GIB = 2**30
+
+DEFAULT_SETTINGS: dict[str, Any] = {
+    "download": {
+        "parallel_streams": 10,
+        "parquet_batch_rows": 16384,
+        "xet_concurrency": 24,
+        "arrow_cpu_threads": 20,
+        "arrow_io_threads": 16,
+        "zstd_threads": 8,
+        "zstd_buffer_mib": 8,
+        "max_rss_gib": 22.0,
+        "stall_seconds": 90,
+        "source_retries": 2,
+        "materializer_retries": 2,
+    },
+    "training": {
+        "checkpoint_tokens": 25000000,
+        "keep_last_checkpoints": 6,
+        "model": "configs/model/aster_moe_frontier_893m_a484m.yaml",
+        "data": "configs/data/pretrain_frontier_clean.yaml",
+    },
+    "ui": {
+        "refresh_seconds": 2,
+        "metric_points": 500,
+    },
+}
+
+SAFE_ID = re.compile(r"^[A-Za-z0-9_.-]+$")
+
+
+def atomic_json(path: Path, payload: Any) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(json.dumps(payload, indent=2, default=str), encoding="utf-8")
+    os.replace(tmp, path)
+
+
+def load_json(path: Path, default: Any) -> Any:
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return default
+
+
+def deep_merge(base: dict[str, Any], incoming: dict[str, Any]) -> dict[str, Any]:
+    out = json.loads(json.dumps(base))
+    for key, value in incoming.items():
+        if isinstance(value, dict) and isinstance(out.get(key), dict):
+            out[key] = deep_merge(out[key], value)
+        else:
+            out[key] = value
+    return out
+
+
+def settings() -> dict[str, Any]:
+    return deep_merge(DEFAULT_SETTINGS, load_json(SETTINGS_PATH, {}))
+
+
+def repo_path(value: str | Path, *, must_be_inside: bool = True) -> Path:
+    path = Path(value)
+    if not path.is_absolute():
+        path = ROOT / path
+    path = path.resolve()
+    if must_be_inside:
+        try:
+            path.relative_to(ROOT.resolve())
+        except ValueError as exc:
+            raise ValueError("Path must stay inside the AsterLM repository") from exc
+    return path
+
+
+def rel(path: Path) -> str:
+    try:
+        return str(path.resolve().relative_to(ROOT.resolve()))
+    except Exception:
+        return str(path)
+
+
+def read_state(path: Path) -> dict[str, Any] | None:
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+
+
+def human_tokens(value: int | float | None) -> str:
+    if value is None:
+        return "—"
+    x = float(value)
+    for scale, suffix in ((1e12, "T"), (1e9, "B"), (1e6, "M"), (1e3, "K")):
+        if abs(x) >= scale:
+            return f"{x / scale:.2f}{suffix}"
+    return f"{x:.0f}"
+
+
+def catalog() -> dict[str, Any]:
+    return yaml.safe_load(CATALOG_PATH.read_text(encoding="utf-8"))
+
+
+def corpus_config() -> dict[str, Any]:
+    path = ROOT / "configs/corpus/corpus_overtrain_100b.yaml"
+    return yaml.safe_load(path.read_text(encoding="utf-8"))["corpus"]
+
+
+def stack_config() -> dict[str, Any]:
+    path = ROOT / "configs/corpus/stack_edu_13b.yaml"
+    return yaml.safe_load(path.read_text(encoding="utf-8"))["stack_edu"]
+
+
+def dataset_status() -> list[dict[str, Any]]:
+    cfg = corpus_config()
+    output = ROOT / cfg.get("output_dir", "data/corpus-frontier-16b")
+    rows: list[dict[str, Any]] = []
+    for item in cfg["sources"]:
+        sid = str(item["id"])
+        state = read_state(output / sid / "state.json") or {}
+        tokens = int(state.get("estimated_tokens", 0))
+        target = int(item["target_tokens"])
+        rows.append(
+            {
+                "id": sid,
+                "label": sid,
+                "tokens": tokens,
+                "target": target,
+                "percent": min(100.0, 100.0 * tokens / target) if target else 0.0,
+                "complete": bool(state.get("complete", False)) and tokens >= target,
+                "source_exhausted": bool(state.get("source_exhausted", False)),
+                "checkpoint": state.get("checkpoint_id"),
+                "reason": state.get("last_checkpoint_reason"),
+                "path": rel(output / sid),
+                "kind": "corpus",
+            }
+        )
+
+    scfg = stack_config()
+    sroot = ROOT / scfg.get("output_dir", "data/stack-edu-frontier-2p4b")
+    total = 0
+    target = sum(int(item["target_tokens"]) for item in scfg["languages"])
+    language_rows = []
+    for item in scfg["languages"]:
+        language = str(item["name"])
+        prefix = language.lower().replace("-", "_")
+        state = read_state(sroot / prefix / "state.json") or {}
+        value = int(state.get("estimated_tokens", 0))
+        total += value
+        language_rows.append(
+            {
+                "language": language,
+                "tokens": value,
+                "target": int(item["target_tokens"]),
+                "complete": bool(state.get("complete", False)),
+            }
+        )
+    rows.append(
+        {
+            "id": "stack_edu",
+            "label": "Stack-Edu",
+            "tokens": total,
+            "target": target,
+            "percent": min(100.0, 100.0 * total / target) if target else 0.0,
+            "complete": total >= target,
+            "source_exhausted": False,
+            "checkpoint": None,
+            "reason": "complete" if total >= target else "pending",
+            "path": rel(sroot),
+            "kind": "stack",
+            "languages": language_rows,
+        }
+    )
+
+    # Studio-created corpus sources use the same materializer state shape.
+    custom_root = STUDIO_ROOT / "custom-corpus"
+    if custom_root.exists():
+        for state_path in sorted(custom_root.glob("*/state.json")):
+            state = read_state(state_path) or {}
+            source = state.get("source") or {}
+            target = int(source.get("target_tokens", 0) or 0)
+            tokens = int(state.get("estimated_tokens", 0))
+            sid = str(source.get("id") or state_path.parent.name)
+            rows.append(
+                {
+                    "id": sid,
+                    "label": sid,
+                    "tokens": tokens,
+                    "target": target,
+                    "percent": min(100.0, 100.0 * tokens / target) if target else 0.0,
+                    "complete": bool(state.get("complete", False)) and (not target or tokens >= target),
+                    "source_exhausted": bool(state.get("source_exhausted", False)),
+                    "checkpoint": state.get("checkpoint_id"),
+                    "reason": state.get("last_checkpoint_reason"),
+                    "path": rel(state_path.parent),
+                    "kind": "custom",
+                }
+            )
+    return rows
+
+
+def clean_corpora_status() -> list[dict[str, Any]]:
+    result: list[dict[str, Any]] = []
+    plans = ROOT / "configs/studio/data-plans"
+    if not plans.exists():
+        return result
+    for plan_path in sorted(plans.glob("*.yaml")):
+        try:
+            raw = yaml.safe_load(plan_path.read_text(encoding="utf-8"))
+            plan = raw.get("plan", raw)
+            output = repo_path(str(plan.get("output", "")))
+            state = read_state(output / "_studio_clean_state.json") or {}
+            report = read_state(output / "studio_global_cleaning_report.json") or {}
+            result.append(
+                {
+                    "name": str(plan.get("name") or plan_path.stem),
+                    "plan": rel(plan_path),
+                    "output": rel(output),
+                    "generated_config": str(
+                        plan.get(
+                            "generated_config",
+                            f"configs/studio/data/{plan_path.stem}_clean.yaml",
+                        )
+                    ),
+                    "complete": bool(state.get("complete", False)),
+                    "seen": int(state.get("seen", 0) or 0),
+                    "kept": int(state.get("kept", 0) or 0),
+                    "estimated_tokens": int(
+                        report.get(
+                            "estimated_tokens",
+                            round(int(state.get("kept_chars", 0) or 0) / 4),
+                        )
+                    ),
+                    "modified": (
+                        (output / "_studio_clean_state.json").stat().st_mtime
+                        if (output / "_studio_clean_state.json").exists()
+                        else plan_path.stat().st_mtime
+                    ),
+                }
+            )
+        except Exception:
+            continue
+    return sorted(result, key=lambda item: item["modified"], reverse=True)
+
+
+def disk_info() -> dict[str, Any]:
+    usage = shutil.disk_usage(ROOT)
+    return {
+        "total_gib": usage.total / GIB,
+        "used_gib": usage.used / GIB,
+        "free_gib": usage.free / GIB,
+        "percent": usage.used / usage.total * 100.0,
+    }
+
+
+def system_info() -> dict[str, Any]:
+    result: dict[str, Any] = {"disk": disk_info()}
+    try:
+        import psutil
+        mem = psutil.virtual_memory()
+        result["memory"] = {
+            "total_gib": mem.total / GIB,
+            "used_gib": mem.used / GIB,
+            "available_gib": mem.available / GIB,
+            "percent": mem.percent,
+        }
+        result["cpu"] = {
+            "percent": psutil.cpu_percent(interval=None),
+            "load": list(os.getloadavg()) if hasattr(os, "getloadavg") else None,
+            "count": psutil.cpu_count(),
+        }
+    except Exception as exc:
+        result["memory"] = {"error": str(exc)}
+        result["cpu"] = {"error": str(exc)}
+
+    try:
+        query = [
+            "nvidia-smi",
+            "--query-gpu=name,memory.total,memory.used,utilization.gpu,temperature.gpu,power.draw,power.limit,clocks.sm,clocks.mem",
+            "--format=csv,noheader,nounits",
+        ]
+        line = subprocess.check_output(query, text=True, stderr=subprocess.DEVNULL, timeout=3).strip().splitlines()[0]
+        fields = [item.strip() for item in line.split(",")]
+        result["gpu"] = {
+            "available": True,
+            "name": fields[0],
+            "memory_total_mib": float(fields[1]),
+            "memory_used_mib": float(fields[2]),
+            "utilization": float(fields[3]),
+            "temperature_c": float(fields[4]),
+            "power_w": float(fields[5]),
+            "power_limit_w": float(fields[6]),
+            "sm_clock_mhz": float(fields[7]),
+            "mem_clock_mhz": float(fields[8]),
+        }
+    except Exception as exc:
+        result["gpu"] = {"available": False, "error": str(exc)}
+    return result
+
+
+def tail_lines(path: Path, limit: int = 300) -> list[str]:
+    if not path.is_file():
+        return []
+    with path.open("r", encoding="utf-8", errors="replace") as handle:
+        return list(collections.deque(handle, maxlen=max(1, min(limit, 5000))))
+
+
+def metrics_for_run(run_path: Path, limit: int = 500) -> list[dict[str, Any]]:
+    path = run_path / "metrics.jsonl"
+    rows: list[dict[str, Any]] = []
+    for line in tail_lines(path, limit):
+        try:
+            rows.append(json.loads(line))
+        except Exception:
+            pass
+    return rows
+
+
+def checkpoint_list(run_path: Path) -> list[dict[str, Any]]:
+    result = []
+    for path in sorted(run_path.glob("checkpoint-*")):
+        manifest = read_state(path / "checkpoint_manifest.json") or {}
+        result.append(
+            {
+                "name": path.name,
+                "path": rel(path),
+                "step": manifest.get("step"),
+                "tokens_seen": manifest.get("tokens_seen"),
+                "reason": manifest.get("reason"),
+                "permanent": bool(manifest.get("permanent", False) or (path / "KEEP").exists()),
+                "model_bytes": manifest.get("model_bytes"),
+                "trainer_state_bytes": manifest.get("trainer_state_bytes"),
+            }
+        )
+    return result
+
+
+def runs_status() -> list[dict[str, Any]]:
+    runs_root = ROOT / "runs"
+    rows: list[dict[str, Any]] = []
+    if not runs_root.exists():
+        return rows
+    for path in sorted((p for p in runs_root.iterdir() if p.is_dir()), key=lambda p: p.stat().st_mtime, reverse=True):
+        manifest = read_state(path / "run_manifest.json")
+        metrics = metrics_for_run(path, 120)
+        checkpoints = checkpoint_list(path)
+        if not manifest and not metrics and not checkpoints:
+            continue
+        latest = next(
+            (
+                row
+                for row in reversed(metrics)
+                if row.get("loss") is not None
+                or row.get("tokens_per_second") is not None
+            ),
+            metrics[-1] if metrics else {},
+        )
+        rows.append(
+            {
+                "name": path.name,
+                "path": rel(path),
+                "modified": path.stat().st_mtime,
+                "latest": latest,
+                "architecture": (manifest or {}).get("architecture"),
+                "checkpoint_count": len(checkpoints),
+                "permanent_checkpoints": sum(item["permanent"] for item in checkpoints),
+                "latest_checkpoint": checkpoints[-1] if checkpoints else None,
+            }
+        )
+    return rows[:100]
+
+
+class JobManager:
+    def __init__(self) -> None:
+        LOG_ROOT.mkdir(parents=True, exist_ok=True)
+        self.lock = threading.RLock()
+        self.jobs: dict[str, dict[str, Any]] = {}
+        stored = load_json(JOB_STATE, {})
+        if isinstance(stored, dict):
+            self.jobs.update(stored)
+        self._reconcile()
+
+    def _reconcile(self) -> None:
+        changed = False
+        for job in self.jobs.values():
+            if job.get("status") not in {"running", "stopping"}:
+                continue
+            pid = int(job.get("pid") or 0)
+            alive = False
+            if pid > 0:
+                try:
+                    os.kill(pid, 0)
+                    alive = True
+                except OSError:
+                    alive = False
+            if not alive:
+                job["status"] = "unknown-exited"
+                job["finished_at"] = job.get("finished_at") or time.time()
+                changed = True
+        if changed:
+            self._save()
+
+    def _save(self) -> None:
+        atomic_json(JOB_STATE, self.jobs)
+
+    def list(self) -> list[dict[str, Any]]:
+        with self.lock:
+            self._reconcile()
+            return sorted(self.jobs.values(), key=lambda item: item.get("created_at", 0), reverse=True)
+
+    def active_for_resource(self, resource: str) -> dict[str, Any] | None:
+        for job in self.jobs.values():
+            if job.get("resource") == resource and job.get("status") in {"running", "stopping"}:
+                return job
+        return None
+
+    def start(
+        self,
+        *,
+        label: str,
+        action: str,
+        command: list[str],
+        env: dict[str, str] | None = None,
+        resource: str = "cpu",
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        with self.lock:
+            blocking = self.active_for_resource(resource)
+            if resource in {"gpu", "network"} and blocking is not None:
+                raise RuntimeError(
+                    f"Resource '{resource}' is already owned by {blocking['label']} ({blocking['id']}). "
+                    "Stop that job first or wait for it to finish."
+                )
+            job_id = f"{int(time.time())}-{uuid.uuid4().hex[:8]}"
+            log_path = LOG_ROOT / f"{job_id}.log"
+            log_handle = log_path.open("ab", buffering=0)
+            merged_env = dict(os.environ)
+            if env:
+                merged_env.update(env)
+            proc = subprocess.Popen(
+                command,
+                cwd=ROOT,
+                env=merged_env,
+                stdout=log_handle,
+                stderr=subprocess.STDOUT,
+                start_new_session=True,
+            )
+            log_handle.close()
+            job = {
+                "id": job_id,
+                "label": label,
+                "action": action,
+                "command": command,
+                "pid": proc.pid,
+                "status": "running",
+                "returncode": None,
+                "created_at": time.time(),
+                "started_at": time.time(),
+                "finished_at": None,
+                "log": rel(log_path),
+                "resource": resource,
+                "metadata": metadata or {},
+            }
+            self.jobs[job_id] = job
+            self._save()
+
+            def waiter() -> None:
+                code = proc.wait()
+                with self.lock:
+                    current = self.jobs.get(job_id)
+                    if current:
+                        current["returncode"] = code
+                        current["status"] = "complete" if code == 0 else ("stopped" if code in {130, -2, -15} else "failed")
+                        current["finished_at"] = time.time()
+                        self._save()
+
+            threading.Thread(target=waiter, name=f"aster-job-{job_id}", daemon=True).start()
+            return job
+
+    def stop(self, job_id: str, grace: float = 45.0) -> dict[str, Any]:
+        with self.lock:
+            job = self.jobs.get(job_id)
+            if not job:
+                raise KeyError(job_id)
+            if job.get("status") not in {"running", "stopping"}:
+                return job
+            job["status"] = "stopping"
+            self._save()
+            pid = int(job.get("pid") or 0)
+
+        if pid <= 0:
+            return job
+        try:
+            os.killpg(pid, signal.SIGINT)
+        except ProcessLookupError:
+            return job
+
+        deadline = time.time() + grace
+        while time.time() < deadline:
+            try:
+                os.kill(pid, 0)
+            except OSError:
+                return self.jobs[job_id]
+            time.sleep(0.2)
+        try:
+            os.killpg(pid, signal.SIGTERM)
+        except ProcessLookupError:
+            return self.jobs[job_id]
+
+        # Give a wedged child one final window. Studio's own trainer also treats
+        # SIGTERM as a graceful-stop request; healthy runs should checkpoint and
+        # exit before this expires.
+        deadline = time.time() + 10.0
+        while time.time() < deadline:
+            try:
+                os.kill(pid, 0)
+            except OSError:
+                return self.jobs[job_id]
+            time.sleep(0.2)
+        try:
+            os.killpg(pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        return self.jobs[job_id]
+
+
+JOBS = JobManager()
+
+
+def download_env() -> dict[str, str]:
+    cfg = settings()["download"]
+    env = dict(os.environ)
+    env.pop("HF_XET_HIGH_PERFORMANCE", None)
+    env["HF_XET_FIXED_DOWNLOAD_CONCURRENCY"] = str(cfg["xet_concurrency"])
+    env["HF_XET_CLIENT_MAX_IDLE_CONNECTIONS"] = "32"
+    env["HF_XET_NUM_CONCURRENT_RANGE_GETS"] = "16"
+    env["HF_HUB_DOWNLOAD_TIMEOUT"] = "120"
+    env["HF_HUB_ETAG_TIMEOUT"] = "30"
+    env["ASTERLM_HF_PARALLEL_STREAMS"] = str(cfg["parallel_streams"])
+    env["ASTERLM_PARQUET_BATCH_ROWS"] = str(cfg["parquet_batch_rows"])
+    env["ASTERLM_ARROW_CPU_THREADS"] = str(cfg["arrow_cpu_threads"])
+    env["ASTERLM_ARROW_IO_THREADS"] = str(cfg["arrow_io_threads"])
+    env["ASTERLM_ZSTD_LEVEL"] = "3"
+    env["ASTERLM_ZSTD_THREADS"] = str(cfg["zstd_threads"])
+    env["ASTERLM_ZSTD_BUFFER_MIB"] = str(cfg["zstd_buffer_mib"])
+    env["PYTHONUNBUFFERED"] = "1"
+    return env
+
+
+def sanitize_source(source_id: str) -> str:
+    if not SAFE_ID.match(source_id):
+        raise ValueError("Source ID may contain only letters, digits, dot, underscore and hyphen.")
+    return source_id
+
+
+def build_corpus_config(source_id: str, target_tokens: int, entry: dict[str, Any], *, main_root: bool = False) -> Path:
+    source_id = sanitize_source(source_id)
+    if target_tokens <= 0:
+        raise ValueError("target_tokens must be positive")
+    source: dict[str, Any] = {
+        "id": source_id,
+        "path": entry["path"],
+        "split": entry.get("split", "train"),
+        "text_field": entry.get("text_field", "text"),
+        "target_tokens": int(target_tokens),
+        "shuffle_seed": int(entry.get("shuffle_seed", 1900)),
+    }
+    for key in (
+        "name",
+        "columns",
+        "token_count_field",
+        "min_chars",
+        "max_chars",
+        "require_fields",
+        "revision",
+    ):
+        if entry.get(key) is not None:
+            source[key] = entry[key]
+    output_dir = "data/corpus-frontier-16b" if main_root else f"data/aster-studio/custom-corpus"
+    raw = {
+        "corpus": {
+            "output_dir": output_dir,
+            "shard_size_mb": 1024,
+            "checkpoint_seconds": 300,
+            "checkpoint_documents": 100000,
+            "sources": [source],
+        }
+    }
+    target = ROOT / "configs/studio/corpus" / f"{source_id}-{target_tokens}.yaml"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(yaml.safe_dump(raw, sort_keys=False), encoding="utf-8")
+    return target
+
+
+def build_scaled_stack_config(target_tokens: int) -> Path:
+    base = yaml.safe_load((ROOT / "configs/corpus/stack_edu_13b.yaml").read_text(encoding="utf-8"))
+    cfg = base["stack_edu"]
+    original = sum(int(item["target_tokens"]) for item in cfg["languages"])
+    scale = target_tokens / original
+    remaining = target_tokens
+    for idx, item in enumerate(cfg["languages"]):
+        if idx == len(cfg["languages"]) - 1:
+            value = remaining
+        else:
+            value = max(1, round(int(item["target_tokens"]) * scale))
+            remaining -= value
+        item["target_tokens"] = value
+    target = ROOT / "configs/studio/corpus" / f"stack-edu-{target_tokens}.yaml"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(yaml.safe_dump(base, sort_keys=False), encoding="utf-8")
+    return target
+
+
+def built_in_source_entry(source_id: str) -> dict[str, Any]:
+    for item in corpus_config()["sources"]:
+        if item["id"] == source_id:
+            return item
+    raise KeyError(source_id)
+
+
+def create_clean_plan(payload: dict[str, Any]) -> Path:
+    selected = payload.get("sources") or []
+    if not selected:
+        raise ValueError("Select at least one source")
+    status_map = {item["id"]: item for item in dataset_status()}
+    rows = []
+    total = 0
+    for item in selected:
+        sid = sanitize_source(str(item["id"]))
+        current = status_map.get(sid)
+        if current is None:
+            raw_path = str(item.get("raw_path") or f"data/aster-studio/custom-corpus/{sid}")
+            tokens = int(item.get("tokens") or 0)
+        else:
+            raw_path = current["path"]
+            tokens = int(current["tokens"])
+        if tokens <= 0 and not item.get("allow_empty", False):
+            continue
+        total += max(0, tokens)
+        rows.append(
+            {
+                "id": sid,
+                "raw_path": raw_path,
+                "text_field": "text",
+                "weight": float(item.get("weight") or max(tokens, 1)),
+                "fim_rate": float(item.get("fim_rate", 0.5 if sid == "stack_edu" else 0.0)),
+                "tokens": tokens,
+                "optional": bool(item.get("optional", False)),
+            }
+        )
+    if not rows:
+        raise ValueError("No selected source has materialized tokens")
+
+    name = sanitize_source(str(payload.get("name") or f"materialized-{round(total / 1e9)}b"))
+    plan = {
+        "plan": {
+            "name": name,
+            "output": str(payload.get("output") or f"data/clean-{name}"),
+            "benchmarks": str(payload.get("benchmarks") or "data/decontamination-benchmarks"),
+            "validation_fraction": float(payload.get("validation_fraction", 0.005)),
+            "pii_mode": str(payload.get("pii_mode", "redact")),
+            "near_distance": int(payload.get("near_distance", 3)),
+            "audit_sample": int(payload.get("audit_sample", 10000)),
+            "generated_config": str(payload.get("generated_config") or f"configs/studio/data/{name}_clean.yaml"),
+            "sources": rows,
+            "declared_materialized_tokens": total,
+        }
+    }
+    path = ROOT / "configs/studio/data-plans" / f"{name}.yaml"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(yaml.safe_dump(plan, sort_keys=False), encoding="utf-8")
+    return path
+
+
+def start_action(action: str, payload: dict[str, Any]) -> dict[str, Any]:
+    py = sys.executable
+    env = download_env()
+
+    if action == "download_source":
+        source_id = sanitize_source(str(payload["source_id"]))
+        target_tokens = int(payload["target_tokens"])
+        if source_id == "stack_edu":
+            config = build_scaled_stack_config(target_tokens)
+            command = [
+                py,
+                "scripts/prepare_stack_edu_multilang.py",
+                "--config", rel(config),
+                "--max-retries", str(settings()["download"]["materializer_retries"]),
+                "--max-rss-gib", str(settings()["download"]["max_rss_gib"]),
+            ]
+        else:
+            cat = catalog()["datasets"]
+            entry = dict(payload.get("entry") or cat.get(source_id) or {})
+            main_root = source_id in {"fineweb_edu", "dclm", "cosmopedia_v2", "finemath_4plus"}
+            if not entry or not entry.get("path"):
+                raise KeyError(
+                    f"Unknown catalog source {source_id}; provide a custom dataset entry with at least path/split/text_field."
+                )
+            config = build_corpus_config(source_id, target_tokens, entry, main_root=main_root)
+            command = [
+                py,
+                "scripts/materialize_corpus.py",
+                "--config", rel(config),
+                "--only", source_id,
+                "--max-retries", str(settings()["download"]["materializer_retries"]),
+                "--retry-base-seconds", "5",
+                "--retry-max-seconds", "90",
+                "--checkpoint-seconds", "300",
+                "--checkpoint-documents", "100000",
+                "--max-rss-gib", str(settings()["download"]["max_rss_gib"]),
+            ]
+        return JOBS.start(
+            label=f"Download {source_id} → {human_tokens(target_tokens)}",
+            action=action,
+            command=command,
+            env=env,
+            resource="network",
+            metadata={"source_id": source_id, "target_tokens": target_tokens},
+        )
+
+    if action == "download_profile":
+        profile = str(payload["profile"])
+        if profile not in {"benchmarks", "posttrain", "reasoning"}:
+            raise ValueError("Only benchmarks/posttrain/reasoning profiles are exposed here")
+        command = [
+            py,
+            "scripts/download_data.py",
+            "--profile", profile,
+            "--validate-first",
+            "--require-auth",
+            "--network-mode", "safe-fast",
+            "--max-retries", str(payload.get("max_retries", 10)),
+            "--continue-on-error",
+        ]
+        return JOBS.start(
+            label=f"Download {profile}",
+            action=action,
+            command=command,
+            env=env,
+            resource="network",
+        )
+
+    if action == "verify":
+        target = repo_path(str(payload["path"]))
+        command = [py, "scripts/verify_data_shards.py", rel(target)]
+        if payload.get("only_last"):
+            command.append("--only-last")
+        return JOBS.start(label=f"Verify {rel(target)}", action=action, command=command, resource="disk")
+
+    if action == "clean":
+        plan = repo_path(str(payload["plan"]))
+        command = [py, "scripts/studio_prepare_data.py", "--plan", rel(plan)]
+        if payload.get("reset_existing"):
+            command.append("--reset-existing")
+        return JOBS.start(label=f"Clean {plan.stem}", action=action, command=command, resource="cpu")
+
+    if action == "tokenizer":
+        data = repo_path(str(payload["data"]))
+        output = repo_path(str(payload.get("output", "artifacts/tokenizer.json")))
+        command = [
+            py, "scripts/train_tokenizer.py",
+            "--data", rel(data),
+            "--output", rel(output),
+            "--vocab-size", str(int(payload.get("vocab_size", 32768))),
+            "--documents", str(int(payload.get("documents", 1000000))),
+        ]
+        return JOBS.start(label="Train tokenizer", action=action, command=command, resource="cpu")
+
+    if action == "capability_audit":
+        command = [py, "scripts/aster_capability_audit.py", "--json", "data/aster-studio/capabilities.json"]
+        if payload.get("smoke"):
+            command.append("--smoke")
+        return JOBS.start(label="Capability audit", action=action, command=command, resource="cpu")
+
+    if action == "hardware_probe":
+        command = [py, "scripts/hardware_probe.py", "--output", "runs/hardware-probe.json"]
+        return JOBS.start(label="Hardware probe", action=action, command=command, resource="gpu")
+
+    if action == "frontier_matrix":
+        command = [
+            py, "scripts/run_frontier_experiments.py",
+            "--mode", str(payload.get("mode", "quick")),
+            "--steps", str(int(payload.get("steps", 3))),
+        ]
+        return JOBS.start(label="Frontier VRAM matrix", action=action, command=command, resource="gpu")
+
+    if action == "quality_ablations":
+        command = [
+            py, "scripts/run_quality_ablations.py",
+            "--data", str(payload["data"]),
+            "--tokens", str(int(payload.get("tokens", 100000000))),
+            "--continue-on-error",
+        ]
+        return JOBS.start(label="Quality ablations", action=action, command=command, resource="gpu")
+
+    if action == "preflight":
+        command = [
+            py, "scripts/training_preflight.py",
+            "--model", str(payload["model"]),
+            "--train", str(payload["train"]),
+            "--data", str(payload["data"]),
+            "--check-first-record",
+            "--json", str(payload.get("json", "runs/studio-preflight.json")),
+        ]
+        if payload.get("checkpoint"):
+            command += ["--checkpoint", str(payload["checkpoint"])]
+        return JOBS.start(label="Training preflight", action=action, command=command, resource="gpu")
+
+    if action == "train_pretrain":
+        command = [
+            py, "scripts/studio_train.py",
+            "--mode", "pretrain",
+            "--model", str(payload["model"]),
+            "--train", str(payload["train"]),
+            "--data", str(payload["data"]),
+        ]
+        if payload.get("resume"):
+            command += ["--resume", str(payload["resume"])]
+        elif payload.get("init_checkpoint"):
+            command += ["--init-checkpoint", str(payload["init_checkpoint"])]
+        if payload.get("hub_repo"):
+            command += ["--hub-repo", str(payload["hub_repo"])]
+        return JOBS.start(label=f"Pretrain {Path(str(payload['train'])).stem}", action=action, command=command, resource="gpu")
+
+    if action == "train_sft":
+        command = [
+            py, "scripts/studio_train.py",
+            "--mode", "sft",
+            "--model", str(payload["model"]),
+            "--train", str(payload["train"]),
+            "--data", str(payload["data"]),
+        ]
+        if payload.get("resume"):
+            command += ["--resume", str(payload["resume"])]
+        elif payload.get("checkpoint"):
+            command += ["--checkpoint", str(payload["checkpoint"])]
+        return JOBS.start(label="SFT", action=action, command=command, resource="gpu")
+
+    if action == "dpo_reference":
+        command = [
+            py, "scripts/precompute_dpo_reference.py",
+            "--checkpoint", str(payload["checkpoint"]),
+            "--model", str(payload["model"]),
+            "--tokenizer", str(payload.get("tokenizer", "artifacts/tokenizer.json")),
+            "--input", str(payload["input"]),
+            "--output", str(payload["output"]),
+            "--max-length", str(int(payload.get("max_length", 2048))),
+        ]
+        return JOBS.start(label="Score DPO reference", action=action, command=command, resource="gpu")
+
+    if action == "train_dpo":
+        command = [
+            py, "scripts/train_dpo.py",
+            "--model", str(payload["model"]),
+            "--train", str(payload["train"]),
+            "--data", str(payload["data"]),
+            "--max-length", str(int(payload.get("max_length", 2048))),
+        ]
+        if payload.get("resume"):
+            command += ["--resume", str(payload["resume"])]
+        elif payload.get("checkpoint"):
+            command += ["--checkpoint", str(payload["checkpoint"])]
+        return JOBS.start(label="DPO", action=action, command=command, resource="gpu")
+
+    if action == "reasoning":
+        command = [
+            py, "scripts/run_reasoning_posttrain.py",
+            "--model", str(payload["model"]),
+            "--base-checkpoint", str(payload["checkpoint"]),
+            "--reasoning", str(payload["reasoning"]),
+        ]
+        if payload.get("skip_prepare"):
+            command.append("--skip-prepare")
+        if payload.get("rl_stop_after") is not None:
+            command += ["--rl-stop-after", str(int(payload["rl_stop_after"]))]
+        return JOBS.start(label="Reasoning post-training", action=action, command=command, resource="gpu")
+
+    if action == "eval_perplexity":
+        command = [
+            py, "scripts/evaluate_perplexity.py",
+            "--checkpoint", str(payload["checkpoint"]),
+            "--data", str(payload["data"]),
+            "--sequence", str(int(payload.get("sequence", 8192))),
+            "--batches", str(int(payload.get("batches", 32))),
+        ]
+        return JOBS.start(label="Perplexity evaluation", action=action, command=command, resource="gpu")
+    if action == "eval_reasoning":
+        command = [
+            py, "scripts/evaluate_reasoning.py",
+            "--model", str(payload["model"]),
+            "--checkpoint", str(payload["checkpoint"]),
+            "--data", str(payload["data"]),
+            "--samples", str(int(payload.get("samples", 4))),
+            "--limit", str(int(payload.get("limit", 100))),
+        ]
+        return JOBS.start(label="Reasoning evaluation", action=action, command=command, resource="gpu")
+
+
+    if action == "benchmark":
+        command = [
+            py, "scripts/benchmark.py",
+            "--checkpoint", str(payload["checkpoint"]),
+            "--prompt-tokens", str(int(payload.get("prompt_tokens", 8192))),
+            "--new-tokens", str(int(payload.get("new_tokens", 256))),
+            "--cache-dtype", str(payload.get("cache_dtype", "hadamard_int4")),
+        ]
+        return JOBS.start(label="Inference benchmark", action=action, command=command, resource="gpu")
+
+    if action == "benchmark_speculative":
+        command = [
+            py, "scripts/benchmark_speculative.py",
+            "--checkpoint", str(payload["checkpoint"]),
+            "--new-tokens", str(int(payload.get("new_tokens", 128))),
+        ]
+        return JOBS.start(label="Speculative benchmark", action=action, command=command, resource="gpu")
+    if action == "benchmark_cache":
+        command = [
+            py, "scripts/benchmark_cache_quantization.py",
+            "--tokens", str(int(payload.get("tokens", 32768))),
+        ]
+        return JOBS.start(label="KV-cache quantization benchmark", action=action, command=command, resource="gpu")
+
+    if action == "export_osp":
+        command = [
+            py, "scripts/export_osp_merged.py",
+            "--checkpoint", str(payload["checkpoint"]),
+            "--output", str(payload["output"]),
+        ]
+        return JOBS.start(label="Export OSP-folded model", action=action, command=command, resource="gpu")
+
+    if action == "export_torchao":
+        command = [
+            py, "scripts/export_torchao.py",
+            "--checkpoint", str(payload["checkpoint"]),
+            "--output", str(payload["output"]),
+            "--mode", str(payload.get("mode", "int4")),
+        ]
+        return JOBS.start(label="Export TorchAO model", action=action, command=command, resource="gpu")
+
+    if action == "hub_sync":
+        command = [
+            py, "scripts/sync_run_to_hub.py",
+            "--run", str(payload["run"]),
+            "--repo", str(payload["repo"]),
+        ]
+        return JOBS.start(label="Sync run to Hugging Face", action=action, command=command, resource="network")
+
+
+    if action == "needle":
+        command = [
+            py, "scripts/needle_test.py",
+            "--checkpoint", str(payload["checkpoint"]),
+            "--lengths", str(payload.get("lengths", "8192,16384,32768")),
+        ]
+        return JOBS.start(label="Long-context needle test", action=action, command=command, resource="gpu")
+
+    if action == "infer":
+        command = [
+            py, "scripts/infer.py",
+            "--checkpoint", str(payload["checkpoint"]),
+            "--prompt", str(payload["prompt"]),
+            "--max-new-tokens", str(int(payload.get("max_new_tokens", 256))),
+            "--cache-dtype", str(payload.get("cache_dtype", "hadamard_int4")),
+        ]
+        if payload.get("mtp_greedy"):
+            command.append("--mtp-greedy")
+        return JOBS.start(label="Inference playground", action=action, command=command, resource="gpu")
+
+    raise ValueError(f"Unsupported action: {action}")
+
+
+def config_files(kind: str) -> list[dict[str, Any]]:
+    mapping = {
+        "model": [ROOT / "configs/model", ROOT / "configs/studio/model"],
+        "train": [ROOT / "configs/train", ROOT / "configs/studio/train"],
+        "data": [ROOT / "configs/data", ROOT / "configs/studio/data"],
+        "reasoning": [ROOT / "configs/reasoning", ROOT / "configs/studio/reasoning"],
+        "corpus": [ROOT / "configs/corpus", ROOT / "configs/studio/corpus"],
+    }
+    roots = mapping.get(kind)
+    if roots is None:
+        raise ValueError("Unknown config kind")
+    result: list[dict[str, Any]] = []
+    for folder in roots:
+        if not folder.exists():
+            continue
+        for path in sorted(folder.glob("*.yaml")):
+            try:
+                raw = yaml.safe_load(path.read_text(encoding="utf-8"))
+                result.append({"path": rel(path), "name": path.stem, "config": raw})
+            except Exception as exc:
+                result.append({"path": rel(path), "name": path.stem, "error": str(exc)})
+    return result
+
+
+def save_studio_config(payload: dict[str, Any]) -> dict[str, Any]:
+    kind = str(payload["kind"])
+    name = sanitize_source(str(payload["name"]))
+    raw = payload["config"]
+    folder = ROOT / "configs/studio" / kind
+    folder.mkdir(parents=True, exist_ok=True)
+    path = folder / f"{name}.yaml"
+    path.write_text(yaml.safe_dump(raw, sort_keys=False), encoding="utf-8")
+    return {"path": rel(path), "config": raw}
+
+
+def clone_config(payload: dict[str, Any]) -> dict[str, Any]:
+    source = repo_path(str(payload["source"]))
+    kind = str(payload["kind"])
+    name = sanitize_source(str(payload["name"]))
+    raw = yaml.safe_load(source.read_text(encoding="utf-8"))
+    return save_studio_config({"kind": kind, "name": name, "config": raw})
+
+
+def generate_training_plan(payload: dict[str, Any]) -> dict[str, Any]:
+    name = sanitize_source(str(payload["name"]))
+    tokens = int(payload["tokens"])
+    available = payload.get("available_tokens")
+    command = [
+        sys.executable,
+        "scripts/studio_generate_training_plan.py",
+        "--name", name,
+        "--tokens", str(tokens),
+        "--data", str(payload["data"]),
+        "--checkpoint-tokens", str(int(payload.get("checkpoint_tokens", settings()["training"]["checkpoint_tokens"]))),
+        "--keep-last", str(int(settings()["training"].get("keep_last_checkpoints", 6))),
+    ]
+    if available is not None:
+        command += ["--available-tokens", str(int(available))]
+    if payload.get("allow_repeat"):
+        command.append("--allow-repeat")
+    result = subprocess.run(command, cwd=ROOT, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    if result.returncode != 0:
+        raise RuntimeError(result.stdout)
+    plan_path = ROOT / "configs/studio/train" / f"{name}_plan.json"
+    return load_json(plan_path, {"output": result.stdout})
+
+
+def overview() -> dict[str, Any]:
+    cap = load_json(STUDIO_ROOT / "capabilities.json", None)
+    rows = dataset_status()
+    clean = clean_corpora_status()
+    return {
+        "version": "1.0",
+        "time": time.time(),
+        "system": system_info(),
+        "datasets": rows,
+        "raw_materialized_tokens": sum(int(item["tokens"]) for item in rows),
+        "jobs": JOBS.list(),
+        "runs": runs_status(),
+        "capabilities": cap,
+        "settings": settings(),
+    }
+
+
+class Handler(BaseHTTPRequestHandler):
+    server_version = "AsterLMStudio/1.0"
+
+    def log_message(self, format: str, *args: Any) -> None:
+        # Keep the console readable; job logs are more useful than HTTP request spam.
+        return
+
+    def send_json(self, payload: Any, status: int = 200) -> None:
+        data = json.dumps(payload, default=str).encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(data)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(data)
+
+    def read_json(self) -> dict[str, Any]:
+        length = int(self.headers.get("Content-Length", "0") or 0)
+        if length > 4 * 1024 * 1024:
+            raise ValueError("Request too large")
+        raw = self.rfile.read(length) if length else b"{}"
+        value = json.loads(raw.decode("utf-8"))
+        if not isinstance(value, dict):
+            raise ValueError("JSON body must be an object")
+        return value
+
+    def serve_static(self, path: str) -> None:
+        relative = "index.html" if path in {"", "/"} else path.lstrip("/")
+        target = (STATIC_ROOT / relative).resolve()
+        try:
+            target.relative_to(STATIC_ROOT.resolve())
+        except ValueError:
+            self.send_error(404)
+            return
+        if not target.is_file():
+            self.send_error(404)
+            return
+        mime = mimetypes.guess_type(target.name)[0] or "application/octet-stream"
+        data = target.read_bytes()
+        self.send_response(200)
+        self.send_header("Content-Type", mime)
+        self.send_header("Content-Length", str(len(data)))
+        self.send_header("Cache-Control", "no-cache")
+        self.end_headers()
+        self.wfile.write(data)
+
+    def do_GET(self) -> None:
+        parsed = urlparse(self.path)
+        path = parsed.path
+        query = parse_qs(parsed.query)
+        try:
+            if path == "/api/overview":
+                return self.send_json(overview())
+            if path == "/api/catalog":
+                return self.send_json(catalog())
+            if path == "/api/jobs":
+                return self.send_json(JOBS.list())
+            if path == "/api/configs":
+                kind = query.get("kind", ["model"])[0]
+                return self.send_json(config_files(kind))
+            if path == "/api/runs":
+                return self.send_json(runs_status())
+            if path == "/api/metrics":
+                run = repo_path(query["run"][0])
+                limit = int(query.get("limit", ["500"])[0])
+                return self.send_json(metrics_for_run(run, limit))
+            if path == "/api/checkpoints":
+                run = repo_path(query["run"][0])
+                return self.send_json(checkpoint_list(run))
+            if path == "/api/job/log":
+                job_id = query["id"][0]
+                job = next((item for item in JOBS.list() if item["id"] == job_id), None)
+                if not job:
+                    raise KeyError(job_id)
+                limit = int(query.get("limit", ["400"])[0])
+                return self.send_json({"job": job, "lines": tail_lines(repo_path(job["log"]), limit)})
+            if path == "/api/settings":
+                return self.send_json(settings())
+            if path == "/api/capabilities":
+                report = load_json(STUDIO_ROOT / "capabilities.json", None)
+                if report is None:
+                    report = {"checks": catalog().get("capability_research", [])}
+                return self.send_json(report)
+            return self.serve_static(path)
+        except KeyError as exc:
+            self.send_json({"error": f"Missing/not found: {exc}"}, 404)
+        except Exception as exc:
+            self.send_json({"error": str(exc), "type": type(exc).__name__}, 500)
+
+    def do_POST(self) -> None:
+        parsed = urlparse(self.path)
+        path = parsed.path
+        try:
+            payload = self.read_json()
+            if path == "/api/job/start":
+                job = start_action(str(payload["action"]), payload.get("payload") or {})
+                return self.send_json(job, 201)
+            if path == "/api/job/stop":
+                job = JOBS.stop(str(payload["id"]))
+                return self.send_json(job)
+            if path == "/api/settings":
+                merged = deep_merge(settings(), payload)
+                atomic_json(SETTINGS_PATH, merged)
+                return self.send_json(merged)
+            if path == "/api/clean/plan":
+                target = create_clean_plan(payload)
+                return self.send_json(
+                    {
+                        "path": rel(target),
+                        "plan": yaml.safe_load(target.read_text(encoding="utf-8")),
+                    },
+                    201,
+                )
+            if path == "/api/training/plan":
+                return self.send_json(generate_training_plan(payload), 201)
+            if path == "/api/config/save":
+                return self.send_json(save_studio_config(payload), 201)
+            if path == "/api/config/clone":
+                return self.send_json(clone_config(payload), 201)
+            if path == "/api/corpus/config":
+                source_id = sanitize_source(str(payload["source_id"]))
+                target_tokens = int(payload["target_tokens"])
+                entry = dict(payload.get("entry") or catalog()["datasets"].get(source_id) or {})
+                if not entry:
+                    raise ValueError("Dataset entry is required for an unknown source")
+                target = build_corpus_config(
+                    source_id,
+                    target_tokens,
+                    entry,
+                    main_root=bool(payload.get("main_root", False)),
+                )
+                return self.send_json({"path": rel(target), "config": yaml.safe_load(target.read_text(encoding="utf-8"))}, 201)
+            self.send_json({"error": "Unknown API endpoint"}, 404)
+        except KeyError as exc:
+            self.send_json({"error": f"Missing/not found: {exc}"}, 400)
+        except Exception as exc:
+            self.send_json({"error": str(exc), "type": type(exc).__name__}, 500)
+
+
+def self_test() -> None:
+    assert CATALOG_PATH.is_file()
+    assert (ROOT / "scripts/train_pretrain.py").is_file()
+    assert (ROOT / "scripts/materialize_corpus.py").is_file()
+    cat = catalog()
+    assert "fineweb_edu" in cat["datasets"]
+    cfg = corpus_config()
+    assert any(item["id"] == "fineweb_edu" for item in cfg["sources"])
+    _ = settings()
+    _ = disk_info()
+    print("AsterLM Studio self-test passed.")
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="AsterLM Studio local research control plane")
+    parser.add_argument("--host", default="127.0.0.1")
+    parser.add_argument("--port", type=int, default=8765)
+    parser.add_argument("--no-open", action="store_true")
+    parser.add_argument("--self-test", action="store_true")
+    args = parser.parse_args()
+
+    STUDIO_ROOT.mkdir(parents=True, exist_ok=True)
+    if not SETTINGS_PATH.exists():
+        atomic_json(SETTINGS_PATH, DEFAULT_SETTINGS)
+
+    if args.self_test:
+        self_test()
+        return
+
+    address = (args.host, args.port)
+    server = ThreadingHTTPServer(address, Handler)
+    url = f"http://{args.host}:{args.port}/"
+    print()
+    print("AsterLM Studio")
+    print("==============")
+    print(f"Repository: {ROOT}")
+    print(f"Local UI:   {url}")
+    print("Ctrl+C stops the UI server; launched research jobs run in their own process groups.")
+    print()
+
+    if not args.no_open:
+        threading.Timer(0.7, lambda: webbrowser.open(url)).start()
+
+    try:
+        server.serve_forever(poll_interval=0.2)
+    except KeyboardInterrupt:
+        print("\nStudio server stopped.")
+    finally:
+        server.server_close()
+
+
+if __name__ == "__main__":
+    main()

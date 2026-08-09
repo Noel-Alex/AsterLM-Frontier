@@ -138,11 +138,6 @@ def main() -> None:
             torch.backends.cuda.matmul.allow_tf32 = True
             torch.backends.cudnn.allow_tf32 = True
         torch.set_float32_matmul_precision(train.matmul_precision)
-
-        # Deterministic profiling: seed model initialization explicitly.
-        torch.manual_seed(train.seed)
-        if device.type == "cuda":
-            torch.cuda.manual_seed_all(train.seed)
         result["system"] = static_system_manifest(device)
         sampler = SystemSampler(device, min_interval=0.1)
 
@@ -169,9 +164,6 @@ def main() -> None:
             torch.compile(model, mode=train.compile_mode, dynamic=False) if train.compile else model
         )
         durations: list[float] = []
-        # Keep synthetic benchmark data independent of model/backend RNG use.
-        data_generator = torch.Generator(device=device)
-        data_generator.manual_seed(train.seed + 100003)
         tokens_per_step = train.sequence_length * train.micro_batch_size * train.gradient_accumulation_steps
         total_iterations = args.warmup + args.steps
         for iteration in range(total_iterations):
@@ -186,44 +178,15 @@ def main() -> None:
                     config.vocab_size,
                     (train.micro_batch_size, train.sequence_length),
                     device=device,
-                    generator=data_generator,
                 )
-                labels = torch.randint(
-                    0,
-                    config.vocab_size,
-                    ids.shape,
-                    device=device,
-                    generator=data_generator,
-                )
+                labels = torch.randint(0, config.vocab_size, ids.shape, device=device)
                 with precision.activation_context():
                     with precision.forward_context():
                         output = forward_model(ids, labels=labels, return_logits=False)
-                        if output.loss is None:
-                            raise FloatingPointError("model returned no loss")
-                        if not torch.isfinite(output.loss.detach()).all():
-                            raise FloatingPointError(
-                                f"non-finite loss before backward at iteration {iteration + 1}: "
-                                f"{float(output.loss.detach())}"
-                            )
                         loss = output.loss / train.gradient_accumulation_steps
                 loss.backward()
                 loss_value += float(output.loss.detach())
             grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), train.max_grad_norm)
-            if not torch.isfinite(grad_norm).all():
-                bad_grads = []
-                for name, parameter in model.named_parameters():
-                    grad = parameter.grad
-                    if grad is None:
-                        continue
-                    if not torch.isfinite(grad).all():
-                        bad_grads.append(name)
-                        if len(bad_grads) >= 8:
-                            break
-                raise FloatingPointError(
-                    "non-finite gradients before optimizer.step at "
-                    f"iteration {iteration + 1}; grad_norm={float(grad_norm)}; "
-                    f"first_bad_grad_tensors={bad_grads}"
-                )
             optimizer.step()
             balance = model.update_moe_router_biases()
             if device.type == "cuda":
@@ -245,17 +208,7 @@ def main() -> None:
             if iteration >= args.warmup:
                 durations.append(duration)
 
-        ordered_durations = sorted(durations)
-        n_durations = len(ordered_durations)
-        if n_durations == 0:
-            raise RuntimeError("No measured profiling iterations were recorded")
-        if n_durations % 2:
-            median = ordered_durations[n_durations // 2]
-        else:
-            median = 0.5 * (
-                ordered_durations[n_durations // 2 - 1]
-                + ordered_durations[n_durations // 2]
-            )
+        median = sorted(durations)[len(durations) // 2]
         result["summary"] = {
             "median_seconds": median,
             "median_tokens_per_second": tokens_per_step / median,
