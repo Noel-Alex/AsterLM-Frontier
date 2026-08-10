@@ -65,6 +65,20 @@ The root-level zip-patch apply scripts, patch manifests, stale generated status/
 tracked pre-schema-fix YAML backup were removed in a second cleanup pass. Their recovery commits
 and canonical replacements are indexed in `docs/archive/LEGACY_DELIVERY_ARTIFACTS_2026-08-10.md`.
 
+## Removed broken nested-checkout snapshot
+
+`third_party/native-sparse-attention` was a partial tracked copy of a nested Git checkout. Its Unix
+symlinks targeted absent submodule directories, while `frontier_vnext2_sparse_scout.py` could not
+clone the pinned upstream repository over the existing non-empty tree. The snapshot was removed from
+the current tree and remains recoverable from `a772cbd`. The scout now clones commit
+`bd67af59b90afa34b25f61d2922e612d10dba3bd` into ignored
+`.cache/third_party/native-sparse-attention`, keeping reproducible external source out of AsterLM's
+tracked source tree and working correctly from both Windows and native Linux checkouts.
+The scout does not initialize NSA's historical FLA, Flame, or TorchTitan submodules and does not
+replace AsterLM's tested FLA installation. The pinned NSA source expects FLA 0.4's former
+`fla.ops.common.utils` import path; the isolated scout aliases that path in memory to the equivalent
+FLA 0.5 `fla.ops.utils` helpers and loads only the NSA kernel package.
+
 ## Cross-platform runtime layout
 
 - Shared Windows checkout: `N:\AsterLM-Frontier`
