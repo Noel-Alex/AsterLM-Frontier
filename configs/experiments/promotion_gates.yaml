@@ -1,0 +1,31 @@
+schema_version: 1
+policy: all_required_gates_must_pass_before_final_full_scale_training
+allowed_statuses: [not_run, running, passed, failed, blocked]
+gates:
+  - {id: reference_correctness, required: true, status: not_run}
+  - {id: optimized_kernel_numerical_parity, required: true, status: not_run}
+  - {id: unit_and_integration_tests, required: true, status: not_run}
+  - {id: deterministic_reproducibility, required: true, status: not_run}
+  - {id: equal_token_quality, required: true, status: not_run}
+  - {id: equal_wall_clock, required: true, status: not_run}
+  - {id: modal_cost_to_quality, required: true, status: not_run}
+  - {id: long_context_retrieval, required: true, status: not_run}
+  - {id: repeated_warm_throughput, required: true, status: not_run}
+  - {id: gpu_utilization_root_cause, required: true, status: not_run}
+  - {id: energy_and_power, required: true, status: not_run}
+  - {id: vram, required: true, status: not_run}
+  - {id: checkpoint_round_trip, required: true, status: not_run}
+  - {id: optimizer_scheduler_exact_resume, required: true, status: not_run}
+  - {id: data_cursor_exact_resume, required: true, status: not_run}
+  - {id: rng_state_resume, required: true, status: not_run}
+  - {id: interrupted_laptop_recovery, required: true, status: not_run}
+  - {id: modal_preemption_recovery, required: true, status: not_run}
+  - {id: local_to_modal_resume, required: true, status: not_run}
+  - {id: modal_to_local_resume, required: true, status: not_run}
+  - {id: modal_workspace_cross_resume, required: true, status: not_run}
+  - {id: huggingface_round_trip_hash, required: true, status: not_run}
+  - {id: wandb_history_resume, required: true, status: not_run}
+  - {id: laptop_inference, required: true, status: not_run}
+  - {id: modal_server_inference, required: true, status: not_run}
+  - {id: dense_baseline_regression, required: true, status: not_run}
+  - {id: correctness_and_data_quality_clear, required: true, status: not_run}

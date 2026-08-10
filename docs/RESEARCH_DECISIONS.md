@@ -14,8 +14,8 @@ This table prevents the repository from presenting every new paper as a proven i
 | Bias-based load balancing | baseline MoE | avoids large auxiliary-loss pressure |
 | Dense 661M control | mandatory | detects MoE undertraining/routing failure |
 | MTP depth 2 | baseline | quality objective and native speculative interface |
-| Muon + AdamW | quality reference | matrix-aware optimizer plus sensitive-parameter AdamW |
-| QK-Clip | baseline | logit stability and Muon compatibility |
+| Muon + AdamW | first-class challenger | current Aster implementation/config lost its systems probe; rerun with Moonlight-style update scaling and time-to-loss gates |
+| QK-Clip / MuonClip | first-class stability candidate | logit stability must include Q/K projection rescaling and per-head logit telemetry |
 | WSD | baseline | flexible long-run schedule and final decay |
 | BF16 trainable storage | quality reference | stable Ada-compatible baseline |
 | Transformer Engine FP8 | experiment | supported on Ada; speed/memory shape-dependent |
@@ -32,8 +32,10 @@ This table prevents the repository from presenting every new paper as a proven i
 | 32K native context | target | genuinely trained stage |
 | 64K/128K | validation/extension | only claim after retrieval/natural tests |
 | 256K | stretch | configuration capacity, not current quality claim |
-| DeepSeek-V4 CSA/HCA | deferred mixer | promising but needs sparse fused kernels and fair ablation |
-| mHC / advanced residual routing | deferred | memory/complexity and interaction with checkpointing |
+| DeepSeek-V4 CSA/HCA | Tier-4 candidate | official V4 evidence is strong at 1M; build semantic reference and discover Ada/Hopper/Blackwell crossover separately |
+| mHC residuals | Tier-5 candidate | official kernels are SM90/SM100; isolate quality/time-to-loss and build Ada path only after reference parity |
+| LongCat zero-compute expert | Tier-3 candidate | potentially relevant to one GPU only when routed tokens physically skip work |
+| LongCat shortcut-connected MoE | distributed-only candidate | designed to widen compute/communication overlap; no presumed single-GPU benefit |
 | Block AttnRes | implemented off by default | needs multi-seed quality evidence |
 | Negative KDA eigenvalues | off by default | possible state tracking gain; stability ablation required |
 | EAGLE-3/DeepSpec | integration path | separate draft training and serving system |
