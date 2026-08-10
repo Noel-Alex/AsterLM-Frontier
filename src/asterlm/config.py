@@ -60,6 +60,11 @@ class AsterConfig:
     kda_ratio: int = 3
     layer_pattern: list[str] | None = None
     kda_backend: str = "auto"  # auto | fla | torch
+    # KDA projection/state geometry is independent from MLA geometry. Published
+    # Kimi Linear uses 128-wide KDA heads even though its outer model/MLA head
+    # geometry differs; leaving these unset preserves the compact legacy shape.
+    kda_num_heads: int | None = None
+    kda_head_dim: int | None = None
     kda_expand_v: float = 1.0
     kda_short_conv: bool = True
     kda_conv_size: int = 4
@@ -178,6 +183,12 @@ class AsterConfig:
                 raise ValueError("layer_pattern length must equal n_layers")
         if self.kda_backend not in {"auto", "fla", "torch"}:
             raise ValueError("kda_backend must be auto, fla, or torch")
+        if self.kda_num_heads is not None and self.kda_num_heads <= 0:
+            raise ValueError("kda_num_heads must be positive when set")
+        if self.kda_head_dim is not None and self.kda_head_dim <= 0:
+            raise ValueError("kda_head_dim must be positive when set")
+        if self.kda_expand_v <= 0:
+            raise ValueError("kda_expand_v must be positive")
         if self.rope_scaling_type not in {"none", "linear", "yarn"}:
             raise ValueError("rope_scaling_type must be none, linear, or yarn")
         if not 0.0 <= self.attention_dropout < 1.0:
@@ -259,11 +270,20 @@ class AsterConfig:
 class TrainConfig:
     output_dir: str = "runs/aster"
     seed: int = 1337
+    # Architecture campaigns can initialize each ordinary projection from its
+    # qualified module name. This prevents a changed KDA/MoE tensor shape from
+    # shifting the RNG stream used by otherwise-identical later layers.
+    deterministic_named_initialization: bool = False
     device: str = "cuda"
     dtype: str = "bfloat16"
     matmul_precision: str = "high"
     compile: bool = False
     compile_mode: str = "default"
+    # Runtime selection is explicit and audited. External engines are campaign
+    # candidates until an adapter passes parity, recovery, and throughput gates.
+    execution_backend: str = "auto"  # auto | aster_local | megatron_core | torchtitan | deepspeed
+    execution_autotune: bool = True
+    cuda_graphs: bool = False
     precision_backend: str = "amp"  # amp | transformer_engine_fp8
     fp8_format: str = "hybrid"  # hybrid | e4m3
     fp8_recipe: str = "delayed"  # delayed | current
@@ -351,6 +371,14 @@ class TrainConfig:
     hub_fail_on_error: bool = False
 
     def __post_init__(self) -> None:
+        if self.execution_backend not in {
+            "auto",
+            "aster_local",
+            "megatron_core",
+            "torchtitan",
+            "deepspeed",
+        }:
+            raise ValueError("unsupported execution_backend")
         if self.optimizer not in {
             "adamw",
             "muon_adamw",
@@ -458,6 +486,8 @@ class DataConfig:
     quality_filters: bool = True
     add_eos_between_documents: bool = True
     mask_cross_document_loss: bool = True
+    # Optional provenance sidecar for exact corpus quotas, hashes, and split rules.
+    manifest_path: str | None = None
 
     @classmethod
     def from_yaml(cls, path: str | Path) -> "DataConfig":

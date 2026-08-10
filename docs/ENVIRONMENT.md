@@ -66,6 +66,18 @@ pytest
 python scripts/smoke_train.py
 ```
 
+The active editable install must resolve to the checkout running the command. Profilers
+and the trainer now fail when `asterlm` imports from a different clone than the script
+repository. For the recovered shared WSL environment, bind it deliberately with:
+
+```bash
+uv pip install --python /root/.venvs/asterlm/bin/python --no-deps -e /mnt/n/AsterLM-Frontier
+```
+
+Compiled CUDA dependencies may be shared; Python model/config source may not silently
+come from another checkout. Every new profile records both the imported source root and
+Git provenance.
+
 ## Ada precision reality
 
 The RTX 4080 Laptop GPU is Ada, compute capability 8.9. NVIDIA Transformer Engine supports FP8 on Ada. NVFP4 is a Blackwell feature. AsterLM therefore tests FP8 execution and uses low-bit storage/state methods for four-bit VRAM savings rather than claiming native FP4 tensor-core training.

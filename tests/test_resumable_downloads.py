@@ -72,6 +72,16 @@ def test_retry_policy_supports_unlimited_mode() -> None:
     assert not RetryPolicy(max_retries=3).permits(4)
 
 
+def test_gated_dataset_access_errors_are_not_retried() -> None:
+    from asterlm.data.resumable import is_retryable_exception
+
+    error = OSError(
+        "Dataset is a gated dataset on the Hub. Visit the dataset page to ask for access."
+    )
+    assert not is_retryable_exception(error)
+    assert is_retryable_exception(TimeoutError("connection timed out"))
+
+
 def test_dclm_uses_official_parquet_mirror() -> None:
     root = Path(__file__).resolve().parents[1]
     for name in ("corpus_pilot_500m.yaml", "corpus_frontier_16b.yaml", "corpus_main_12b.yaml"):

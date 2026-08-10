@@ -41,6 +41,46 @@
       }
     }
   },
+  "kda_context_crossover": {
+    "systems_only_no_quality_claim": true,
+    "compiled_bf16_adamw_batch1_accum1": {
+      "kda3_mla_4k": {
+        "status": "ok",
+        "median_tokens_per_second": 6851.502088507656,
+        "mean_gpu_util_percent": 97.05555555555556,
+        "median_gpu_util_percent": 100.0,
+        "peak_allocated_gib": 3.652009963989258
+      },
+      "dense_mla_4k": {
+        "status": "ok",
+        "median_tokens_per_second": 6816.703679298768,
+        "mean_gpu_util_percent": 99.30555555555556,
+        "median_gpu_util_percent": 100.0,
+        "peak_allocated_gib": 7.586752414703369
+      },
+      "kda3_mla_8k": {
+        "status": "ok",
+        "median_tokens_per_second": 6393.228883838526,
+        "mean_gpu_util_percent": 99.23376623376623,
+        "median_gpu_util_percent": 100.0,
+        "peak_allocated_gib": 3.8928394317626953
+      },
+      "dense_mla_8k": {
+        "status": "failed_before_warmed_measurement",
+        "error": "RuntimeError: CUDA driver error: device not ready",
+        "first_compiled_step_seconds": 168.44854788700104,
+        "first_step_peak_allocated_gib": 10.989630699157715,
+        "first_step_peak_reserved_gib": 11.041015625
+      },
+      "kda3_mla_16k": {
+        "status": "ok",
+        "median_tokens_per_second": 5151.688332766401,
+        "mean_gpu_util_percent": 99.73684210526316,
+        "median_gpu_util_percent": 100.0,
+        "peak_allocated_gib": 4.819857120513916
+      }
+    }
+  },
   "moe_repair": {
     "sequence_length": 2048,
     "fair_batch1_accum16": {

@@ -15,6 +15,7 @@ import torch
 
 from asterlm import AsterConfig, AsterLM, TrainConfig
 from asterlm.optim import build_optimizer
+from asterlm.source_provenance import assert_expected_checkout_source
 from asterlm.training.precision import PrecisionManager
 from asterlm.training.telemetry import static_system_manifest
 
@@ -242,6 +243,9 @@ def main() -> None:
     parser.add_argument("--json", default=None)
     args = parser.parse_args()
 
+    repo_root = Path(__file__).resolve().parents[1]
+    source = assert_expected_checkout_source(repo_root)
+
     config = AsterConfig.from_yaml(args.model)
     train = TrainConfig.from_yaml(args.train_config)
     if args.sequence is not None:
@@ -271,6 +275,7 @@ def main() -> None:
         "train_config": args.train_config,
         "resolved_model": config.to_dict(),
         "resolved_train": train.to_dict(),
+        "source_provenance": source,
         "steps": [],
     }
     output_path = Path(args.json) if args.json else None

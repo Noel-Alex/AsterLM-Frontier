@@ -5,6 +5,14 @@ an architecture and makes no model-quality claim. Raw JSON/operator traces live 
 ignored run storage under `runs/architecture-campaign/` and
 `runs/frontier-vnext2/cutlass-moe-screen-20260810/`.
 
+Provenance correction: the original recovered WSL editable install pointed to the
+older `/root/work/AsterLM-Frontier` runtime mirror while commands executed from the
+Windows checkout. The compact KDA files below used identical KDA/config math to the
+current commit, so they remain diagnostic systems evidence, but they are not
+publication-grade repetitions. The venv now imports `/mnt/n/AsterLM-Frontier`, and
+new profilers hard-fail on a source/checkout mismatch while recording both roots and
+Git state.
+
 ## KDA execution repair
 
 The installed PyTorch CUDA 13.0 runtime had been combined with NVCC/CCCL 13.3 and
@@ -24,7 +32,25 @@ At sequence 2,048, batch 1, accumulation 1, BF16 and AdamW:
 TileLang improved KDA by 17.3%; compilation raised the total gain to 34.8% over the
 original KDA path. KDA still trails the compiled MLA control by 13.5% at 2K. This is
 short-context optimization debt, not a KDA rejection. The mandatory follow-up is a
-4K/8K/16K training and decode sweep plus retrieval evaluation through 128K.
+4K/8K/16K training and decode sweep plus retrieval evaluation through 128K. The first
+matched 4K and KDA 8K results are now available:
+
+| Mixer | context | tokens/s | mean / median GPU util. | peak VRAM |
+|---|---:|---:|---:|---:|
+| KDA3/MLA | 4K | 6,851.50 | 97.1% / 100% | 3.652 GiB |
+| dense MLA | 4K | 6,816.70 | 99.3% / 100% | 7.587 GiB |
+| KDA3/MLA | 8K | 6,393.23 | 99.2% / 100% | 3.893 GiB |
+| dense MLA | 8K | no warmed result | first step 88% sample | 10.990 GiB |
+| KDA3/MLA | 16K | 5,151.69 | 99.7% / 100% | 4.820 GiB |
+
+At 4K, KDA is 0.5% faster and uses 51.9% less measured peak allocation than dense
+MLA. The KDA 8K path also fully occupies the GPU. Dense 8K spent 168.45 seconds in
+its first compiled step, reserved 11.041 GiB, then failed with `CUDA driver error:
+device not ready` before producing a warmed measurement. This is recorded as a
+failed/pathological control, never as zero throughput. These are systems results,
+not a long-context quality claim; 32K/64K systems ladders and retrieval remain
+required. Earlier short proxy training favored dense MLA validation loss, so KDA must
+also pass longer-training, recipe-sensitivity and long-context quality gates.
 
 ## MoE root cause
 

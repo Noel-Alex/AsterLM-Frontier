@@ -13,19 +13,22 @@ import numpy as np
 import torch
 from torch.utils.data import DataLoader
 
+from asterlm.artifacts import atomic_write_json
 from asterlm.config import AsterConfig, DataConfig, TrainConfig
 from asterlm.data import AsterTokenizer, PackedTokenDataset, SFTPackedDataset
-from asterlm.artifacts import atomic_write_json
 from asterlm.experiments import ExperimentRegistry
 from asterlm.model import AsterLM
-from asterlm.quantization.loqt import iter_loqt_modules, merge_loqt_modules
 from asterlm.optim import build_optimizer, learning_rate_multiplier
+from asterlm.quantization.loqt import iter_loqt_modules, merge_loqt_modules
+from asterlm.source_provenance import assert_current_checkout_source
+
 from .checkpoint import (
     load_checkpoint,
     load_model_weights,
     pin_kda_backend_from_checkpoint,
     save_checkpoint,
 )
+from .execution import resolve_execution_engine
 from .hub import HubRunSync
 from .metrics import JsonlLogger
 from .precision import PrecisionManager
@@ -67,6 +70,7 @@ class Trainer:
         mode: Literal["pretrain", "sft"] = "pretrain",
         initial_checkpoint: str | None = None,
     ) -> None:
+        self.source_provenance = assert_current_checkout_source()
         checkpoint_source = train_config.resume or initial_checkpoint
         if checkpoint_source:
             pin_kda_backend_from_checkpoint(model_config, checkpoint_source)
@@ -111,7 +115,12 @@ class Trainer:
                 "ordinary nn.Linear modules would remain BF16."
             )
 
-        self.model = AsterLM(model_config)
+        self.model = AsterLM(
+            model_config,
+            named_initialization_seed=(
+                train_config.seed if train_config.deterministic_named_initialization else None
+            ),
+        )
         # Autocast alone does not reduce persistent FP32 parameter storage. Store CUDA
         # weights in BF16 (or FP32 when explicitly requested) before optimizer creation.
         if self.device.type == "cuda" and self.autocast_dtype != torch.float32:
@@ -180,16 +189,8 @@ class Trainer:
         if train_config.resume and self.tokens_seen:
             self._restore_training_data_position()
 
-        self.forward_model = self.model
-        if train_config.compile:
-            if model_config.linear_backend == "transformer_engine":
-                raise ValueError(
-                    "Compile and Transformer Engine should be benchmarked separately first; "
-                    "the default matrix deliberately forbids stacking unvalidated compilers."
-                )
-            self.forward_model = torch.compile(
-                self.model, mode=train_config.compile_mode, dynamic=False
-            )
+        self.execution = resolve_execution_engine(model_config, train_config, self.device)
+        self.forward_model = self.execution.prepare_model(self.model)
 
         self.output = Path(train_config.output_dir)
         self.output.mkdir(parents=True, exist_ok=True)
@@ -236,6 +237,8 @@ class Trainer:
             "optimizer_partition": getattr(self.optimizer, "partition", None).__dict__,
             "parameter_storage": self._parameter_storage_summary(),
             "loqt_modules": sum(1 for _ in iter_loqt_modules(self.model)),
+            "execution_plan": self.execution.plan.to_dict(),
+            "source_provenance": self.source_provenance,
         }
         self.registry = ExperimentRegistry.create(
             self.output,
@@ -538,6 +541,9 @@ class Trainer:
         window_forward_s = 0.0
         window_backward_s = 0.0
         window_optimizer_s = 0.0
+        window_excluded_s = 0.0
+        last_eval_step = -1
+        last_eval_metrics: dict[str, float] = {}
 
         try:
             while self.step < cfg.max_steps:
@@ -575,7 +581,7 @@ class Trainer:
                     window_forward_s += time.perf_counter() - started
 
                     started = time.perf_counter()
-                    loss.backward()
+                    self.execution.backward(loss)
                     window_backward_s += time.perf_counter() - started
                     accumulated_loss.add_(output.loss.detach().float())
                     accumulated_main.add_(output.main_loss.detach().float())
@@ -616,7 +622,7 @@ class Trainer:
                         f"grad_norm={float(grad_norm)}; first_bad_grad_tensors={bad_grads}"
                     )
                 started = time.perf_counter()
-                self.optimizer.step()
+                self.execution.optimizer_step(self.optimizer)
                 window_optimizer_s += time.perf_counter() - started
                 # Bias updates stay on-device every step. Converting their summary
                 # tensors to Python scalars would otherwise synchronize the GPU four
@@ -635,7 +641,8 @@ class Trainer:
                     if self.device.type == "cuda":
                         # Makes wall-clock and phase timings honest for the logged window.
                         torch.cuda.synchronize(self.device)
-                    elapsed = max(time.perf_counter() - window_start, 1e-9)
+                    wall_elapsed = max(time.perf_counter() - window_start, 1e-9)
+                    elapsed = max(wall_elapsed - window_excluded_s, 1e-9)
                     values: dict[str, Any] = {
                         "loss": float(accumulated_loss / cfg.gradient_accumulation_steps),
                         "main_loss": float(accumulated_main / cfg.gradient_accumulation_steps),
@@ -650,6 +657,8 @@ class Trainer:
                         "lr_multiplier": multiplier,
                         "tokens_per_second": window_tokens / elapsed,
                         "window_seconds": elapsed,
+                        "window_wall_seconds": wall_elapsed,
+                        "window_excluded_seconds": window_excluded_s,
                         "data_wait_seconds": window_data_s,
                         "forward_submit_seconds": window_forward_s,
                         "backward_submit_seconds": window_backward_s,
@@ -699,17 +708,25 @@ class Trainer:
                     window_start = time.perf_counter()
                     window_tokens = 0
                     window_data_s = window_forward_s = window_backward_s = window_optimizer_s = 0.0
+                    window_excluded_s = 0.0
 
                 if self.validation_iterator is not None and self.step % cfg.eval_interval == 0:
+                    excluded_started = time.perf_counter()
                     metrics = self.evaluate()
+                    last_eval_step = self.step
+                    last_eval_metrics = metrics
                     self._log(metrics)
                     print("evaluation:", ", ".join(f"{k}={v:.4f}" for k, v in metrics.items()))
+                    window_excluded_s += time.perf_counter() - excluded_started
 
                 if self.step % cfg.save_interval == 0:
+                    excluded_started = time.perf_counter()
                     path = self._save("periodic")
                     print(f"saved {path}")
+                    window_excluded_s += time.perf_counter() - excluded_started
 
                 while self._milestones_remaining and self.tokens_seen >= self._milestones_remaining[0]:
+                    excluded_started = time.perf_counter()
                     milestone = self._milestones_remaining.pop(0)
                     milestone_metrics: dict[str, Any] = {
                         "event": "token_milestone",
@@ -717,7 +734,12 @@ class Trainer:
                         "milestone_overshoot_tokens": self.tokens_seen - milestone,
                     }
                     if cfg.milestone_eval and self.validation_iterator is not None:
-                        milestone_metrics.update(self.evaluate())
+                        if last_eval_step == self.step:
+                            milestone_metrics.update(last_eval_metrics)
+                        else:
+                            last_eval_metrics = self.evaluate()
+                            last_eval_step = self.step
+                            milestone_metrics.update(last_eval_metrics)
                     self._log(milestone_metrics)
                     path = self._save(
                         f"milestone-{milestone}",
@@ -725,6 +747,7 @@ class Trainer:
                         tag=f"tok-{milestone}",
                     )
                     print(f"permanent token milestone saved: {path}")
+                    window_excluded_s += time.perf_counter() - excluded_started
 
             path = self._save("complete", permanent=True, tag="final")
             self.registry.finish("ok", tokens_seen=self.tokens_seen)

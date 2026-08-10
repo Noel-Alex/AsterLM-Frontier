@@ -8,8 +8,8 @@ import io
 import json
 import random
 from collections import defaultdict
+from collections.abc import Iterator
 from pathlib import Path
-from typing import Iterator
 
 import pyarrow.parquet as pq
 import yaml
@@ -17,8 +17,8 @@ import yaml
 from asterlm.data.tokenizer import SPECIAL_TOKENS, AsterTokenizer
 
 ROOT = Path.cwd().resolve()
-RUN = ROOT / "runs/frontier-vnext2/proxy-data"
-ARTIFACTS = ROOT / "artifacts"
+DEFAULT_RUN = ROOT / "runs/frontier-vnext2/proxy-data"
+DEFAULT_TOKENIZER = ROOT / "artifacts/tokenizer_proxy.json"
 
 SOURCE_ALIASES = {
     "fineweb_edu": ("fineweb_edu", "fineweb-edu", "fineweb"),
@@ -172,9 +172,11 @@ def digest(text: str) -> str:
     return hashlib.blake2b(text.encode("utf-8", errors="ignore"), digest_size=16).hexdigest()
 
 
-def build_tokenizer_sample(sources: dict[str, Path], target_bytes: int, seed: int) -> Path:
-    RUN.mkdir(parents=True, exist_ok=True)
-    sample = RUN / "tokenizer_sample.txt"
+def build_tokenizer_sample(
+    sources: dict[str, Path], target_bytes: int, seed: int, output_dir: Path
+) -> Path:
+    output_dir.mkdir(parents=True, exist_ok=True)
+    sample = output_dir / "tokenizer_sample.txt"
     if sample.is_file() and sample.stat().st_size >= int(target_bytes * 0.9):
         return sample
     iterators = {n: iter_source(p, seed + 1009 * i) for i, (n, p) in enumerate(sorted(sources.items()))}
@@ -201,9 +203,8 @@ def build_tokenizer_sample(sources: dict[str, Path], target_bytes: int, seed: in
     return sample
 
 
-def train_proxy_tokenizer(sample: Path, vocab_size: int) -> Path:
-    ARTIFACTS.mkdir(parents=True, exist_ok=True)
-    output = ARTIFACTS / "tokenizer_proxy.json"
+def train_proxy_tokenizer(sample: Path, vocab_size: int, output: Path) -> Path:
+    output.parent.mkdir(parents=True, exist_ok=True)
     if output.is_file():
         try:
             tok = AsterTokenizer(output)
@@ -231,7 +232,12 @@ def train_proxy_tokenizer(sample: Path, vocab_size: int) -> Path:
 
 
 def materialize_proxy(
-    sources: dict[str, Path], tokenizer_path: Path, train_target: int, val_target: int, seed: int
+    sources: dict[str, Path],
+    tokenizer_path: Path,
+    train_target: int,
+    val_target: int,
+    seed: int,
+    output_dir: Path,
 ) -> tuple[Path, Path, dict]:
     """Materialize a hash-disjoint proxy corpus with *token* quotas per source.
 
@@ -242,9 +248,9 @@ def materialize_proxy(
     comparisons then see essentially the same token mixture instead of a doc-length
     confound.
     """
-    train_file = RUN / "train.jsonl"
-    val_file = RUN / "val.jsonl"
-    meta_file = RUN / "manifest.json"
+    train_file = output_dir / "train.jsonl"
+    val_file = output_dir / "val.jsonl"
+    meta_file = output_dir / "manifest.json"
     if meta_file.is_file() and train_file.is_file() and val_file.is_file():
         try:
             meta = json.loads(meta_file.read_text())
@@ -390,8 +396,16 @@ def materialize_proxy(
     return train_file, val_file, meta
 
 
-def write_data_config(train: Path, val: Path) -> Path:
-    out = RUN / "data-proxy.yaml"
+def _portable_repo_path(path: Path) -> str:
+    resolved = path.resolve()
+    try:
+        return resolved.relative_to(ROOT).as_posix()
+    except ValueError:
+        return str(resolved)
+
+
+def write_data_config(train: Path, val: Path, output_dir: Path) -> Path:
+    out = output_dir / "data-proxy.yaml"
     payload = {
         "data": {
             "seed": 1337,
@@ -401,8 +415,13 @@ def write_data_config(train: Path, val: Path) -> Path:
             "quality_filters": True,
             "add_eos_between_documents": True,
             "mask_cross_document_loss": True,
-            "sources": [{"path": str(train), "text_field": "text", "weight": 1.0}],
-            "validation_sources": [{"path": str(val), "text_field": "text", "weight": 1.0}],
+            "manifest_path": _portable_repo_path(output_dir / "manifest.json"),
+            "sources": [
+                {"path": _portable_repo_path(train), "text_field": "text", "weight": 1.0}
+            ],
+            "validation_sources": [
+                {"path": _portable_repo_path(val), "text_field": "text", "weight": 1.0}
+            ],
         }
     }
     out.write_text(yaml.safe_dump(payload, sort_keys=False), encoding="utf-8")
@@ -416,26 +435,39 @@ def main() -> None:
     parser.add_argument("--train-tokens", type=int, default=20_000_000)
     parser.add_argument("--val-tokens", type=int, default=2_000_000)
     parser.add_argument("--seed", type=int, default=1337)
+    parser.add_argument("--output", type=Path, default=DEFAULT_RUN)
+    parser.add_argument("--tokenizer-output", type=Path, default=DEFAULT_TOKENIZER)
     args = parser.parse_args()
+    output_dir = args.output.resolve()
+    tokenizer_output = args.tokenizer_output.resolve()
     sources = discover_sources()
-    RUN.mkdir(parents=True, exist_ok=True)
-    (RUN / "source-discovery.json").write_text(
+    output_dir.mkdir(parents=True, exist_ok=True)
+    (output_dir / "source-discovery.json").write_text(
         json.dumps({k: str(v) for k, v in sources.items()}, indent=2), encoding="utf-8"
     )
     print("proxy sources:", {k: str(v) for k, v in sources.items()})
-    sample = build_tokenizer_sample(sources, args.tokenizer_sample_mib * 2**20, args.seed)
-    tokenizer = train_proxy_tokenizer(sample, args.vocab_size)
-    train, val, meta = materialize_proxy(
-        sources, tokenizer, args.train_tokens, args.val_tokens, args.seed
+    sample = build_tokenizer_sample(
+        sources, args.tokenizer_sample_mib * 2**20, args.seed, output_dir
     )
-    data = write_data_config(train, val)
+    tokenizer = train_proxy_tokenizer(sample, args.vocab_size, tokenizer_output)
+    train, val, meta = materialize_proxy(
+        sources,
+        tokenizer,
+        args.train_tokens,
+        args.val_tokens,
+        args.seed,
+        output_dir,
+    )
+    data = write_data_config(train, val, output_dir)
     result = {
         "status": "ok",
         "tokenizer": str(tokenizer),
         "data_config": str(data),
         "manifest": meta,
     }
-    (RUN / "prepare_result.json").write_text(json.dumps(result, indent=2), encoding="utf-8")
+    (output_dir / "prepare_result.json").write_text(
+        json.dumps(result, indent=2), encoding="utf-8"
+    )
     print(json.dumps(result, indent=2))
 
 

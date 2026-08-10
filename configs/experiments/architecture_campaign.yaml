@@ -7,6 +7,78 @@ size_frontier:
   - {total_params: 1500000000, active_params_min: 550000000, active_params_max: 650000000}
   - {total_params: 1900000000, active_params_min: 700000000, active_params_max: 800000000}
 candidates:
+  - id: tier0-dense-mla-220m
+    tier: 0
+    hypothesis: Dense MLA is the small-scale quality and recipe reference before expensive 480M confirmation.
+    base_model: configs/model/aster_220m.yaml
+    model_overrides:
+      ffn_type: dense
+      kda_ratio: 0
+      mtp_depth: 0
+      norm_type: rmsnorm
+      embedding_projection: false
+      use_block_attnres: false
+      cache_dtype: bfloat16
+      rope_scaling_type: none
+      linear_backend: torch
+      ffn_linear_backend: torch
+    execution_variants: [torch-sdpa-bf16, torch-compile-bf16]
+  - id: tier1-dense-kda3-mla-220m
+    tier: 1
+    hypothesis: Compact 12x64 KDA provides the historical small-scale recurrent quality reference.
+    base_model: configs/model/aster_220m.yaml
+    model_overrides:
+      ffn_type: dense
+      kda_ratio: 3
+      mtp_depth: 0
+      norm_type: rmsnorm
+      embedding_projection: false
+      use_block_attnres: false
+      cache_dtype: bfloat16
+      rope_scaling_type: none
+      linear_backend: torch
+      ffn_linear_backend: torch
+    execution_variants: [fla-kda-bf16, fla-kda-compile-bf16]
+  - id: tier1-dense-kda3-mla-h128-samewidth-220m
+    tier: 1
+    hypothesis: 6x128 KDA isolates recurrent state geometry at the compact 768-wide projection budget.
+    base_model: configs/model/aster_220m.yaml
+    model_overrides:
+      ffn_type: dense
+      kda_ratio: 3
+      kda_num_heads: 6
+      kda_head_dim: 128
+      kda_safe_gate: true
+      kda_lower_bound: -5.0
+      mtp_depth: 0
+      norm_type: rmsnorm
+      embedding_projection: false
+      use_block_attnres: false
+      cache_dtype: bfloat16
+      rope_scaling_type: none
+      linear_backend: torch
+      ffn_linear_backend: torch
+    execution_variants: [fla-kda-bf16, fla-kda-compile-bf16]
+  - id: tier1-dense-kda3-mla-h128-expanded-reference-gate-220m
+    tier: 1
+    hypothesis: 12x128 expanded KDA tests whether Kimi-like state capacity repays its additional active compute at small scale.
+    base_model: configs/model/aster_220m.yaml
+    model_overrides:
+      ffn_type: dense
+      kda_ratio: 3
+      kda_num_heads: 12
+      kda_head_dim: 128
+      kda_safe_gate: false
+      kda_lower_bound: null
+      mtp_depth: 0
+      norm_type: rmsnorm
+      embedding_projection: false
+      use_block_attnres: false
+      cache_dtype: bfloat16
+      rope_scaling_type: none
+      linear_backend: torch
+      ffn_linear_backend: torch
+    execution_variants: [fla-kda-bf16, fla-kda-compile-bf16]
   - id: tier0-dense-mla-480m
     tier: 0
     hypothesis: Dense MLA is the gold correctness and systems reference.
@@ -63,6 +135,46 @@ candidates:
       ffn_type: dense
       kda_ratio: 3
       mtp_depth: 2
+      norm_type: rmsnorm
+      embedding_projection: false
+      use_block_attnres: false
+      cache_dtype: bfloat16
+      rope_scaling_type: none
+      linear_backend: torch
+      ffn_linear_backend: torch
+    execution_variants: [fla-kda-bf16, fla-kda-compile-bf16]
+  - id: tier1-dense-kda3-mla-h128-samewidth-480m
+    tier: 1
+    hypothesis: 128-wide KDA state heads recover recurrent quality without expanding projection width.
+    base_model: configs/model/aster_480m.yaml
+    model_overrides:
+      ffn_type: dense
+      kda_ratio: 3
+      kda_num_heads: 8
+      kda_head_dim: 128
+      kda_safe_gate: true
+      kda_lower_bound: -5.0
+      mtp_depth: 0
+      norm_type: rmsnorm
+      embedding_projection: false
+      use_block_attnres: false
+      cache_dtype: bfloat16
+      rope_scaling_type: none
+      linear_backend: torch
+      ffn_linear_backend: torch
+    execution_variants: [fla-kda-bf16, fla-kda-compile-bf16]
+  - id: tier1-dense-kda3-mla-h128-expanded-reference-gate-480m
+    tier: 1
+    hypothesis: Published Kimi-like 128-wide expanded KDA geometry and unclamped gate recover quality enough to repay added active compute.
+    base_model: configs/model/aster_480m.yaml
+    model_overrides:
+      ffn_type: dense
+      kda_ratio: 3
+      kda_num_heads: 16
+      kda_head_dim: 128
+      kda_safe_gate: false
+      kda_lower_bound: null
+      mtp_depth: 0
       norm_type: rmsnorm
       embedding_projection: false
       use_block_attnres: false

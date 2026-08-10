@@ -38,6 +38,62 @@ def test_forward_backward_and_mtp():
     assert any(parameter.grad is not None for parameter in model.parameters())
 
 
+def test_kda_geometry_can_be_wider_than_mla_geometry():
+    compact = AsterLM(tiny_config(n_layers=1, kda_ratio=1, mtp_depth=0))
+    wide = AsterLM(
+        tiny_config(
+            n_layers=1,
+            kda_ratio=1,
+            mtp_depth=0,
+            kda_num_heads=4,
+            kda_head_dim=32,
+        )
+    )
+    ids = torch.randint(0, 96, (2, 8))
+    output = wide(ids, labels=ids)
+    output.loss.backward()
+
+    assert output.logits.shape == (2, 8, 96)
+    assert wide.parameter_count() > compact.parameter_count()
+    summary = wide.architecture_summary()
+    assert summary["kda_head_dim"] == 32
+    assert summary["kda_projection_width"] == 128
+
+
+def test_named_initialization_preserves_shared_tensors_across_kda_geometries():
+    compact_config = tiny_config(
+        n_layers=2,
+        mtp_depth=0,
+        kda_num_heads=4,
+        kda_head_dim=16,
+    )
+    wider_config = tiny_config(
+        n_layers=2,
+        mtp_depth=0,
+        kda_num_heads=2,
+        kda_head_dim=32,
+    )
+    compact = AsterLM(compact_config, named_initialization_seed=2026)
+    wider = AsterLM(wider_config, named_initialization_seed=2026)
+
+    compact_state = compact.state_dict()
+    wider_state = wider.state_dict()
+    shared = {
+        name
+        for name, value in compact_state.items()
+        if name in wider_state and value.shape == wider_state[name].shape
+    }
+    assert "token_embedding.weight" in shared
+    assert "blocks.0.ffn.gate_up.weight" in shared
+    assert all(torch.equal(compact_state[name], wider_state[name]) for name in shared)
+
+    different_seed = AsterLM(compact_config, named_initialization_seed=2027)
+    assert not torch.equal(
+        compact.token_embedding.weight,
+        different_seed.token_embedding.weight,
+    )
+
+
 def test_cached_decode_matches_full_forward():
     torch.manual_seed(4)
     model = AsterLM(tiny_config()).eval()

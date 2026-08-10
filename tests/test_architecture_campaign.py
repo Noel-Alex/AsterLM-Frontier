@@ -16,7 +16,7 @@ CAMPAIGN = ROOT / "configs/experiments/architecture_campaign.yaml"
 def test_project_architecture_campaign_is_valid_and_materializable(tmp_path):
     campaign = load_architecture_campaign(CAMPAIGN, repo_root=ROOT)
     assert campaign.context_lengths == (4096, 8192, 16384, 32768, 65536, 131072)
-    assert campaign.candidates[0].candidate_id == "tier0-dense-mla-480m"
+    assert campaign.candidates[0].candidate_id == "tier0-dense-mla-220m"
     manifest = materialize_architecture_campaign(campaign, tmp_path)
     assert len(manifest["candidates"]) == len(campaign.candidates)
     for item in manifest["candidates"].values():

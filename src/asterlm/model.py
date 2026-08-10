@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import math
 import os
 from dataclasses import dataclass
@@ -13,13 +14,13 @@ from torch.utils.checkpoint import checkpoint
 from .cache import AsterCache
 from .config import AsterConfig
 from .layers.attnres_vnext import AttnResMix
-from .layers.gdn2 import GDN2
 from .layers.ffn import SwiGLU
+from .layers.gdn2 import GDN2
 from .layers.kda import KDA
 from .layers.latent_attention import LatentAttention
 from .layers.latent_moe import LatentMoE
-from .layers.mtp import MultiTokenPredictor
 from .layers.moe import DeepSeekStyleMoE
+from .layers.mtp import MultiTokenPredictor
 from .layers.norm import build_norm
 
 
@@ -226,7 +227,12 @@ class AsterBlock(nn.Module):
 
 
 class AsterLM(nn.Module):
-    def __init__(self, config: AsterConfig) -> None:
+    def __init__(
+        self,
+        config: AsterConfig,
+        *,
+        named_initialization_seed: int | None = None,
+    ) -> None:
         super().__init__()
         self.config = config
         self.token_embedding = nn.Embedding(config.vocab_size, config.d_model)
@@ -303,7 +309,10 @@ class AsterLM(nn.Module):
                     recurrent_idx if config.mtp_block_kind in {"kda", "gdn2"} else None,
                 )
                 self.mtp_final_norm = build_norm(config.d_model, config.rms_eps, config.norm_type)
-        self.apply(self._initialize_module)
+        if named_initialization_seed is None:
+            self.apply(self._initialize_module)
+        else:
+            self._initialize_modules_by_name(named_initialization_seed)
         self._initialize_embedding_projections()
         self._scale_residual_projections()
 
@@ -325,6 +334,31 @@ class AsterLM(nn.Module):
                 nn.init.zeros_(module.bias)
         elif isinstance(module, nn.Embedding):
             nn.init.normal_(module.weight, mean=0.0, std=self.config.init_std)
+
+    @staticmethod
+    def _qualified_initialization_seed(base_seed: int, module_name: str) -> int:
+        digest = hashlib.blake2b(
+            f"{base_seed}:{module_name}".encode(), digest_size=8
+        ).digest()
+        return int.from_bytes(digest, "little") % (2**63 - 1)
+
+    def _initialize_modules_by_name(self, base_seed: int) -> None:
+        """Initialize shared projections identically across architecture variants.
+
+        KDA/FLA-specific time constants and other specialized tensors retain their
+        upstream initialization. Only the same ordinary modules reset by Aster's
+        historical ``apply`` pass are made name-deterministic.
+        """
+
+        for name, module in self.named_modules():
+            is_linear = isinstance(module, nn.Linear) or getattr(
+                module, "_aster_linear", False
+            )
+            if not is_linear and not isinstance(module, nn.Embedding):
+                continue
+            with torch.random.fork_rng(devices=[]):
+                torch.manual_seed(self._qualified_initialization_seed(base_seed, name))
+                self._initialize_module(module)
 
     def _scale_residual_projections(self) -> None:
         scale = self.config.residual_init_scale
@@ -816,6 +850,10 @@ class AsterLM(nn.Module):
             "effective_parameters": self.effective_parameter_count(),
             "layers": len(pattern),
             "kda_layers": pattern.count("kda"),
+            "kda_num_heads": self.config.kda_num_heads or self.config.n_heads,
+            "kda_head_dim": self.config.kda_head_dim or self.config.head_dim,
+            "kda_projection_width": (self.config.kda_num_heads or self.config.n_heads)
+            * (self.config.kda_head_dim or self.config.head_dim),
             "gdn2_layers": pattern.count("gdn2"),
             "latent_attention_layers": pattern.count("latent"),
             "mtp_depth": self.config.mtp_depth,
