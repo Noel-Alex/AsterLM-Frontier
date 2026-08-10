@@ -59,6 +59,12 @@ git show 5dccb67:.asterlm-backup-fp8-moe-20260809-004458/moe.py
   `docs/` or `research/` so evidence remains reviewable in Git without committing
   mutable checkpoints or raw datasets.
 
+## Removed legacy delivery files
+
+The root-level zip-patch apply scripts, patch manifests, stale generated status/audit files, and a
+tracked pre-schema-fix YAML backup were removed in a second cleanup pass. Their recovery commits
+and canonical replacements are indexed in `docs/archive/LEGACY_DELIVERY_ARTIFACTS_2026-08-10.md`.
+
 ## Cross-platform runtime layout
 
 - Shared Windows checkout: `N:\AsterLM-Frontier`
