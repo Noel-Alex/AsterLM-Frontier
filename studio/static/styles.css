@@ -217,6 +217,8 @@ footer{border-top:2px solid var(--ink);margin-top:50px;padding:18px 0;display:fl
 .provider-card a:hover{text-decoration:underline}
 .provider-facts{display:flex;gap:5px;flex-wrap:wrap}
 .provider-facts span,.profile-chip{border:1px solid var(--line);padding:4px 6px;font-family:var(--mono);font-size:7px;color:var(--muted)}
+.compact-form{margin-top:18px}
+.contract-result{max-height:230px;overflow:auto;margin-top:12px;font-size:8px;white-space:pre-wrap}
 .profile-ledger{display:flex;flex-direction:column}
 .profile-row{display:grid;grid-template-columns:140px 1fr;gap:12px;padding:10px 0;border-bottom:1px dotted var(--line);align-items:center}
 .profile-row strong{font-size:10px}

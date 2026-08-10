@@ -41,5 +41,5 @@ Write-Host "Interface:  $url"
 Write-Host "Runtime:    $Distro ($python)"
 Write-Host "Press Ctrl+C to stop the control plane. Background research jobs keep their own state."
 
-wsl.exe -d $Distro --cd $repoWsl -- $python studio/server.py --host $HostAddress --port $Port --no-open
+wsl.exe -d $Distro --cd $repoWsl -- $python -m studio.server --host $HostAddress --port $Port --no-open
 exit $LASTEXITCODE

@@ -25,12 +25,14 @@ from urllib.parse import parse_qs, urlparse
 import yaml
 
 from studio.providers import PROVIDER_CATALOG, provider_status
+from studio.remote_contracts import build_contract, list_contracts, persist_contract
 
 ROOT = Path(__file__).resolve().parents[1]
 STUDIO_ROOT = ROOT / "data" / "aster-studio"
 LOG_ROOT = STUDIO_ROOT / "logs"
 JOB_STATE = STUDIO_ROOT / "jobs.json"
 SETTINGS_PATH = STUDIO_ROOT / "settings.json"
+REMOTE_CONTRACT_ROOT = STUDIO_ROOT / "remote-contracts"
 CATALOG_PATH = ROOT / "studio" / "catalog.yaml"
 STATIC_ROOT = ROOT / "studio" / "static"
 GIB = 2**30
@@ -1235,6 +1237,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json(report)
             if path == "/api/providers":
                 return self.send_json(provider_status(settings().get("providers")))
+            if path == "/api/provider/contracts":
+                return self.send_json(list_contracts(REMOTE_CONTRACT_ROOT))
             return self.serve_static(path)
         except KeyError as exc:
             self.send_json({"error": f"Missing/not found: {exc}"}, 404)
@@ -1257,6 +1261,17 @@ class Handler(BaseHTTPRequestHandler):
                 validate_settings(merged)
                 atomic_json(SETTINGS_PATH, merged)
                 return self.send_json(merged)
+            if path == "/api/provider/contract":
+                current = settings()
+                contract = build_contract(
+                    payload,
+                    root=ROOT,
+                    policy=current.get("providers") or {},
+                    providers=provider_status(current.get("providers")),
+                )
+                target = persist_contract(REMOTE_CONTRACT_ROOT, contract)
+                contract["path"] = rel(target)
+                return self.send_json(contract, 201)
             if path == "/api/clean/plan":
                 target = create_clean_plan(payload)
                 return self.send_json(

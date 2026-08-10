@@ -225,6 +225,8 @@ function renderProviders() {
   }).join("");
   const aliases=rows.filter(row=>(row.profiles||[]).length);
   $("#provider-profile-ledger").innerHTML=aliases.length?aliases.map(row=>`<div class="profile-row"><strong>${esc(row.label)}</strong><div>${row.profiles.map(profile=>`<span class="profile-chip">${esc(profile)}</span>`).join("")}</div></div>`).join(""):`<div class="empty-state">No provider profile aliases are visible to this WSL environment yet.</div>`;
+  const preferred=S.overview?.settings?.providers?.preferred;
+  if(preferred && ["modal","lightning","huggingface_jobs","skypilot"].includes(preferred)) $("#contract-provider").value=preferred;
 }
 
 function renderPresets() {
@@ -600,6 +602,23 @@ function bind() {
       }});
       toast("Compute dispatch policy saved.");
       await refreshOverview();
+    }catch(e){showError(e);}
+  };
+  $("#create-provider-contract").onclick=async()=>{
+    try{
+      const contract=await post("/api/provider/contract",{
+        provider:$("#contract-provider").value,
+        profile_alias:$("#contract-profile").value.trim(),
+        model:$("#contract-model").value.trim(),
+        train:$("#contract-train").value.trim(),
+        data:$("#contract-data").value.trim(),
+        hub_repo:$("#contract-hub-repo").value.trim(),
+        timeout_minutes:Number($("#contract-timeout").value),
+        estimated_spend_usd:Number($("#contract-spend").value),
+        cost_confirmed:$("#contract-cost-confirmed").checked,
+      });
+      $("#provider-contract-result").textContent=JSON.stringify(contract,null,2);
+      toast(`Contract ${contract.contract_id} is ${contract.status}.`);
     }catch(e){showError(e);}
   };
 }
