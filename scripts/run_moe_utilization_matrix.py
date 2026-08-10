@@ -15,14 +15,15 @@ from typing import Any
 
 VARIANTS = {
     "dense-all-mla": ("model-screen-dense-all-mla.yaml", "reference"),
+    "dense-kda3": ("model-screen-dense-kda3.yaml", "reference"),
     "grouped-moe-kda3": ("model-screen-moe-grouped-kda3.yaml", "grouped"),
     "latent-moe-kda3": ("model-screen-latentmoe-kda3.yaml", "grouped"),
 }
-ORDERS = (
-    ("dense-all-mla", "grouped-moe-kda3", "latent-moe-kda3"),
-    ("latent-moe-kda3", "grouped-moe-kda3", "dense-all-mla"),
-    ("grouped-moe-kda3", "dense-all-mla", "latent-moe-kda3"),
-)
+
+
+def balanced_orders(variants: list[str]) -> list[list[str]]:
+    """Rotate trial order across repetitions to reduce thermal/order bias."""
+    return [variants[offset:] + variants[:offset] for offset in range(len(variants))]
 
 
 def sha256(path: Path) -> str:
@@ -98,7 +99,17 @@ def main() -> None:
     parser.add_argument("--cooldown-temperature", type=float, default=72.0)
     parser.add_argument("--idle-utilization", type=float, default=12.0)
     parser.add_argument("--trial-timeout", type=float, default=1800.0)
+    parser.add_argument(
+        "--variants",
+        nargs="+",
+        choices=tuple(VARIANTS),
+        default=list(VARIANTS),
+        help="Subset of variants to benchmark (default: all).",
+    )
     args = parser.parse_args()
+
+    selected_variants = list(dict.fromkeys(args.variants))
+    orders = balanced_orders(selected_variants)
 
     args.output.mkdir(parents=True, exist_ok=True)
     records: list[dict[str, Any]] = []
@@ -115,7 +126,7 @@ def main() -> None:
             "accum": args.accum,
             "gpu_sample_interval": args.gpu_sample_interval,
             "idle_utilization_ceiling": args.idle_utilization,
-            "order": [list(order) for order in ORDERS],
+            "order": orders,
         },
         "external_gpu_processes_at_start": subprocess.run(
             [
@@ -132,7 +143,8 @@ def main() -> None:
         "models": {},
         "trials": records,
     }
-    for variant, (filename, implementation) in VARIANTS.items():
+    for variant in selected_variants:
+        filename, implementation = VARIANTS[variant]
         model_path = args.config_root / filename
         manifest["models"][variant] = {
             "path": str(model_path),
@@ -142,7 +154,7 @@ def main() -> None:
     atomic_json(args.output / "matrix.json", manifest)
 
     for repetition in range(args.repetitions):
-        order = ORDERS[repetition % len(ORDERS)]
+        order = orders[repetition % len(orders)]
         for variant in order:
             filename, implementation = VARIANTS[variant]
             trial_name = f"r{repetition + 1}-{variant}"
@@ -206,7 +218,7 @@ def main() -> None:
             atomic_json(args.output / "matrix.json", manifest)
 
     aggregate: dict[str, Any] = {}
-    for variant in VARIANTS:
+    for variant in selected_variants:
         successful = [
             record for record in records
             if record["variant"] == variant and record.get("status") == "ok"
