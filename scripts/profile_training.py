@@ -7,6 +7,7 @@ import statistics
 import subprocess
 import threading
 import time
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
@@ -94,7 +95,7 @@ def summarize_gpu_samples(samples: list[dict[str, Any]]) -> dict[str, float | in
     return summary
 
 
-def gib(value: int | float) -> float:
+def gib(value: float) -> float:
     return float(value) / 2**30
 
 
@@ -115,7 +116,9 @@ def parameter_storage(model: torch.nn.Module) -> dict[str, Any]:
     result: dict[str, Any] = {
         "total_gib": 0.0,
         "parameter_gib": 0.0,
+        "parameter_tensors": 0,
         "buffer_gib": 0.0,
+        "buffer_tensors": 0,
         "by_dtype": {},
     }
     seen: set[int] = set()
@@ -130,8 +133,10 @@ def parameter_storage(model: torch.nn.Module) -> dict[str, Any]:
         size = tensor.numel() * tensor.element_size()
         if kind == "parameter":
             parameter_total += size
+            result["parameter_tensors"] += 1
         else:
             buffer_total += size
+            result["buffer_tensors"] += 1
         key = f"{kind}:{str(tensor.dtype).removeprefix('torch.')}"
         result["by_dtype"][key] = result["by_dtype"].get(key, 0) + size
 
@@ -145,6 +150,51 @@ def parameter_storage(model: torch.nn.Module) -> dict[str, Any]:
     result["total_gib"] = gib(parameter_total + buffer_total)
     result["by_dtype"] = {key: gib(value) for key, value in result["by_dtype"].items()}
     return result
+
+
+@contextmanager
+def measure_phase(
+    name: str,
+    *,
+    device: torch.device,
+    host_seconds: dict[str, float],
+    cuda_events: dict[str, list[tuple[torch.cuda.Event, torch.cuda.Event]]],
+):
+    """Record host submission/synchronization time and default-stream CUDA time."""
+
+    started = time.perf_counter()
+    event_pair = None
+    if device.type == "cuda":
+        event_pair = (torch.cuda.Event(enable_timing=True), torch.cuda.Event(enable_timing=True))
+        event_pair[0].record()
+    try:
+        yield
+    finally:
+        if event_pair is not None:
+            event_pair[1].record()
+            cuda_events.setdefault(name, []).append(event_pair)
+        host_seconds[name] = host_seconds.get(name, 0.0) + (time.perf_counter() - started)
+
+
+def summarize_phase_timing(records: list[dict[str, Any]]) -> dict[str, dict[str, float]]:
+    summary: dict[str, dict[str, float]] = {}
+    for timing_kind in ("cuda_ms", "host_submit_or_sync_ms"):
+        names = sorted(
+            {
+                name
+                for record in records
+                for name in record.get("phase_timing", {}).get(timing_kind, {})
+            }
+        )
+        summary[timing_kind] = {
+            name: statistics.median(
+                float(record["phase_timing"][timing_kind][name])
+                for record in records
+                if name in record.get("phase_timing", {}).get(timing_kind, {})
+            )
+            for name in names
+        }
+    return summary
 
 
 def main() -> None:
@@ -252,6 +302,7 @@ def main() -> None:
             torch.compile(model, mode=train.compile_mode, dynamic=False) if train.compile else model
         )
         durations: list[float] = []
+        measured_phase_records: list[dict[str, Any]] = []
         # Keep synthetic benchmark data independent of model/backend RNG use.
         data_generator = torch.Generator(device=device)
         data_generator.manual_seed(train.seed + 100003)
@@ -269,54 +320,103 @@ def main() -> None:
             if device.type == "cuda":
                 torch.cuda.reset_peak_memory_stats(device)
             started = time.perf_counter()
+            phase_host_seconds: dict[str, float] = {}
+            phase_cuda_events: dict[
+                str, list[tuple[torch.cuda.Event, torch.cuda.Event]]
+            ] = {}
             loss_value = torch.zeros((), device=device, dtype=torch.float32)
             for _ in range(train.gradient_accumulation_steps):
-                ids = torch.randint(
-                    0,
-                    config.vocab_size,
-                    (train.micro_batch_size, train.sequence_length),
+                with measure_phase(
+                    "synthetic_data",
                     device=device,
-                    generator=data_generator,
-                )
-                labels = torch.randint(
-                    0,
-                    config.vocab_size,
-                    ids.shape,
+                    host_seconds=phase_host_seconds,
+                    cuda_events=phase_cuda_events,
+                ):
+                    ids = torch.randint(
+                        0,
+                        config.vocab_size,
+                        (train.micro_batch_size, train.sequence_length),
+                        device=device,
+                        generator=data_generator,
+                    )
+                    labels = torch.randint(
+                        0,
+                        config.vocab_size,
+                        ids.shape,
+                        device=device,
+                        generator=data_generator,
+                    )
+                with measure_phase(
+                    "forward",
                     device=device,
-                    generator=data_generator,
-                )
-                with precision.activation_context():
-                    with precision.forward_context():
-                        output = forward_model(ids, labels=labels, return_logits=False)
-                        if output.loss is None:
-                            raise FloatingPointError("model returned no loss")
-                        loss = output.loss / train.gradient_accumulation_steps
-                loss.backward()
+                    host_seconds=phase_host_seconds,
+                    cuda_events=phase_cuda_events,
+                ), precision.activation_context(), precision.forward_context():
+                    output = forward_model(ids, labels=labels, return_logits=False)
+                    if output.loss is None:
+                        raise FloatingPointError("model returned no loss")
+                    loss = output.loss / train.gradient_accumulation_steps
+                with measure_phase(
+                    "backward",
+                    device=device,
+                    host_seconds=phase_host_seconds,
+                    cuda_events=phase_cuda_events,
+                ):
+                    loss.backward()
                 loss_value.add_(output.loss.detach().float())
-            grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), train.max_grad_norm)
-            # The gradient gate catches any non-finite loss/backward before the
-            # optimizer mutates parameters, while avoiding one GPU->CPU sync per
-            # accumulation microbatch in the measured workload.
-            if not torch.isfinite(grad_norm).all():
-                bad_grads = []
-                for name, parameter in model.named_parameters():
-                    grad = parameter.grad
-                    if grad is None:
-                        continue
-                    if not torch.isfinite(grad).all():
-                        bad_grads.append(name)
-                        if len(bad_grads) >= 8:
-                            break
-                raise FloatingPointError(
-                    "non-finite gradients before optimizer.step at "
-                    f"iteration {iteration + 1}; grad_norm={float(grad_norm)}; "
-                    f"first_bad_grad_tensors={bad_grads}"
-                )
-            optimizer.step()
-            balance = model.update_moe_router_biases()
+            with measure_phase(
+                "clip_and_finite_gate",
+                device=device,
+                host_seconds=phase_host_seconds,
+                cuda_events=phase_cuda_events,
+            ):
+                grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), train.max_grad_norm)
+                # The gradient gate catches any non-finite loss/backward before the
+                # optimizer mutates parameters, while avoiding one GPU->CPU sync per
+                # accumulation microbatch in the measured workload.
+                if not torch.isfinite(grad_norm).all():
+                    bad_grads = []
+                    for name, parameter in model.named_parameters():
+                        grad = parameter.grad
+                        if grad is None:
+                            continue
+                        if not torch.isfinite(grad).all():
+                            bad_grads.append(name)
+                            if len(bad_grads) >= 8:
+                                break
+                    raise FloatingPointError(
+                        "non-finite gradients before optimizer.step at "
+                        f"iteration {iteration + 1}; grad_norm={float(grad_norm)}; "
+                        f"first_bad_grad_tensors={bad_grads}"
+                    )
+            with measure_phase(
+                "optimizer",
+                device=device,
+                host_seconds=phase_host_seconds,
+                cuda_events=phase_cuda_events,
+            ):
+                optimizer.step()
+            with measure_phase(
+                "router_balance",
+                device=device,
+                host_seconds=phase_host_seconds,
+                cuda_events=phase_cuda_events,
+            ):
+                balance = model.update_moe_router_biases()
             if device.type == "cuda":
                 torch.cuda.synchronize(device)
             duration = time.perf_counter() - started
+            phase_timing = {
+                "cuda_ms": {
+                    name: sum(start_event.elapsed_time(end_event) for start_event, end_event in pairs)
+                    for name, pairs in phase_cuda_events.items()
+                },
+                # This includes Python submission and any synchronization incurred by
+                # that phase. It is intentionally not described as GPU execution time.
+                "host_submit_or_sync_ms": {
+                    name: seconds * 1000.0 for name, seconds in phase_host_seconds.items()
+                },
+            }
             record = {
                 "iteration": iteration + 1,
                 "warmup": iteration < args.warmup,
@@ -325,6 +425,7 @@ def main() -> None:
                 "loss": float(loss_value / train.gradient_accumulation_steps),
                 "grad_norm": float(grad_norm),
                 "memory": cuda_snapshot(device),
+                "phase_timing": phase_timing,
                 # Continuous sampling avoids launching another blocking nvidia-smi
                 # query between every optimizer update.
                 "system": (
@@ -338,6 +439,7 @@ def main() -> None:
             print(json.dumps(record, sort_keys=True))
             if iteration >= args.warmup:
                 durations.append(duration)
+                measured_phase_records.append(record)
 
         ordered_durations = sorted(durations)
         n_durations = len(ordered_durations)
@@ -355,6 +457,7 @@ def main() -> None:
             "median_tokens_per_second": tokens_per_step / median,
             "final_memory": cuda_snapshot(device),
             "fits_11p25_gib_peak": cuda_snapshot(device).get("peak_allocated_gib", 0) <= 11.25,
+            "median_phase_timing": summarize_phase_timing(measured_phase_records),
         }
         if gpu_sampler is not None:
             gpu_sampler.stop()
@@ -372,7 +475,7 @@ def main() -> None:
         if "device" in locals():
             result["memory_at_failure"] = cuda_snapshot(device)
         print(f"CUDA OOM: {exc}")
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - profiler must persist arbitrary trial failures
         result["status"] = "error"
         result["error"] = f"{type(exc).__name__}: {exc}"
         print(result["error"])
