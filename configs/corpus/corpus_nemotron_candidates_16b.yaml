@@ -1,0 +1,34 @@
+corpus:
+  # Candidate pool, not an automatic change to the 100B training mixture.
+  # Select from this pool only after cleaning, cross-corpus deduplication,
+  # benchmark decontamination, license review, and small matched ablations.
+  output_dir: data/corpus-nemotron-candidates
+  shard_size_mb: 1024
+  state_flush_documents: 2000
+  sources:
+  - id: nemotron_cc_math_4plus
+    path: nvidia/Nemotron-CC-Math-v1
+    name: 4plus
+    split: train
+    text_field: text
+    target_tokens: 3000000000
+    revision: 397a2502f2028c659ba411a6c4935b464a7f03aa
+    shuffle_seed: 2701
+  - id: nemotron_cc_code
+    path: nvidia/Nemotron-CC-Code-v1
+    name: data
+    split: train
+    text_field: text
+    target_tokens: 8000000000
+    revision: 5c5bebce9f9a85c237d63b2afad516ee532f950f
+    shuffle_seed: 2702
+  - id: nemotron_synthetic_code
+    path: nvidia/Nemotron-Pretraining-Code-v1
+    name: Synthetic-Code
+    split: train
+    text_field: text
+    target_tokens: 5000000000
+    revision: 01393d3bd890ddc5c15da8a2c9afb57391277659
+    shuffle_seed: 2703
+  checkpoint_seconds: 900
+  checkpoint_documents: 20000

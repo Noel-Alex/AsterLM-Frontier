@@ -60,6 +60,7 @@ Read these first:
 - [vNext2 findings](docs/experiments/frontier-vnext2/FINDINGS_2026-08-10.md)
 - [kernel compatibility boundaries](docs/research/KERNEL_COMPATIBILITY_2026-08-10.md)
 - [100B experiment design](docs/100B_EXPERIMENT.md)
+- [NVIDIA Nemotron candidate pool](docs/data/NEMOTRON_CANDIDATE_POOL_2026-08-10.md)
 - [training runbook](docs/TRAINING_RUNBOOK.md)
 - [environment setup](docs/ENVIRONMENT.md)
 

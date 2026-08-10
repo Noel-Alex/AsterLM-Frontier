@@ -8,7 +8,6 @@ import yaml
 from asterlm.config import AsterConfig, TrainConfig
 from asterlm.model import AsterLM
 
-
 ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -27,6 +26,14 @@ def test_progressive_overtrain_tiers_have_exact_token_budgets() -> None:
     assert _stack_tokens("configs/corpus/stack_edu_6p5b.yaml") == 6_500_000_000
     assert _corpus_tokens("configs/corpus/corpus_overtrain_100b.yaml") == 87_000_000_000
     assert _stack_tokens("configs/corpus/stack_edu_13b.yaml") == 13_000_000_000
+
+
+def test_nemotron_candidate_pool_is_separate_and_revision_pinned() -> None:
+    path = ROOT / "configs/corpus/corpus_nemotron_candidates_16b.yaml"
+    corpus = yaml.safe_load(path.read_text(encoding="utf-8"))["corpus"]
+    assert sum(int(source["target_tokens"]) for source in corpus["sources"]) == 16_000_000_000
+    assert corpus["output_dir"] == "data/corpus-nemotron-candidates"
+    assert all(len(source["revision"]) == 40 for source in corpus["sources"])
 
 
 def test_100b_train_configs_sum_to_campaign_budget() -> None:

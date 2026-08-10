@@ -4,8 +4,8 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import signal
 import shutil
+import signal
 import subprocess
 import sys
 import time
@@ -26,6 +26,7 @@ VALIDATION_CONFIGS: dict[str, list[str]] = {
     "frontier": ["configs/corpus/corpus_frontier_16b.yaml", "configs/corpus/stack_edu_2p4b.yaml"],
     "overtrain50": ["configs/corpus/corpus_overtrain_50b.yaml", "configs/corpus/stack_edu_6p5b.yaml"],
     "overtrain100": ["configs/corpus/corpus_overtrain_100b.yaml", "configs/corpus/stack_edu_13b.yaml"],
+    "nemotron-candidates": ["configs/corpus/corpus_nemotron_candidates_16b.yaml"],
     "posttrain": ["configs/corpus/posttrain_frontier.yaml"],
     "reasoning": ["configs/corpus/reasoning_frontier.yaml"],
     "benchmarks": ["configs/corpus/decontamination_benchmarks.yaml"],
@@ -36,6 +37,7 @@ PROFILE_DISK_ESTIMATES_GIB = {
     "frontier": 110,
     "overtrain50": 320,
     "overtrain100": 620,
+    "nemotron-candidates": 140,
     "posttrain": 15,
     "reasoning": 12,
     "benchmarks": 2,
@@ -109,6 +111,18 @@ PROFILES: dict[str, list[Stage]] = {
                 "configs/corpus/stack_edu_13b.yaml",
             ],
         ),
+    ],
+    "nemotron-candidates": [
+        corpus_stage(
+            "nemotron-candidates",
+            "configs/corpus/corpus_nemotron_candidates_16b.yaml",
+            source,
+        )
+        for source in (
+            "nemotron_cc_math_4plus",
+            "nemotron_cc_code",
+            "nemotron_synthetic_code",
+        )
     ],
     "posttrain": [
         Stage(
@@ -375,6 +389,7 @@ def main() -> None:
             "frontier",
             "overtrain50",
             "overtrain100",
+            "nemotron-candidates",
             "posttrain",
             "reasoning",
             "benchmarks",
@@ -432,7 +447,7 @@ def main() -> None:
             "--minimum-free-gib",
             str(max(5, min(PROFILE_DISK_ESTIMATES_GIB[args.profile], 100))),
         ]
-        if args.require_auth:
+        if args.require_auth or "nemotron-candidates" in selected_profiles:
             preflight.append("--require-auth")
         stages.append(Stage("data-preflight", "preflight", preflight))
 
