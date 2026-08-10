@@ -31,6 +31,50 @@ def sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def repository_provenance(root: Path | None = None) -> dict[str, Any]:
+    """Capture the exact tracked worktree state used to launch an experiment."""
+
+    root = (root or Path.cwd()).resolve()
+
+    def git(*arguments: str, text: bool = True) -> subprocess.CompletedProcess[Any]:
+        return subprocess.run(
+            ["git", "-C", str(root), *arguments],
+            check=False,
+            capture_output=True,
+            text=text,
+        )
+
+    commit_result = git("rev-parse", "HEAD")
+    status_result = git("status", "--porcelain=v1", "--untracked-files=all")
+    diff_result = git("diff", "--binary", "HEAD", "--", text=False)
+    if commit_result.returncode or status_result.returncode or diff_result.returncode:
+        errors = [
+            output.strip()
+            for output in (commit_result.stderr, status_result.stderr)
+            if output.strip()
+        ]
+        if diff_result.stderr:
+            errors.append(diff_result.stderr.decode(errors="replace").strip())
+        return {
+            "available": False,
+            "root": str(root),
+            "error": "; ".join(errors) or "git provenance commands failed",
+        }
+
+    status_lines = status_result.stdout.splitlines()
+    tracked_diff = diff_result.stdout
+    return {
+        "available": True,
+        "root": str(root),
+        "commit": commit_result.stdout.strip(),
+        "dirty": bool(status_lines),
+        "status_porcelain": status_lines,
+        "tracked_diff_sha256": hashlib.sha256(tracked_diff).hexdigest(),
+        "tracked_diff_bytes": len(tracked_diff),
+        "note": "Hash covers staged and unstaged tracked changes; status also records untracked paths.",
+    }
+
+
 def gpu_state() -> dict[str, float] | None:
     try:
         output = subprocess.check_output(
@@ -137,10 +181,12 @@ def main() -> None:
 
     args.output.mkdir(parents=True, exist_ok=True)
     records: list[dict[str, Any]] = []
+    repository = repository_provenance()
     manifest: dict[str, Any] = {
-        "schema_version": 1,
+        "schema_version": 2,
         "created_utc": datetime.now(UTC).isoformat(),
-        "git_commit": subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip(),
+        "git_commit": repository.get("commit"),
+        "repository": repository,
         "protocol": {
             "steps": args.steps,
             "warmup": args.warmup,
