@@ -30,6 +30,18 @@ def test_provider_catalog_has_sources_and_readiness():
         assert row["researched_at"]
 
 
+def test_command_probe_keeps_virtualenv_sibling_path(tmp_path, monkeypatch):
+    executable = tmp_path / "bin" / "python"
+    executable.parent.mkdir()
+    executable.touch()
+    sibling = executable.parent / ("modal.exe" if providers.os.name == "nt" else "modal")
+    sibling.touch()
+    monkeypatch.setattr(providers.shutil, "which", lambda _name: None)
+    monkeypatch.setattr(providers.sys, "executable", str(executable))
+
+    assert providers._command("modal") == str(sibling)
+
+
 def test_provider_policy_rejects_unknown_or_negative_spend():
     import pytest
 

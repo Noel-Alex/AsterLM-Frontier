@@ -7,7 +7,6 @@ import sys
 from pathlib import Path
 from typing import Any
 
-
 RESEARCHED_AT = "2026-08-10"
 
 
@@ -69,7 +68,9 @@ def _command(name: str) -> str | None:
     if discovered:
         return discovered
     suffix = ".exe" if os.name == "nt" else ""
-    sibling = Path(sys.executable).resolve().parent / f"{name}{suffix}"
+    # Keep the lexical virtualenv path. Resolving its Python symlink points at
+    # /usr/bin and hides console scripts installed beside the venv interpreter.
+    sibling = Path(sys.executable).parent / f"{name}{suffix}"
     return str(sibling) if sibling.is_file() else None
 
 

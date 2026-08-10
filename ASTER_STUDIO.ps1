@@ -21,6 +21,17 @@ $python = if ($env:ASTERLM_WSL_PYTHON) {
     "/root/.venvs/asterlm/bin/python"
 }
 
+$modalConfigWindows = if ($env:MODAL_CONFIG_PATH -and (Test-Path -LiteralPath $env:MODAL_CONFIG_PATH)) {
+    (Resolve-Path -LiteralPath $env:MODAL_CONFIG_PATH).Path
+} else {
+    Join-Path $HOME ".modal.toml"
+}
+$modalConfigWsl = if (Test-Path -LiteralPath $modalConfigWindows) {
+    (wsl.exe -d $Distro -- wslpath -a $modalConfigWindows).Trim()
+} else {
+    $null
+}
+
 wsl.exe -d $Distro -- test -x $python
 if ($LASTEXITCODE -ne 0) {
     throw "AsterLM's WSL environment is missing at $python. Run the environment setup first."
@@ -39,7 +50,14 @@ Write-Host "AsterLM Studio" -ForegroundColor Cyan
 Write-Host "Repository: $repoWindows"
 Write-Host "Interface:  $url"
 Write-Host "Runtime:    $Distro ($python)"
+if ($modalConfigWsl) {
+    Write-Host "Modal:      provider-native profile store linked"
+}
 Write-Host "Press Ctrl+C to stop the control plane. Background research jobs keep their own state."
 
-wsl.exe -d $Distro --cd $repoWsl -- $python -m studio.server --host $HostAddress --port $Port --no-open
+if ($modalConfigWsl) {
+    wsl.exe -d $Distro --cd $repoWsl -- env "MODAL_CONFIG_PATH=$modalConfigWsl" $python -m studio.server --host $HostAddress --port $Port --no-open
+} else {
+    wsl.exe -d $Distro --cd $repoWsl -- $python -m studio.server --host $HostAddress --port $Port --no-open
+}
 exit $LASTEXITCODE

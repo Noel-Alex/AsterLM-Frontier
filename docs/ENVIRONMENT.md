@@ -89,6 +89,24 @@ FLA/KDA and TE are optional compiled research dependencies. ABI/version mismatch
 
 If Transformer Engine fails, use the shape-identical Torch model and BF16. If FLA fails, the PyTorch KDA fallback can debug correctness but is not a viable serious-training speed path.
 
+## Remote provider clients
+
+Install the optional remote-control clients into the isolated environment rather than the system
+Python. Modal is pinned to the currently validated 1.5 client series:
+
+```bash
+python -m pip install -e '.[remote]'
+modal profile list --json
+```
+
+Modal profiles represent authorized Workspaces. Select one per process with `MODAL_PROFILE`; never
+copy token values into Studio settings, run contracts, logs, or Git. Workspace membership/invites are
+the supported collaboration path when friends contribute compute.
+
+On Windows, `ASTER_STUDIO.ps1` maps the existing `%USERPROFILE%\.modal.toml` into WSL through
+`MODAL_CONFIG_PATH`. This keeps one provider-native credential store, makes every authorized profile
+alias visible in Studio, and avoids copying secrets into the repository or WSL home directory.
+
 ## OOM escalation
 
 1. micro-batch 1

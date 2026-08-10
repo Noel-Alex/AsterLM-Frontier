@@ -50,6 +50,7 @@ frontier = [
   "math-verify>=0.7.0",
   "sympy>=1.13",
 ]
+remote = ["modal>=1.5,<1.6"]
 
 [tool.setuptools.packages.find]
 where = ["src"]
