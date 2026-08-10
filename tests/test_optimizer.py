@@ -1,7 +1,7 @@
 import torch
 
 from asterlm import AsterConfig, AsterLM, TrainConfig
-from asterlm.optim import build_hybrid_optimizer
+from asterlm.optim import build_hybrid_optimizer, build_optimizer
 from asterlm.optim.muon import zeropower_via_newton_schulz5
 
 
@@ -46,3 +46,34 @@ def test_hybrid_optimizer_step():
     assert "token_embedding.weight" not in optimizer.partition.muon_names
     assert "embedding_in_proj.weight" in optimizer.partition.muon_names
     assert "embedding_out_proj.weight" in optimizer.partition.muon_names
+
+
+def test_adamw_control_has_no_muon_partition_and_steps_on_cpu():
+    config = AsterConfig(
+        vocab_size=64,
+        d_model=32,
+        n_layers=2,
+        n_heads=2,
+        head_dim=16,
+        ffn_hidden=96,
+        max_seq_len=16,
+        kda_ratio=0,
+        latent_rank=8,
+        rope_dim=8,
+        attention_window=None,
+        sink_tokens=0,
+        mtp_depth=0,
+        gradient_checkpointing=False,
+    )
+    model = AsterLM(config)
+    optimizer = build_optimizer(
+        model, TrainConfig(device="cpu", max_steps=2, optimizer="adamw")
+    )
+    ids = torch.randint(0, 64, (2, 8))
+    loss = model(ids, labels=ids).loss
+    loss.backward()
+    optimizer.step()
+    optimizer.zero_grad()
+    assert optimizer.partition.muon_names == []
+    assert optimizer.partition.adam_decay_names
+    assert "token_embedding.weight" in optimizer.partition.adam_no_decay_names

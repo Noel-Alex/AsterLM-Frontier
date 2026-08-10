@@ -317,7 +317,30 @@ def build_torchao_optimizer(model: nn.Module, config: TrainConfig) -> SingleOpti
     return SingleOptimizerAdapter(optimizer, partition)
 
 
+def build_adamw_optimizer(model: nn.Module, config: TrainConfig) -> SingleOptimizerAdapter:
+    """Build the unambiguous full-parameter AdamW control.
+
+    Decay grouping matches the AdamW half of the hybrid optimizers. CUDA runs use
+    PyTorch's fused implementation; CPU correctness tests retain the portable path.
+    """
+
+    groups, partition = _adamw_parameter_groups(model, config)
+    parameters = [parameter for group in groups for parameter in group["params"]]
+    fused = bool(parameters) and all(parameter.device.type == "cuda" for parameter in parameters)
+    optimizer = torch.optim.AdamW(
+        groups,
+        lr=config.adam_lr,
+        betas=config.adam_betas,
+        eps=config.adam_eps,
+        weight_decay=0.0,
+        fused=fused,
+    )
+    return SingleOptimizerAdapter(optimizer, partition)
+
+
 def build_optimizer(model: nn.Module, config: TrainConfig) -> HybridOptimizer | SingleOptimizerAdapter:
+    if config.optimizer == "adamw":
+        return build_adamw_optimizer(model, config)
     if config.optimizer == "muon_adamw":
         return build_hybrid_optimizer(model, config)
     if config.optimizer in {"apollo_mini", "apollo"}:

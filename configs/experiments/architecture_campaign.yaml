@@ -1,0 +1,105 @@
+schema_version: 1
+objective: measured_quality_efficiency_pareto
+context_lengths: [4096, 8192, 16384, 32768, 65536, 131072]
+comparison_axes: [equal_tokens, equal_active_flops, equal_wall_time, equal_cost]
+size_frontier:
+  - {total_params: 900000000, active_params_min: 450000000, active_params_max: 500000000}
+  - {total_params: 1500000000, active_params_min: 550000000, active_params_max: 650000000}
+  - {total_params: 1900000000, active_params_min: 700000000, active_params_max: 800000000}
+candidates:
+  - id: tier0-dense-mla-480m
+    tier: 0
+    hypothesis: Dense MLA is the gold correctness and systems reference.
+    base_model: configs/model/aster_480m.yaml
+    model_overrides:
+      ffn_type: dense
+      kda_ratio: 0
+      mtp_depth: 0
+      norm_type: rmsnorm
+      embedding_projection: false
+      use_block_attnres: false
+      cache_dtype: bfloat16
+      rope_scaling_type: none
+      linear_backend: torch
+      ffn_linear_backend: torch
+    execution_variants: [torch-sdpa-bf16, torch-compile-bf16]
+  - id: tier1-dense-mla-mtp-480m
+    tier: 1
+    hypothesis: MTP improves quality or future decode utility enough to repay training overhead.
+    base_model: configs/model/aster_480m.yaml
+    model_overrides:
+      ffn_type: dense
+      kda_ratio: 0
+      mtp_depth: 2
+      norm_type: rmsnorm
+      embedding_projection: false
+      use_block_attnres: false
+      cache_dtype: bfloat16
+      rope_scaling_type: none
+      linear_backend: torch
+      ffn_linear_backend: torch
+    execution_variants: [torch-sdpa-bf16, torch-compile-bf16]
+  - id: tier1-dense-kda3-mla-480m
+    tier: 1
+    hypothesis: A 3:1 KDA/MLA hybrid crosses the dense MLA Pareto frontier as context grows.
+    base_model: configs/model/aster_480m.yaml
+    model_overrides:
+      ffn_type: dense
+      kda_ratio: 3
+      mtp_depth: 0
+      norm_type: rmsnorm
+      embedding_projection: false
+      use_block_attnres: false
+      cache_dtype: bfloat16
+      rope_scaling_type: none
+      linear_backend: torch
+      ffn_linear_backend: torch
+    execution_variants: [fla-kda-bf16, fla-kda-compile-bf16]
+  - id: tier1-dense-kda3-mla-mtp-480m
+    tier: 1
+    hypothesis: KDA/MLA and MTP benefits compose without unacceptable overhead or instability.
+    base_model: configs/model/aster_480m.yaml
+    model_overrides:
+      ffn_type: dense
+      kda_ratio: 3
+      mtp_depth: 2
+      norm_type: rmsnorm
+      embedding_projection: false
+      use_block_attnres: false
+      cache_dtype: bfloat16
+      rope_scaling_type: none
+      linear_backend: torch
+      ffn_linear_backend: torch
+    execution_variants: [fla-kda-bf16, fla-kda-compile-bf16]
+  - id: tier2-moe-e4k2
+    tier: 2
+    hypothesis: Coarser expert batches recover Ada utilization while retaining sparse capacity.
+    base_model: configs/model/aster_moe_frontier_893m_a484m.yaml
+    model_overrides:
+      moe_num_experts: 4
+      moe_top_k: 2
+      moe_shared_experts: 0
+    execution_variants: [torch-reference, transformer-engine-grouped]
+  - id: tier2-moe-e8k2
+    tier: 2
+    hypothesis: Eight routed experts without shared compute improve capacity at competitive time-to-quality.
+    base_model: configs/model/aster_moe_frontier_893m_a484m.yaml
+    model_overrides:
+      moe_num_experts: 8
+      moe_top_k: 2
+      moe_shared_experts: 0
+    execution_variants: [torch-reference, transformer-engine-grouped]
+  - id: tier2-moe-e8k2-shared
+    tier: 2
+    hypothesis: The shared expert earns its always-on compute through quality per wall time.
+    base_model: configs/model/aster_moe_frontier_893m_a484m.yaml
+    model_overrides:
+      moe_num_experts: 8
+      moe_top_k: 2
+      moe_shared_experts: 1
+    execution_variants: [torch-reference, transformer-engine-grouped]
+research_queue:
+  - {tier: 3, id: longcat-zero-compute-expert, prerequisite: tier2_routing_profile}
+  - {tier: 4, id: deepseek-v4-csa-hca, prerequisite: semantic_reference_and_retrieval_harness}
+  - {tier: 4, id: deepseek-dsa-nsa-index-reuse, prerequisite: physical_sparse_kernel}
+  - {tier: 5, id: mhc-residual, prerequisite: standard_residual_fixed_loss_baseline}

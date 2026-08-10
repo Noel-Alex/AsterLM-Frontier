@@ -210,6 +210,7 @@ def main() -> None:
     parser.add_argument(
         "--optimizer",
         choices=[
+            "adamw",
             "muon_adamw",
             "apollo_mini",
             "apollo",

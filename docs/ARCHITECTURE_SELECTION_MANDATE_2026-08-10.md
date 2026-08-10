@@ -60,6 +60,12 @@ One million tokens is a stretch experiment, not a release blocker. Evaluate 4K,
 The present prior is a contest among optimized dense KDA+MLA, optimized dense MLA
 and modest-granularity MoE KDA+MLA. It is not a predetermined winner.
 
+The first controlled, materializable candidate set lives in
+`configs/experiments/architecture_campaign.yaml`. The manifest records the base
+config, explicit overrides, hypothesis and eligible execution variants. Run
+`scripts/materialize_architecture_campaign.py`; its generated configs and hashes go
+under ignored run storage, so generated files cannot become unexplained source.
+
 ## Immutable measurement contract
 
 Use one tokenizer, immutable data shard order, controlled seeds and a common eval

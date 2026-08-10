@@ -281,7 +281,9 @@ class TrainConfig:
     max_steps: int = 100_000
     max_tokens: int | None = None
 
-    optimizer: str = "muon_adamw"  # muon_adamw | apollo_mini | apollo | torchao_adamw8bit | torchao_adamw4bit | torchao_cpu_offload_adamw
+    # `adamw` is the mandatory dense/control optimizer. Other methods must beat it
+    # rather than borrowing an AdamW result from a differently partitioned hybrid.
+    optimizer: str = "muon_adamw"  # adamw | muon_adamw | apollo* | torchao_adamw*
     muon_lr: float = 0.01
     adam_lr: float = 3e-4
     min_lr_ratio: float = 0.1
@@ -350,6 +352,7 @@ class TrainConfig:
 
     def __post_init__(self) -> None:
         if self.optimizer not in {
+            "adamw",
             "muon_adamw",
             "apollo_mini",
             "apollo",
