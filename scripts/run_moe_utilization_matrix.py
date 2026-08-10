@@ -48,7 +48,11 @@ def gpu_state() -> dict[str, float] | None:
         return None
 
 
-def wait_for_idle(max_temperature: float, timeout: float = 300.0) -> dict[str, float]:
+def wait_for_idle(
+    max_temperature: float,
+    max_utilization: float,
+    timeout: float = 300.0,
+) -> dict[str, float]:
     deadline = time.monotonic() + timeout
     consecutive = 0
     last: dict[str, float] | None = None
@@ -56,7 +60,7 @@ def wait_for_idle(max_temperature: float, timeout: float = 300.0) -> dict[str, f
         last = gpu_state()
         if (
             last is not None
-            and last["utilization_gpu"] <= 12
+            and last["utilization_gpu"] <= max_utilization
             and last["temperature_gpu"] <= max_temperature
             and last["memory_used_mib"] <= 1024
         ):
@@ -92,6 +96,7 @@ def main() -> None:
     parser.add_argument("--accum", type=int, default=16)
     parser.add_argument("--gpu-sample-interval", type=float, default=0.5)
     parser.add_argument("--cooldown-temperature", type=float, default=72.0)
+    parser.add_argument("--idle-utilization", type=float, default=12.0)
     parser.add_argument("--trial-timeout", type=float, default=1800.0)
     args = parser.parse_args()
 
@@ -109,8 +114,20 @@ def main() -> None:
             "batch": args.batch,
             "accum": args.accum,
             "gpu_sample_interval": args.gpu_sample_interval,
+            "idle_utilization_ceiling": args.idle_utilization,
             "order": [list(order) for order in ORDERS],
         },
+        "external_gpu_processes_at_start": subprocess.run(
+            [
+                "nvidia-smi",
+                "--query-compute-apps=pid,process_name,used_gpu_memory",
+                "--format=csv,noheader,nounits",
+            ],
+            check=False,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+        ).stdout.strip(),
         "train_config": {"path": str(args.train_config), "sha256": sha256(args.train_config)},
         "models": {},
         "trials": records,
@@ -131,7 +148,7 @@ def main() -> None:
             trial_name = f"r{repetition + 1}-{variant}"
             result_path = args.output / f"{trial_name}.json"
             log_path = args.output / f"{trial_name}.log"
-            idle = wait_for_idle(args.cooldown_temperature)
+            idle = wait_for_idle(args.cooldown_temperature, args.idle_utilization)
             command = [
                 sys.executable,
                 "scripts/profile_training.py",
