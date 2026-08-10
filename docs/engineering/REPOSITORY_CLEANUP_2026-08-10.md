@@ -97,3 +97,8 @@ boundaries and should be reviewed by subsystem. The sole `F823` undefined-local 
 bug in `scripts/studio_prepare_data.py`: a nested `import shutil` made its earlier disk-space preflight
 reference a local before assignment. The nested import was removed and the focused `F823` gate is
 clean.
+
+The five `F841` unused-local findings were then reviewed individually. Four dead assignments were
+removed. The fifth exposed an API omission: Studio's overview computed clean-corpus status but did not
+return it. The response now includes `clean_corpora`, covered by a focused regression test; the
+repository-wide `F823,F841` gate is clean.

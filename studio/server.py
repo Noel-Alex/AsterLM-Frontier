@@ -1190,6 +1190,7 @@ def overview() -> dict[str, Any]:
         "time": time.time(),
         "system": system_info(),
         "datasets": rows,
+        "clean_corpora": clean,
         "raw_materialized_tokens": sum(int(item["tokens"]) for item in rows),
         "jobs": JOBS.list(),
         "runs": runs_status(),

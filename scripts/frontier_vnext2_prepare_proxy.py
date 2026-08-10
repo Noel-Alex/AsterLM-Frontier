@@ -107,15 +107,12 @@ def iter_file(path: Path) -> Iterator[str]:
         return
     if low.endswith(".jsonl.gz"):
         ctx = gzip.open(path, "rt", encoding="utf-8", errors="replace")
-        mode = "jsonl"
     elif low.endswith(".jsonl.zst"):
         import zstandard as zstd
         raw = path.open("rb")
         ctx = io.TextIOWrapper(zstd.ZstdDecompressor().stream_reader(raw), encoding="utf-8", errors="replace")
-        mode = "jsonl"
     elif low.endswith(".jsonl"):
         ctx = path.open("r", encoding="utf-8", errors="replace")
-        mode = "jsonl"
     elif low.endswith(".json"):
         try:
             obj = json.loads(path.read_text(encoding="utf-8", errors="replace"))
