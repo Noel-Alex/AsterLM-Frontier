@@ -70,6 +70,12 @@ fused SwiGLU path, but its implementation requires TE 2.14+, a supported block-s
 linears and a GLU interleave size. That existing design is the reference for any shared-expert
 experiment; do not invent an unrelated custom CUDA kernel first.
 
+The compatible delayed-FP8 subset was probed on SM89 using the exact D=768, H=704, 4,096-row shared
+shape and authoritative weights. The one-group TE operations pipeline was 10.21% slower than Aster's
+current ordinary TE `SwiGLU` (1.841 ms versus 1.653 ms median forward+backward). It is rejected. This
+does not claim that the newer block-scaled CuTe fused pipeline is slow; it claims that it is not active
+under the current delayed-FP8 recipe and the compatible one-group fallback does not help this laptop.
+
 DeepSeek's current DeepGEMM is also not an Ada shortcut. Its upstream requirements list only SM90 and
 SM100. Its Mega-MoE path additionally fuses expert-parallel communication for a multi-process symmetric
 memory launch, which addresses a different regime from Aster's one-GPU laptop training workload.

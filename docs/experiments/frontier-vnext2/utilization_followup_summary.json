@@ -222,6 +222,24 @@
       }
     }
   },
+  "te_grouped_shared_expert_probe": {
+    "shape": {
+      "rows": 4096,
+      "dim": 768,
+      "hidden": 704
+    },
+    "precision": "transformer_engine_delayed_fp8",
+    "baseline_median_forward_backward_ms": 1.6532480120658875,
+    "grouped_one_group_median_forward_backward_ms": 1.8411519527435303,
+    "grouped_speedup_percent": -10.205781244597667,
+    "bf16_parity": {
+      "output_relative_l2": 0.003625623881816864,
+      "input_grad_relative_l2": 0.005134271457791328,
+      "gate_up_grad_relative_l2": 0.005082424730062485,
+      "down_grad_relative_l2": 0.0032432901207357645
+    },
+    "decision": "reject_grouped_one_group_keep_existing_te_swiglu"
+  },
   "raw_artifacts": [
     "runs/frontier-vnext2/moe-utilization-followup-20260810/matrix.json",
     "runs/frontier-vnext2/moe-utilization-dense-kda3-20260810/matrix.json",
@@ -233,6 +251,7 @@
     "runs/frontier-vnext2/reference-vs-grouped-mb2-20260810/matrix.json",
     "runs/frontier-vnext2/phase-timing-dense-vs-grouped-b2-20260810/",
     "runs/frontier-vnext2/shared-expert-isolation-b2-20260810/matrix.json",
-    "runs/frontier-vnext2/shared-expert-isolation-b2-repeat-20260810/matrix.json"
+    "runs/frontier-vnext2/shared-expert-isolation-b2-repeat-20260810/matrix.json",
+    "runs/frontier-vnext2/te-shared-expert-probe-20260810.json"
   ]
 }
