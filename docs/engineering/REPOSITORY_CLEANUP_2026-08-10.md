@@ -87,3 +87,13 @@ FLA 0.5 `fla.ops.utils` helpers and loads only the NSA kernel package.
 
 The Windows checkout is the user-visible source of truth. GPU training and profiling
 run under WSL from ext4; controlled sync/commit steps keep the two trees aligned.
+
+## Static-quality baseline
+
+A repository-wide Ruff audit found 265 findings: 92 broad-exception warnings, 35 import-order
+findings, 25 silent-exception warnings, 16 unused imports, and smaller style categories. Do not apply
+a blind whole-tree rewrite; broad exception handling is often deliberate at durable data/run
+boundaries and should be reviewed by subsystem. The sole `F823` undefined-local finding was a real
+bug in `scripts/studio_prepare_data.py`: a nested `import shutil` made its earlier disk-space preflight
+reference a local before assignment. The nested import was removed and the focused `F823` gate is
+clean.

@@ -96,7 +96,6 @@ def main() -> None:
         )
 
     if args.reset_existing and output.exists() and not args.dry_run:
-        import shutil
         shutil.rmtree(output)
 
     output.mkdir(parents=True, exist_ok=True)
