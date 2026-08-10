@@ -220,6 +220,11 @@ def main() -> None:
         default=None,
     )
     parser.add_argument("--precision", choices=["amp", "transformer_engine_fp8"], default=None)
+    parser.add_argument(
+        "--apollo-disable-norm-limiter",
+        action="store_true",
+        help="Diagnostic only: disable APOLLO's norm-growth limiter for an explicit causal screen.",
+    )
     parser.add_argument("--activation-offload", action="store_true")
     parser.add_argument("--compile", action="store_true")
     parser.add_argument("--gpu-sample-interval", type=float, default=0.5)
@@ -241,6 +246,8 @@ def main() -> None:
     if args.precision is not None:
         train.precision_backend = args.precision
         config.linear_backend = "transformer_engine" if args.precision == "transformer_engine_fp8" else "torch"
+    if args.apollo_disable_norm_limiter:
+        train.apollo_disable_norm_limiter = True
     if args.activation_offload:
         train.activation_offload = True
     if args.compile:
