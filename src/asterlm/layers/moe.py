@@ -137,8 +137,10 @@ class DeepSeekStyleMoE(nn.Module):
 
         # Switch-style balancing signal plus router z-loss. The trainer decides the
         # coefficients, so these remain inspectable independently.
-        dispatch = F.one_hot(top_idx, num_classes=self.num_experts).float().sum(dim=1) / self.top_k
-        load = dispatch.mean(dim=0)
+        load = torch.bincount(
+            top_idx.reshape(-1), minlength=self.num_experts
+        ).to(dtype=torch.float32)
+        load = load / float(top_idx.numel())
         importance = affinity / affinity.sum(dim=-1, keepdim=True).clamp_min(1e-9)
         importance = importance.mean(dim=0)
         self.last_aux_loss = self.num_experts * torch.sum(importance * load.detach())
@@ -151,9 +153,11 @@ class DeepSeekStyleMoE(nn.Module):
 
     @torch.no_grad()
     def update_routing_bias(self) -> torch.Tensor | None:
-        if self.balance_strategy not in {"bias", "hybrid"} or self.load_batches.item() == 0:
+        if self.balance_strategy not in {"bias", "hybrid"}:
             return None
-        mean_load = self.load_accumulator / self.load_batches
+        # This is called after at least one training forward. Avoid Tensor.item(),
+        # which forced a GPU-to-CPU synchronization at every optimizer step.
+        mean_load = self.load_accumulator / self.load_batches.clamp_min(1.0)
         target = torch.full_like(mean_load, 1.0 / self.num_experts)
         # Overloaded experts receive a lower selection-only bias; underloaded experts
         # receive a higher one. Gating weights still come from the unbiased affinity.

@@ -9,6 +9,7 @@ from asterlm.training.checkpoint import (
     load_checkpoint,
     pin_kda_backend_from_checkpoint,
     save_checkpoint,
+    verify_checkpoint,
 )
 
 
@@ -55,9 +56,24 @@ def test_checkpoint_round_trip(tmp_path):
         train_config=train_config,
         tokens_seen=8,
         keep_last=1,
+        data_state={"cursor": 17, "residual": [1, 2, 3]},
     )
     saved_config = yaml.safe_load((checkpoint / "model_config.yaml").read_text(encoding="utf-8"))["model"]
     assert saved_config["kda_backend"] == "torch"
+    manifest = verify_checkpoint(checkpoint)
+    assert manifest["status"] == "complete"
+    assert manifest["resume_state"]["optimizer"] is True
+    assert manifest["resume_state"]["data_pipeline"] is True
+    assert manifest["data_state_file"] == "data_state.pt"
+    data_state = torch.load(checkpoint / "data_state.pt", weights_only=False)
+    assert data_state["cursor"] == 17
+    assert {item["path"] for item in manifest["artifacts"]} >= {
+        manifest["model_file"],
+        "trainer_state.pt",
+        "model_config.yaml",
+        "train_config.yaml",
+    }
+    assert not list(tmp_path.glob(".*.partial-*"))
 
     auto_config = tiny_config()
     auto_config.kda_backend = "auto"
@@ -88,3 +104,22 @@ def test_checkpoint_rejects_explicit_backend_mismatch(tmp_path):
     incompatible.kda_backend = "fla"
     with pytest.raises(ValueError, match="Checkpoint requires"):
         pin_kda_backend_from_checkpoint(incompatible, checkpoint)
+
+
+def test_checkpoint_hash_detects_corruption(tmp_path):
+    import json
+    import pytest
+
+    model_config = tiny_config()
+    train_config = TrainConfig(device="cpu", max_steps=2, warmup_steps=0)
+    model = AsterLM(model_config)
+    optimizer = build_hybrid_optimizer(model, train_config)
+    checkpoint = save_checkpoint(
+        tmp_path, 0, model, optimizer, model_config, train_config, tokens_seen=0, keep_last=1
+    )
+    manifest = json.loads((checkpoint / "checkpoint_manifest.json").read_text(encoding="utf-8"))
+    model_path = checkpoint / manifest["model_file"]
+    with model_path.open("ab") as handle:
+        handle.write(b"corrupt")
+    with pytest.raises(RuntimeError, match="size mismatch|hash mismatch"):
+        verify_checkpoint(checkpoint)

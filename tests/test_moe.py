@@ -56,6 +56,28 @@ def test_aux_free_bias_update_moves_away_from_overloaded_expert():
     assert torch.isclose(moe.routing_bias.mean(), torch.tensor(0.0))
 
 
+def test_router_load_uses_assignment_fraction():
+    torch.manual_seed(7)
+    moe = DeepSeekStyleMoE(16, 24, 4, 2, shared_experts=0, balance_strategy="bias")
+    inputs = torch.randn(3, 5, 16)
+    output = moe(inputs)
+    assert output.shape == inputs.shape
+    assert moe.last_load is not None
+    torch.testing.assert_close(moe.last_load.sum(), torch.tensor(1.0))
+    assert torch.all(moe.last_load >= 0)
+
+
+def test_router_bias_update_can_skip_host_stats():
+    model = AsterLM(tiny_moe_config())
+    ids = torch.randint(0, 96, (1, 8))
+    output = model(ids, labels=ids, return_logits=False)
+    assert output.loss is not None
+    before = [block.ffn.routing_bias.clone() for block in model.blocks[1:]]
+    assert model.update_moe_router_biases(collect_stats=False) == {}
+    after = [block.ffn.routing_bias for block in model.blocks[1:]]
+    assert any(not torch.equal(left, right) for left, right in zip(before, after, strict=True))
+
+
 def test_router_stays_out_of_muon_partition():
     model = AsterLM(tiny_moe_config())
     optimizer = build_hybrid_optimizer(model, TrainConfig(device="cpu", max_steps=2))

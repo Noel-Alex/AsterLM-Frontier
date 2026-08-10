@@ -173,8 +173,10 @@ class LatentMoE(nn.Module):
         for expert in self.shared:
             shared_out = shared_out + self._run_expert(expert, flat)
 
-        dispatch = F.one_hot(top_idx, num_classes=self.num_experts).float().sum(dim=1) / self.top_k
-        load = dispatch.mean(dim=0)
+        load = torch.bincount(
+            top_idx.reshape(-1), minlength=self.num_experts
+        ).to(dtype=torch.float32)
+        load = load / float(top_idx.numel())
         importance = affinity / affinity.sum(dim=-1, keepdim=True).clamp_min(1e-9)
         importance = importance.mean(dim=0)
         self.last_aux_loss = self.num_experts * torch.sum(importance * load.detach())
@@ -188,9 +190,9 @@ class LatentMoE(nn.Module):
 
     @torch.no_grad()
     def update_routing_bias(self) -> torch.Tensor | None:
-        if self.balance_strategy not in {"bias", "hybrid"} or self.load_batches.item() == 0:
+        if self.balance_strategy not in {"bias", "hybrid"}:
             return None
-        mean_load = self.load_accumulator / self.load_batches
+        mean_load = self.load_accumulator / self.load_batches.clamp_min(1.0)
         target = torch.full_like(mean_load, 1.0 / self.num_experts)
         self.routing_bias.add_(torch.sign(target - mean_load), alpha=self.bias_update_speed)
         self.routing_bias.sub_(self.routing_bias.mean())

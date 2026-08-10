@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import json
+import os
 import random
 import shutil
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -11,6 +13,14 @@ import torch
 import yaml
 
 from asterlm.config import AsterConfig, TrainConfig
+from asterlm.artifacts import (
+    artifact_record,
+    atomic_write_json,
+    atomic_write_text,
+    fsync_directory,
+    fsync_file,
+    sha256_file,
+)
 from asterlm.optim.hybrid import HybridOptimizer, SingleOptimizerAdapter
 
 
@@ -46,59 +56,118 @@ def save_checkpoint(
     tag: str | None = None,
     permanent: bool = False,
     reason: str = "periodic",
+    data_state: dict[str, Any] | None = None,
 ) -> Path:
     root = Path(output_dir)
+    root.mkdir(parents=True, exist_ok=True)
     safe_tag = "" if tag is None else "-" + "".join(
         char if char.isalnum() or char in {"-", "_"} else "-" for char in tag
     ).strip("-")
     checkpoint_dir = root / f"checkpoint-{step:08d}{safe_tag}"
-    checkpoint_dir.mkdir(parents=True, exist_ok=True)
-    model_path = checkpoint_dir / "model.safetensors"
-    try:
-        from safetensors.torch import save_model
-
-        save_model(model, str(model_path), metadata={"format": "pt", "architecture": "AsterLM"})
-    except Exception:
-        model_path = checkpoint_dir / "model.pt"
-        torch.save(model.state_dict(), model_path)
-
-    torch.save(
+    if checkpoint_dir.exists():
+        raise FileExistsError(
+            f"Refusing to overwrite existing checkpoint {checkpoint_dir}; use a unique tag"
+        )
+    staging = root / f".{checkpoint_dir.name}.partial-{uuid.uuid4().hex}"
+    staging.mkdir(parents=False, exist_ok=False)
+    atomic_write_json(
+        staging / "partial_manifest.json",
         {
+            "schema_version": 2,
+            "status": "writing",
             "step": step,
             "tokens_seen": tokens_seen,
-            "optimizer": optimizer.state_dict(),
-            "rng": _rng_state(),
+            "reason": reason,
         },
-        checkpoint_dir / "trainer_state.pt",
     )
-    saved_model_config = model_config.to_dict()
-    # `auto` is convenient at experiment creation but unsafe inside a checkpoint:
-    # installing/removing FLA later would otherwise instantiate a different parameterization.
-    saved_model_config["kda_backend"] = "fla" if bool(getattr(model, "uses_fla", False)) else "torch"
-    (checkpoint_dir / "model_config.yaml").write_text(
-        yaml.safe_dump({"model": saved_model_config}, sort_keys=False), encoding="utf-8"
-    )
-    (checkpoint_dir / "train_config.yaml").write_text(
-        yaml.safe_dump({"train": train_config.to_dict()}, sort_keys=False), encoding="utf-8"
-    )
-    (checkpoint_dir / "checkpoint_manifest.json").write_text(
-        json.dumps(
+    try:
+        model_path = staging / "model.safetensors"
+        try:
+            from safetensors.torch import save_model
+        except ImportError:
+            model_path = staging / "model.pt"
+            torch.save(model.state_dict(), model_path)
+        else:
+            save_model(
+                model,
+                str(model_path),
+                metadata={"format": "pt", "architecture": "AsterLM"},
+            )
+
+        trainer_state = staging / "trainer_state.pt"
+        torch.save(
             {
                 "step": step,
                 "tokens_seen": tokens_seen,
-                "reason": reason,
-                "permanent": permanent,
-                "model_file": model_path.name,
-                "model_bytes": model_path.stat().st_size,
-                "trainer_state_bytes": (checkpoint_dir / "trainer_state.pt").stat().st_size,
+                "optimizer": optimizer.state_dict(),
+                "rng": _rng_state(),
             },
-            indent=2,
-        ),
-        encoding="utf-8",
-    )
-    if permanent:
-        (checkpoint_dir / "KEEP").write_text(reason + "\n", encoding="utf-8")
-    (root / "latest.txt").write_text(str(checkpoint_dir.resolve()), encoding="utf-8")
+            trainer_state,
+        )
+        saved_model_config = model_config.to_dict()
+        # `auto` is convenient at experiment creation but unsafe inside a checkpoint:
+        # installing/removing FLA later would otherwise instantiate a different parameterization.
+        saved_model_config["kda_backend"] = (
+            "fla" if bool(getattr(model, "uses_fla", False)) else "torch"
+        )
+        model_config_path = staging / "model_config.yaml"
+        train_config_path = staging / "train_config.yaml"
+        atomic_write_text(
+            model_config_path,
+            yaml.safe_dump({"model": saved_model_config}, sort_keys=False),
+        )
+        atomic_write_text(
+            train_config_path,
+            yaml.safe_dump({"train": train_config.to_dict()}, sort_keys=False),
+        )
+
+        durable_files = [model_path, trainer_state, model_config_path, train_config_path]
+        data_state_path: Path | None = None
+        if data_state is not None:
+            data_state_path = staging / "data_state.pt"
+            torch.save(data_state, data_state_path)
+            durable_files.append(data_state_path)
+        for path in durable_files:
+            fsync_file(path)
+        artifacts = [artifact_record(path, relative_to=staging) for path in durable_files]
+        manifest = {
+            "schema_version": 2,
+            "status": "complete",
+            "step": step,
+            "tokens_seen": tokens_seen,
+            "reason": reason,
+            "permanent": permanent,
+            "model_file": model_path.name,
+            "model_bytes": model_path.stat().st_size,
+            "trainer_state_bytes": trainer_state.stat().st_size,
+            "data_state_file": data_state_path.name if data_state_path else None,
+            "data_state_bytes": data_state_path.stat().st_size if data_state_path else None,
+            "artifacts": artifacts,
+            "resume_state": {
+                "model": True,
+                "optimizer": True,
+                "scheduler": True,
+                "rng_python": True,
+                "rng_numpy": True,
+                "rng_torch_cpu": True,
+                "rng_torch_cuda": torch.cuda.is_available(),
+                "global_step": True,
+                "tokens_seen": True,
+                "data_pipeline": data_state_path is not None,
+            },
+        }
+        atomic_write_json(staging / "checkpoint_manifest.json", manifest)
+        (staging / "partial_manifest.json").unlink(missing_ok=True)
+        if permanent:
+            atomic_write_text(staging / "KEEP", reason + "\n")
+        fsync_directory(staging)
+        os.replace(staging, checkpoint_dir)
+        fsync_directory(root)
+        atomic_write_text(root / "latest.txt", str(checkpoint_dir.resolve()) + "\n")
+    except BaseException:
+        # Leave the hidden partial directory for power-loss/failure forensics. It is
+        # never considered loadable because it has no complete published manifest.
+        raise
 
     # Permanent token milestones and final checkpoints are never removed by rolling
     # retention. Only ordinary periodic checkpoints count toward keep_last.
@@ -110,6 +179,27 @@ def save_checkpoint(
     for old in rolling[:-keep_last] if keep_last > 0 else []:
         shutil.rmtree(old, ignore_errors=True)
     return checkpoint_dir
+
+
+def verify_checkpoint(checkpoint: str | Path) -> dict[str, Any]:
+    """Validate the completion marker, sizes, and hashes before loading or upload."""
+    root = Path(checkpoint)
+    manifest_path = root / "checkpoint_manifest.json"
+    if not manifest_path.exists():
+        raise RuntimeError(f"Checkpoint is missing its manifest: {root}")
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    if manifest.get("status") != "complete":
+        raise RuntimeError(f"Checkpoint is not complete: {root}")
+    for artifact in manifest.get("artifacts", []):
+        path = root / str(artifact["path"])
+        if not path.is_file():
+            raise RuntimeError(f"Checkpoint artifact is missing: {path}")
+        if path.stat().st_size != int(artifact["size_bytes"]):
+            raise RuntimeError(f"Checkpoint artifact size mismatch: {path}")
+        actual = sha256_file(path)
+        if actual != artifact["sha256"]:
+            raise RuntimeError(f"Checkpoint artifact hash mismatch: {path}")
+    return manifest
 
 
 def resolve_checkpoint(path: str | Path) -> Path:
@@ -146,6 +236,8 @@ def pin_kda_backend_from_checkpoint(model_config: AsterConfig, checkpoint: str |
 
 def load_model_weights(model: torch.nn.Module, checkpoint: str | Path, strict: bool = True) -> Path:
     checkpoint = resolve_checkpoint(checkpoint)
+    if checkpoint.is_dir() and (checkpoint / "checkpoint_manifest.json").exists():
+        verify_checkpoint(checkpoint)
     safe = checkpoint / "model.safetensors" if checkpoint.is_dir() else checkpoint
     if safe.suffix == ".safetensors" and safe.exists():
         from safetensors.torch import load_model

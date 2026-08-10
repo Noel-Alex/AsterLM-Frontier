@@ -4,6 +4,7 @@ import json
 import math
 import os
 import random
+import sys
 import time
 from pathlib import Path
 from typing import Any, Literal
@@ -14,6 +15,8 @@ from torch.utils.data import DataLoader
 
 from asterlm.config import AsterConfig, DataConfig, TrainConfig
 from asterlm.data import AsterTokenizer, PackedTokenDataset, SFTPackedDataset
+from asterlm.artifacts import atomic_write_json
+from asterlm.experiments import ExperimentRegistry
 from asterlm.model import AsterLM
 from asterlm.quantization.loqt import iter_loqt_modules, merge_loqt_modules
 from asterlm.optim import build_optimizer, learning_rate_multiplier
@@ -234,9 +237,22 @@ class Trainer:
             "parameter_storage": self._parameter_storage_summary(),
             "loqt_modules": sum(1 for _ in iter_loqt_modules(self.model)),
         }
-        (self.output / "run_manifest.json").write_text(
-            json.dumps(manifest, indent=2, default=str), encoding="utf-8"
+        self.registry = ExperimentRegistry.create(
+            self.output,
+            repo_root=Path(__file__).resolve().parents[3],
+            model=model_config.to_dict(),
+            train=train_config.to_dict(),
+            data=data_config.to_dict(),
+            environment=manifest["system"],
+            architecture=manifest["architecture"],
+            command=[sys.executable, *sys.argv],
+            parent_run_id=self._parent_run_id(checkpoint_source),
+            hypothesis=os.environ.get("ASTERLM_EXPERIMENT_HYPOTHESIS"),
+            stage=mode,
+            resume_existing=bool(train_config.resume),
         )
+        manifest["run_id"] = self.registry.record["run_id"]
+        atomic_write_json(self.output / "run_manifest.json", manifest)
 
         self.hub: HubRunSync | None = None
         hub_repo_id = os.environ.get("ASTERLM_HUB_REPO_ID") or train_config.hub_repo_id
@@ -253,6 +269,23 @@ class Trainer:
                 if train_config.hub_fail_on_error:
                     raise
                 print(f"WARNING: Hugging Face backup initialization failed: {exc}")
+
+        if self.wandb is not None:
+            run = getattr(self.wandb, "run", None)
+            self.registry.set_wandb_url(getattr(run, "url", None))
+
+    @staticmethod
+    def _parent_run_id(checkpoint_source: str | None) -> str | None:
+        if not checkpoint_source:
+            return None
+        checkpoint = Path(checkpoint_source)
+        candidates = [checkpoint / "experiment.json", checkpoint.parent / "experiment.json"]
+        for path in candidates:
+            try:
+                return str(json.loads(path.read_text(encoding="utf-8"))["run_id"])
+            except Exception:
+                continue
+        return None
 
     def _parameter_storage_summary(self) -> dict[str, Any]:
         by_dtype: dict[str, dict[str, int]] = {}
@@ -431,6 +464,7 @@ class Trainer:
             permanent=permanent,
             reason=reason,
         )
+        self.registry.add_checkpoint(path, reason=reason)
         if self.train_config.save_diagnostic_bundle:
             save_diagnostic_bundle(
                 self.train_config.output_dir,
@@ -495,6 +529,7 @@ class Trainer:
 
     def train(self) -> None:
         cfg = self.train_config
+        self.registry.mark_running()
         self.model.train()
         self.optimizer.zero_grad(set_to_none=True)
         window_start = time.perf_counter()
@@ -518,11 +553,16 @@ class Trainer:
                     decay_shape=cfg.decay_shape,
                 )
                 self.optimizer.set_lr_multiplier(multiplier)
-                accumulated_loss = 0.0
-                accumulated_main = 0.0
-                accumulated_mtp = 0.0
-                accumulated_router_aux = 0.0
-                accumulated_router_z = 0.0
+                # Keep scalar accumulation on-device. Converting every microbatch
+                # loss component to a Python float serialized the CPU and GPU up to
+                # five times per microbatch and disproportionately hurt short MoE
+                # kernels. Values cross to the host only in an already-synchronized
+                # logging window.
+                accumulated_loss = torch.zeros((), device=self.device, dtype=torch.float32)
+                accumulated_main = torch.zeros_like(accumulated_loss)
+                accumulated_mtp = torch.zeros_like(accumulated_loss)
+                accumulated_router_aux = torch.zeros_like(accumulated_loss)
+                accumulated_router_z = torch.zeros_like(accumulated_loss)
 
                 for _ in range(cfg.gradient_accumulation_steps):
                     started = time.perf_counter()
@@ -541,14 +581,14 @@ class Trainer:
                     started = time.perf_counter()
                     loss.backward()
                     window_backward_s += time.perf_counter() - started
-                    accumulated_loss += float(output.loss.detach())
-                    accumulated_main += float(output.main_loss.detach())
+                    accumulated_loss.add_(output.loss.detach().float())
+                    accumulated_main.add_(output.main_loss.detach().float())
                     if output.mtp_loss is not None:
-                        accumulated_mtp += float(output.mtp_loss.detach())
+                        accumulated_mtp.add_(output.mtp_loss.detach().float())
                     if output.router_aux_loss is not None:
-                        accumulated_router_aux += float(output.router_aux_loss.detach())
+                        accumulated_router_aux.add_(output.router_aux_loss.detach().float())
                     if output.router_z_loss is not None:
-                        accumulated_router_z += float(output.router_z_loss.detach())
+                        accumulated_router_z.add_(output.router_z_loss.detach().float())
                     batch_tokens = batch["input_ids"].numel()
                     self.tokens_seen += batch_tokens
                     window_tokens += batch_tokens
@@ -577,7 +617,12 @@ class Trainer:
                 started = time.perf_counter()
                 self.optimizer.step()
                 window_optimizer_s += time.perf_counter() - started
-                moe_balance_stats = self.model.update_moe_router_biases()
+                # Bias updates stay on-device every step. Converting their summary
+                # tensors to Python scalars would otherwise synchronize the GPU four
+                # times per optimizer step, so collect them only when we will log.
+                moe_balance_stats = self.model.update_moe_router_biases(
+                    collect_stats=(self.step + 1) % cfg.log_interval == 0
+                )
                 clip_stats = {"qk_heads_clipped": 0.0, "qk_max_logit": 0.0}
                 if cfg.qk_clip_interval > 0 and (self.step + 1) % cfg.qk_clip_interval == 0:
                     clip_stats = self.model.apply_qk_clip()
@@ -591,11 +636,15 @@ class Trainer:
                         torch.cuda.synchronize(self.device)
                     elapsed = max(time.perf_counter() - window_start, 1e-9)
                     values: dict[str, Any] = {
-                        "loss": accumulated_loss / cfg.gradient_accumulation_steps,
-                        "main_loss": accumulated_main / cfg.gradient_accumulation_steps,
-                        "mtp_loss": accumulated_mtp / cfg.gradient_accumulation_steps,
-                        "router_aux_loss": accumulated_router_aux / cfg.gradient_accumulation_steps,
-                        "router_z_loss": accumulated_router_z / cfg.gradient_accumulation_steps,
+                        "loss": float(accumulated_loss / cfg.gradient_accumulation_steps),
+                        "main_loss": float(accumulated_main / cfg.gradient_accumulation_steps),
+                        "mtp_loss": float(accumulated_mtp / cfg.gradient_accumulation_steps),
+                        "router_aux_loss": float(
+                            accumulated_router_aux / cfg.gradient_accumulation_steps
+                        ),
+                        "router_z_loss": float(
+                            accumulated_router_z / cfg.gradient_accumulation_steps
+                        ),
                         "grad_norm_clipped": float(grad_norm),
                         "lr_multiplier": multiplier,
                         "tokens_per_second": window_tokens / elapsed,
@@ -629,6 +678,16 @@ class Trainer:
                         **self.system_sampler.sample(force=True),
                     }
                     self._log(values)
+                    self.registry.update_progress(
+                        self.tokens_seen,
+                        throughput_tokens_s=values.get("tokens_per_second"),
+                        peak_vram_gib=values.get("cuda_peak_allocated_gb"),
+                        energy_tokens_per_joule=(
+                            values.get("tokens_per_second") / values.get("gpu_power_w")
+                            if values.get("tokens_per_second") and values.get("gpu_power_w")
+                            else None
+                        ),
+                    )
                     print(
                         f"step={self.step:,} tokens={self.tokens_seen:,} "
                         f"loss={values['loss']:.4f} tok/s={values['tokens_per_second']:.0f} "
@@ -667,8 +726,21 @@ class Trainer:
                     print(f"permanent token milestone saved: {path}")
 
             path = self._save("complete", permanent=True, tag="final")
+            self.registry.finish("ok", tokens_seen=self.tokens_seen)
             print(f"training complete; final checkpoint: {path}")
         except BaseException as exc:
+            declared_status = getattr(exc, "asterlm_status", None)
+            if declared_status:
+                status = str(declared_status)
+            elif isinstance(exc, KeyboardInterrupt):
+                status = "interrupted_user"
+            elif isinstance(exc, torch.cuda.OutOfMemoryError):
+                status = "failed_oom"
+            elif isinstance(exc, FloatingPointError):
+                status = "failed_nan"
+            else:
+                status = "failed_kernel"
+            self.registry.finish(status, tokens_seen=self.tokens_seen, reason=str(exc))
             if cfg.save_diagnostic_bundle:
                 bundle = save_diagnostic_bundle(
                     cfg.output_dir,

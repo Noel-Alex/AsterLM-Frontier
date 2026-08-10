@@ -757,7 +757,7 @@ class AsterLM(nn.Module):
 
 
     @torch.no_grad()
-    def update_moe_router_biases(self) -> dict[str, float]:
+    def update_moe_router_biases(self, *, collect_stats: bool = True) -> dict[str, float]:
         loads = []
         biases = []
         candidate_moe = [
@@ -774,7 +774,7 @@ class AsterLM(nn.Module):
             if load is not None:
                 loads.append(load)
                 biases.append(moe.routing_bias)
-        if not loads:
+        if not loads or not collect_stats:
             return {}
         load = torch.stack(loads).mean(dim=0)
         bias = torch.stack(biases).mean(dim=0)
