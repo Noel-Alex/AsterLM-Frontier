@@ -1,0 +1,81 @@
+{
+  "schema_version": 1,
+  "date": "2026-08-10",
+  "classification": "diagnostic_interactive_workstation",
+  "protocol": {
+    "sequence_length": 2048,
+    "micro_batch": 1,
+    "gradient_accumulation": 16,
+    "warmup_updates": 5,
+    "measured_updates": 20,
+    "repetitions": 3,
+    "gpu_sample_interval_seconds": 0.5,
+    "idle_utilization_ceiling_percent": 25,
+    "promotion_grade": false,
+    "annotation": "Codex desktop contributed background GPU load; final benchmark must be rerun detached."
+  },
+  "variants": {
+    "dense-all-mla": {
+      "median_tokens_per_second": 12086.285028218528,
+      "median_gpu_utilization_percent": 66.0,
+      "median_gpu_power_w": 98.215,
+      "median_tokens_per_joule": 123.0594616730492,
+      "median_peak_allocated_gib": 3.5469131469726562
+    },
+    "dense-kda3": {
+      "median_tokens_per_second": 10714.42850926039,
+      "median_gpu_utilization_percent": 59.5,
+      "median_gpu_power_w": 91.075,
+      "median_tokens_per_joule": 113.06139029600276,
+      "median_peak_allocated_gib": 3.7703676223754883
+    },
+    "grouped-moe-kda3": {
+      "median_tokens_per_second": 5908.948829148469,
+      "median_gpu_utilization_percent": 43.0,
+      "median_gpu_power_w": 75.125,
+      "median_tokens_per_joule": 78.97080303103296,
+      "median_peak_allocated_gib": 5.211589813232422,
+      "relative_to_dense_kda3": {
+        "throughput_percent": -44.85,
+        "tokens_per_joule_percent": -30.15,
+        "gpu_utilization_points": -16.5,
+        "peak_allocated_percent": 38.22
+      }
+    },
+    "latent-moe-kda3": {
+      "median_tokens_per_second": 5010.621031428361,
+      "median_gpu_utilization_percent": 39.0,
+      "median_gpu_power_w": 68.0,
+      "median_tokens_per_joule": 73.68560340335824,
+      "median_peak_allocated_gib": 5.365606307983398,
+      "relative_to_dense_kda3": {
+        "throughput_percent": -53.23,
+        "tokens_per_joule_percent": -34.83,
+        "gpu_utilization_points": -20.5,
+        "peak_allocated_percent": 42.31
+      }
+    }
+  },
+  "operator_profiles": {
+    "dense-kda3": {
+      "forward_backward_ms": 268.56,
+      "optimizer_ms": 151.06,
+      "aten_mm_events": 778
+    },
+    "grouped-moe-kda3": {
+      "forward_backward_ms": 415.45,
+      "optimizer_ms": 333.08,
+      "aten_mm_events": 1196
+    },
+    "latent-moe-kda3": {
+      "forward_backward_ms": 489.97,
+      "optimizer_ms": 524.10,
+      "aten_mm_events": 1592
+    }
+  },
+  "raw_artifacts": [
+    "runs/frontier-vnext2/moe-utilization-followup-20260810/matrix.json",
+    "runs/frontier-vnext2/moe-utilization-dense-kda3-20260810/matrix.json",
+    "runs/frontier-vnext2/operator-profiles-20260810/"
+  ]
+}
