@@ -186,6 +186,42 @@
       }
     }
   },
+  "shared_expert_isolation": {
+    "classification": "capacity_changing_cost_control_not_architecture_candidate",
+    "batch2_seq2k_accum8_repetitions": 3,
+    "with_shared": {
+      "median_tokens_per_second": 9872.674925829766,
+      "median_gpu_utilization_percent": 65.0,
+      "median_tokens_per_joule": 104.46169639011497,
+      "median_peak_allocated_gib": 8.124030113220215,
+      "median_phase_cuda_ms": {
+        "forward": 1597.6772079467773,
+        "backward": 1449.2588272094727,
+        "clip_and_finite_gate": 20.025456428527832,
+        "optimizer": 239.880126953125,
+        "router_balance": 2.725856065750122
+      }
+    },
+    "without_shared": {
+      "median_tokens_per_second": 10626.829338454372,
+      "median_gpu_utilization_percent": 67.0,
+      "median_tokens_per_joule": 109.27892784672088,
+      "median_peak_allocated_gib": 7.383755683898926,
+      "relative_to_with_shared": {
+        "throughput_percent": 7.64,
+        "tokens_per_joule_percent": 4.61,
+        "gpu_utilization_points": 2.0,
+        "peak_allocated_percent": -9.11
+      },
+      "median_phase_cuda_ms": {
+        "forward": 1487.910774230957,
+        "backward": 1344.2606582641602,
+        "clip_and_finite_gate": 18.38878345489502,
+        "optimizer": 225.91934967041016,
+        "router_balance": 3.1438080072402954
+      }
+    }
+  },
   "raw_artifacts": [
     "runs/frontier-vnext2/moe-utilization-followup-20260810/matrix.json",
     "runs/frontier-vnext2/moe-utilization-dense-kda3-20260810/matrix.json",
@@ -195,6 +231,8 @@
     "runs/frontier-vnext2/moe-workload-seq4k-screen-20260810/matrix.json",
     "runs/frontier-vnext2/dense-vs-grouped-mb2-confirm-20260810/matrix.json",
     "runs/frontier-vnext2/reference-vs-grouped-mb2-20260810/matrix.json",
-    "runs/frontier-vnext2/phase-timing-dense-vs-grouped-b2-20260810/"
+    "runs/frontier-vnext2/phase-timing-dense-vs-grouped-b2-20260810/",
+    "runs/frontier-vnext2/shared-expert-isolation-b2-20260810/matrix.json",
+    "runs/frontier-vnext2/shared-expert-isolation-b2-repeat-20260810/matrix.json"
   ]
 }
