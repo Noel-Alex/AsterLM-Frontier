@@ -3,7 +3,9 @@ from __future__ import annotations
 
 import argparse
 import json
-import platform
+import statistics
+import subprocess
+import threading
 import time
 from pathlib import Path
 from typing import Any
@@ -13,7 +15,83 @@ import torch
 from asterlm import AsterConfig, AsterLM, TrainConfig
 from asterlm.optim import build_optimizer
 from asterlm.training.precision import PrecisionManager
-from asterlm.training.telemetry import SystemSampler, static_system_manifest
+from asterlm.training.telemetry import static_system_manifest
+
+
+class ContinuousGpuSampler:
+    """Sample GPU activity without synchronizing the training CUDA stream."""
+
+    _FIELDS = (
+        "utilization.gpu",
+        "utilization.memory",
+        "power.draw",
+        "temperature.gpu",
+        "clocks.current.sm",
+        "clocks.current.memory",
+        "memory.used",
+    )
+
+    def __init__(self, device_index: int, interval: float) -> None:
+        self.device_index = int(device_index)
+        self.interval = max(float(interval), 0.1)
+        self.samples: list[dict[str, Any]] = []
+        self._stop = threading.Event()
+        self._thread: threading.Thread | None = None
+        self._phase = "setup"
+        self._iteration = 0
+
+    def set_phase(self, phase: str, iteration: int) -> None:
+        self._phase = phase
+        self._iteration = int(iteration)
+
+    def start(self) -> None:
+        self._thread = threading.Thread(target=self._run, name="aster-gpu-sampler", daemon=True)
+        self._thread.start()
+
+    def stop(self) -> None:
+        self._stop.set()
+        if self._thread is not None:
+            self._thread.join(timeout=max(5.0, self.interval * 3))
+
+    def _run(self) -> None:
+        while not self._stop.is_set():
+            started = time.monotonic()
+            sample: dict[str, Any] = {
+                "time_unix": time.time(),
+                "phase": self._phase,
+                "iteration": self._iteration,
+            }
+            try:
+                output = subprocess.check_output(
+                    [
+                        "nvidia-smi",
+                        "--query-gpu=" + ",".join(self._FIELDS),
+                        "--format=csv,noheader,nounits",
+                        "-i",
+                        str(self.device_index),
+                    ],
+                    text=True,
+                    stderr=subprocess.DEVNULL,
+                    timeout=5,
+                )
+                values = [float(value.strip()) for value in output.splitlines()[0].split(",")]
+                sample.update(dict(zip(self._FIELDS, values, strict=True)))
+            except (OSError, ValueError, subprocess.SubprocessError) as exc:
+                sample["error"] = f"{type(exc).__name__}: {exc}"
+            self.samples.append(sample)
+            self._stop.wait(max(0.0, self.interval - (time.monotonic() - started)))
+
+
+def summarize_gpu_samples(samples: list[dict[str, Any]]) -> dict[str, float | int]:
+    measured = [sample for sample in samples if sample.get("phase") == "measured"]
+    summary: dict[str, float | int] = {"measured_sample_count": len(measured)}
+    for field in ContinuousGpuSampler._FIELDS:
+        values = [float(sample[field]) for sample in measured if field in sample]
+        if values:
+            summary[f"median_{field.replace('.', '_')}"] = statistics.median(values)
+            summary[f"p10_{field.replace('.', '_')}"] = sorted(values)[max(0, int(0.1 * (len(values) - 1)))]
+            summary[f"p90_{field.replace('.', '_')}"] = sorted(values)[min(len(values) - 1, int(0.9 * (len(values) - 1)))]
+    return summary
 
 
 def gib(value: int | float) -> float:
@@ -94,6 +172,7 @@ def main() -> None:
     parser.add_argument("--precision", choices=["amp", "transformer_engine_fp8"], default=None)
     parser.add_argument("--activation-offload", action="store_true")
     parser.add_argument("--compile", action="store_true")
+    parser.add_argument("--gpu-sample-interval", type=float, default=0.5)
     parser.add_argument("--json", default=None)
     args = parser.parse_args()
 
@@ -144,7 +223,11 @@ def main() -> None:
         if device.type == "cuda":
             torch.cuda.manual_seed_all(train.seed)
         result["system"] = static_system_manifest(device)
-        sampler = SystemSampler(device, min_interval=0.1)
+        gpu_sampler = (
+            ContinuousGpuSampler(device.index or 0, args.gpu_sample_interval)
+            if device.type == "cuda"
+            else None
+        )
 
         model = AsterLM(config)
         dtype = {"bfloat16": torch.bfloat16, "float32": torch.float32}[train.dtype]
@@ -174,7 +257,14 @@ def main() -> None:
         data_generator.manual_seed(train.seed + 100003)
         tokens_per_step = train.sequence_length * train.micro_batch_size * train.gradient_accumulation_steps
         total_iterations = args.warmup + args.steps
+        if gpu_sampler is not None:
+            gpu_sampler.start()
         for iteration in range(total_iterations):
+            if gpu_sampler is not None:
+                gpu_sampler.set_phase(
+                    "warmup" if iteration < args.warmup else "measured",
+                    iteration + 1,
+                )
             optimizer.zero_grad(set_to_none=True)
             if device.type == "cuda":
                 torch.cuda.reset_peak_memory_stats(device)
@@ -235,7 +325,13 @@ def main() -> None:
                 "loss": float(loss_value / train.gradient_accumulation_steps),
                 "grad_norm": float(grad_norm),
                 "memory": cuda_snapshot(device),
-                "system": sampler.sample(force=True),
+                # Continuous sampling avoids launching another blocking nvidia-smi
+                # query between every optimizer update.
+                "system": (
+                    dict(gpu_sampler.samples[-1])
+                    if gpu_sampler is not None and gpu_sampler.samples
+                    else {}
+                ),
                 **balance,
             }
             result["steps"].append(record)
@@ -260,6 +356,15 @@ def main() -> None:
             "final_memory": cuda_snapshot(device),
             "fits_11p25_gib_peak": cuda_snapshot(device).get("peak_allocated_gib", 0) <= 11.25,
         }
+        if gpu_sampler is not None:
+            gpu_sampler.stop()
+            result["gpu_samples"] = gpu_sampler.samples
+            result["summary"]["gpu"] = summarize_gpu_samples(gpu_sampler.samples)
+            median_power = result["summary"]["gpu"].get("median_power_draw")
+            if isinstance(median_power, (int, float)) and median_power > 0:
+                result["summary"]["median_tokens_per_joule"] = (
+                    result["summary"]["median_tokens_per_second"] / median_power
+                )
         result["status"] = "ok"
     except torch.cuda.OutOfMemoryError as exc:
         result["status"] = "oom"
@@ -272,6 +377,9 @@ def main() -> None:
         result["error"] = f"{type(exc).__name__}: {exc}"
         print(result["error"])
     finally:
+        if "gpu_sampler" in locals() and gpu_sampler is not None and gpu_sampler._thread is not None:
+            gpu_sampler.stop()
+            result.setdefault("gpu_samples", gpu_sampler.samples)
         if output_path:
             output_path.parent.mkdir(parents=True, exist_ok=True)
             output_path.write_text(json.dumps(result, indent=2, default=str), encoding="utf-8")

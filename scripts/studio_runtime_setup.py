@@ -71,7 +71,7 @@ def dry_run_guard(requirements: list[str]) -> dict[str, Any]:
     prefix = installer_prefix()
     if prefix[-1] == "pip" and Path(prefix[0]).name.startswith("uv"):
         result = subprocess.run(
-            [*prefix, "install", "--upgrade", "--dry-run", *requirements],
+            [*prefix, "install", "--dry-run", *requirements],
             cwd=ROOT,
             text=True,
             stdout=subprocess.PIPE,
@@ -84,7 +84,8 @@ def dry_run_guard(requirements: list[str]) -> dict[str, Any]:
         protected = {"torch", "triton", "datasets", "pyarrow", "huggingface-hub", "zstandard"}
         planned_changes: dict[str, str | None] = {}
         for line in (result.stdout or "").splitlines():
-            match = re.match(r"\s*[+\-~]\s+([A-Za-z0-9_.-]+)==([^\s]+)", line)
+            clean_line = re.sub(r"\x1b\[[0-9;]*m", "", line)
+            match = re.match(r"\s*[+\-~]\s+([A-Za-z0-9_.-]+)==([^\s]+)", clean_line)
             if match and match.group(1).lower().replace("_", "-") in protected:
                 planned_changes[match.group(1)] = match.group(2)
         if planned_changes:
@@ -99,7 +100,7 @@ def dry_run_guard(requirements: list[str]) -> dict[str, Any]:
     try:
         result = subprocess.run(
             [
-                *prefix, 'install', '--upgrade',
+                *prefix, 'install',
                 '--dry-run', '--report', str(report_path), *requirements,
             ],
             cwd=ROOT,
@@ -195,7 +196,7 @@ def main() -> None:
             )
             continue
         dry_run_guard(requirements)
-        install_cmd = [*installer_prefix(), "install", "--upgrade"]
+        install_cmd = [*installer_prefix(), "install"]
         install_cmd.extend(requirements)
         run(install_cmd)
         import torch as torch_after_step
