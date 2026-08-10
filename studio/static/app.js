@@ -82,6 +82,7 @@ const PAGE_TITLES = {
   pipeline:"Turn raw material into training data.",
   architecture:"Know what is real, reference, or research.",
   training:"Design and launch the run.",
+  providers:"Route compute without losing the experiment.",
   experiments:"Read the model while it learns.",
   inference:"Interrogate the finished checkpoints.",
   logs:"Every process, in one place.",
@@ -207,6 +208,25 @@ function renderOverview() {
   $("#last-refresh").textContent=`updated ${new Date().toLocaleTimeString()}`;
 }
 
+function renderProviders() {
+  const rows=S.overview?.providers||[];
+  const grid=$("#provider-grid");
+  if(!grid)return;
+  grid.innerHTML=rows.map(row=>{
+    const state=row.ready?"ready":row.installed?"auth needed":"not installed";
+    const cls=row.ready?"good":row.installed?"warning":"ref";
+    const profiles=(row.profiles||[]).length?`${row.profiles.length} profile${row.profiles.length===1?"":"s"}`:"no profiles";
+    return `<article class="provider-card ${row.ready?"is-ready":""}">
+      <div class="provider-card-top"><div><div class="eyebrow">${esc(row.kind)}</div><h3>${esc(row.label)}</h3></div><span class="status-pill ${cls}">${esc(state)}</span></div>
+      <p>${esc(row.credit)}</p>
+      <div class="provider-facts"><span>${row.installed?"CLI detected":"CLI absent"}</span><span>${esc(profiles)}</span><span>${esc(row.automation)}</span></div>
+      ${row.source_url?`<a href="${esc(row.source_url)}" target="_blank" rel="noreferrer">Official terms / pricing ↗</a>`:""}
+    </article>`;
+  }).join("");
+  const aliases=rows.filter(row=>(row.profiles||[]).length);
+  $("#provider-profile-ledger").innerHTML=aliases.length?aliases.map(row=>`<div class="profile-row"><strong>${esc(row.label)}</strong><div>${row.profiles.map(profile=>`<span class="profile-chip">${esc(profile)}</span>`).join("")}</div></div>`).join(""):`<div class="empty-state">No provider profile aliases are visible to this WSL environment yet.</div>`;
+}
+
 function renderPresets() {
   const presets=S.catalog?.presets||{};
   $("#preset-grid").innerHTML=Object.entries(presets).map(([id,p])=>{
@@ -291,12 +311,16 @@ function renderSettings() {
   $("#set-stall").value=d.stall_seconds;
   $("#set-checkpoint-tokens").value=t.checkpoint_tokens;
   $("#set-keep").value=t.keep_last_checkpoints;
+  const p=s.providers||{};
+  if($("#provider-preferred")) $("#provider-preferred").value=p.preferred||"local";
+  if($("#provider-max-spend")) $("#provider-max-spend").value=p.max_spend_usd_per_job??30;
+  if($("#provider-confirm-cost")) $("#provider-confirm-cost").checked=p.require_cost_confirmation!==false;
 }
 
 async function refreshOverview() {
   try {
     S.overview=await api("/api/overview");
-    renderOverview();renderDatasetCatalog();renderVerifyAndClean();renderSettings();renderRuns();renderJobs();
+    renderOverview();renderDatasetCatalog();renderVerifyAndClean();renderSettings();renderProviders();renderRuns();renderJobs();
     if(S.overview.capabilities)renderCapabilities(S.overview.capabilities);
   } catch(e){showError(e);}
 }
@@ -382,7 +406,7 @@ async function loadConfigs(kind="model") {
 function renderRuns() {
   const runs=S.overview?.runs||[];
   const list=$("#run-list");if(!list)return;
-  list.innerHTML=runs.length?runs.map(r=>`<div class="run-item ${S.selectedRun===r.path?"active":""}" data-run="${esc(r.path)}"><strong>${esc(r.name)}</strong><small>${fmtTokens(r.latest?.tokens_seen)} · ${r.checkpoint_count} checkpoints · ${ago(r.modified)}</small></div>`).join(""):`<div class="empty-state">No run manifests/metrics yet.</div>`;
+  list.innerHTML=runs.length?runs.map(r=>`<div class="run-item ${S.selectedRun===r.path?"active":""}" data-run="${esc(r.path)}"><strong>${esc(r.name)}</strong><small>${esc(r.status||"legacy")} · ${esc(r.provider||"local")} · ${fmtTokens(r.latest?.tokens_seen||r.experiment?.completed_tokens)} · ${r.checkpoint_count} checkpoints · ${ago(r.modified)}</small>${r.run_id?`<code>${esc(r.run_id)}</code>`:""}</div>`).join(""):`<div class="empty-state">No run manifests/metrics yet.</div>`;
 }
 async function selectRun(path) {
   S.selectedRun=path;renderRuns();
@@ -565,6 +589,17 @@ function bind() {
         keep_last_checkpoints:Number($("#set-keep").value),
       }};
       await post("/api/settings",body);toast("Studio settings saved.");await refreshOverview();
+    }catch(e){showError(e);}
+  };
+  $("#save-provider-policy").onclick=async()=>{
+    try{
+      await post("/api/settings",{providers:{
+        preferred:$("#provider-preferred").value,
+        max_spend_usd_per_job:Number($("#provider-max-spend").value),
+        require_cost_confirmation:$("#provider-confirm-cost").checked,
+      }});
+      toast("Compute dispatch policy saved.");
+      await refreshOverview();
     }catch(e){showError(e);}
   };
 }

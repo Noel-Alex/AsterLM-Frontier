@@ -2,9 +2,7 @@
 from __future__ import annotations
 
 import argparse
-import json
 import os
-import pickle
 import signal
 import sys
 import threading
@@ -29,14 +27,7 @@ from studio.stateful_data import StatefulLocalPackedDataset
 class StudioStopRequested(BaseException):
     """Raised only at a safe training-update boundary."""
 
-
-def atomic_pickle(path: Path, payload: Any) -> None:
-    tmp = path.with_name(path.name + ".tmp")
-    with tmp.open("wb") as handle:
-        pickle.dump(payload, handle, protocol=pickle.HIGHEST_PROTOCOL)
-        handle.flush()
-        os.fsync(handle.fileno())
-    os.replace(tmp, path)
+    asterlm_status = "interrupted_user"
 
 
 class StudioTrainer(Trainer):
@@ -108,7 +99,7 @@ class StudioTrainer(Trainer):
 
         assert self.train_config.resume is not None
         checkpoint = resolve_checkpoint(self.train_config.resume)
-        cursor_path = checkpoint / "studio_data_state.pkl"
+        cursor_path = checkpoint / "data_state.pt"
         if not cursor_path.is_file():
             print(
                 "Studio data cursor is absent in this older checkpoint; "
@@ -117,8 +108,9 @@ class StudioTrainer(Trainer):
             )
             return super()._restore_training_data_position()
 
-        with cursor_path.open("rb") as handle:
-            state = pickle.load(handle)
+        import torch
+
+        state = torch.load(cursor_path, map_location="cpu", weights_only=False)
         if int(state.get("version", -1)) != 1:
             raise RuntimeError(
                 f"Unsupported studio_data_state version={state.get('version')}"
@@ -158,10 +150,10 @@ class StudioTrainer(Trainer):
             flush=True,
         )
 
-    def _write_studio_data_state(self, checkpoint: Path) -> None:
+    def _studio_data_state(self) -> dict[str, Any] | None:
         if not self._studio_fast_data or self._studio_train_dataset is None:
-            return
-        payload = {
+            return None
+        return {
             "version": 1,
             "step": int(self.step),
             "tokens_seen": int(self.tokens_seen),
@@ -172,20 +164,6 @@ class StudioTrainer(Trainer):
                 else None
             ),
         }
-        path = checkpoint / "studio_data_state.pkl"
-        atomic_pickle(path, payload)
-
-        manifest_path = checkpoint / "checkpoint_manifest.json"
-        try:
-            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-        except Exception:
-            manifest = {}
-        manifest["studio_data_state"] = path.name
-        manifest["studio_data_state_bytes"] = path.stat().st_size
-        manifest["studio_fast_resume"] = True
-        tmp = manifest_path.with_name(manifest_path.name + ".tmp")
-        tmp.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
-        os.replace(tmp, manifest_path)
 
     def _save(
         self,
@@ -212,8 +190,9 @@ class StudioTrainer(Trainer):
             tag=tag,
             permanent=permanent,
             reason=reason,
+            data_state=self._studio_data_state(),
         )
-        self._write_studio_data_state(path)
+        self.registry.add_checkpoint(path, reason=reason)
 
         if self.train_config.save_diagnostic_bundle:
             save_diagnostic_bundle(

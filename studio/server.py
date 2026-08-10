@@ -24,6 +24,8 @@ from urllib.parse import parse_qs, urlparse
 
 import yaml
 
+from studio.providers import PROVIDER_CATALOG, provider_status
+
 ROOT = Path(__file__).resolve().parents[1]
 STUDIO_ROOT = ROOT / "data" / "aster-studio"
 LOG_ROOT = STUDIO_ROOT / "logs"
@@ -57,6 +59,15 @@ DEFAULT_SETTINGS: dict[str, Any] = {
         "refresh_seconds": 2,
         "metric_points": 500,
     },
+    "providers": {
+        "preferred": "local",
+        "require_cost_confirmation": True,
+        "max_spend_usd_per_job": 30.0,
+        "huggingface_namespaces": [],
+        "lightning_profiles": [],
+        "skypilot_workspaces": [],
+        "aws_profiles": [],
+    },
 }
 
 SAFE_ID = re.compile(r"^[A-Za-z0-9_.-]+$")
@@ -88,6 +99,16 @@ def deep_merge(base: dict[str, Any], incoming: dict[str, Any]) -> dict[str, Any]
 
 def settings() -> dict[str, Any]:
     return deep_merge(DEFAULT_SETTINGS, load_json(SETTINGS_PATH, {}))
+
+
+def validate_settings(value: dict[str, Any]) -> None:
+    providers = value.get("providers") or {}
+    preferred = str(providers.get("preferred", "local"))
+    if preferred not in PROVIDER_CATALOG:
+        raise ValueError(f"Unknown preferred provider: {preferred}")
+    max_spend = float(providers.get("max_spend_usd_per_job", 0.0))
+    if not math.isfinite(max_spend) or max_spend < 0:
+        raise ValueError("Provider max_spend_usd_per_job must be a finite non-negative number")
 
 
 def repo_path(value: str | Path, *, must_be_inside: bool = True) -> Path:
@@ -392,6 +413,7 @@ def runs_status() -> list[dict[str, Any]]:
         return rows
     for path in sorted((p for p in runs_root.iterdir() if p.is_dir()), key=lambda p: p.stat().st_mtime, reverse=True):
         manifest = read_state(path / "run_manifest.json")
+        experiment = read_state(path / "experiment.json")
         metrics = metrics_for_run(path, 120)
         checkpoints = checkpoint_list(path)
         if not manifest and not metrics and not checkpoints:
@@ -415,6 +437,17 @@ def runs_status() -> list[dict[str, Any]]:
                 "checkpoint_count": len(checkpoints),
                 "permanent_checkpoints": sum(item["permanent"] for item in checkpoints),
                 "latest_checkpoint": checkpoints[-1] if checkpoints else None,
+                "experiment": experiment,
+                "run_id": (experiment or {}).get("run_id"),
+                "stage": (experiment or {}).get("stage"),
+                "status": (experiment or {}).get("status"),
+                "completion_fraction": (experiment or {}).get("completion_fraction"),
+                "wandb_url": ((experiment or {}).get("metrics") or {}).get("wandb_url"),
+                "provider": ((experiment or {}).get("environment") or {}).get("provider"),
+                "provider_profile_alias": ((experiment or {}).get("environment") or {}).get(
+                    "provider_profile_alias"
+                ),
+                "parent_run_id": (experiment or {}).get("parent_run_id"),
             }
         )
     return rows[:100]
@@ -1113,6 +1146,7 @@ def overview() -> dict[str, Any]:
         "runs": runs_status(),
         "capabilities": cap,
         "settings": settings(),
+        "providers": provider_status(settings().get("providers")),
     }
 
 
@@ -1199,6 +1233,8 @@ class Handler(BaseHTTPRequestHandler):
                 if report is None:
                     report = {"checks": catalog().get("capability_research", [])}
                 return self.send_json(report)
+            if path == "/api/providers":
+                return self.send_json(provider_status(settings().get("providers")))
             return self.serve_static(path)
         except KeyError as exc:
             self.send_json({"error": f"Missing/not found: {exc}"}, 404)
@@ -1218,6 +1254,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json(job)
             if path == "/api/settings":
                 merged = deep_merge(settings(), payload)
+                validate_settings(merged)
                 atomic_json(SETTINGS_PATH, merged)
                 return self.send_json(merged)
             if path == "/api/clean/plan":

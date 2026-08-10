@@ -23,10 +23,11 @@
         <button class="nav-item" data-page="pipeline"><span>03</span>Pipeline</button>
         <button class="nav-item" data-page="architecture"><span>04</span>Architecture</button>
         <button class="nav-item" data-page="training"><span>05</span>Training</button>
-        <button class="nav-item" data-page="experiments"><span>06</span>Experiments</button>
-        <button class="nav-item" data-page="inference"><span>07</span>Inference</button>
-        <button class="nav-item" data-page="logs"><span>08</span>Logs</button>
-        <button class="nav-item" data-page="settings"><span>09</span>Settings</button>
+        <button class="nav-item" data-page="providers"><span>06</span>Compute</button>
+        <button class="nav-item" data-page="experiments"><span>07</span>Experiments</button>
+        <button class="nav-item" data-page="inference"><span>08</span>Inference</button>
+        <button class="nav-item" data-page="logs"><span>09</span>Logs</button>
+        <button class="nav-item" data-page="settings"><span>10</span>Settings</button>
       </nav>
       <div class="rail-foot">
         <div class="live-dot"></div>
@@ -381,6 +382,61 @@
         </article>
       </section>
 
+      <section class="page" id="page-providers">
+        <div class="editorial-lede compute-lede">
+          <div>
+            <div class="kicker">COMPUTE FABRIC</div>
+            <h2>Burst outward.<br/>Return with evidence.</h2>
+          </div>
+          <p>Local CUDA remains the dependable baseline. Authorized Modal profiles, Lightning, Hugging Face Jobs, research grants and multi-cloud backends are presented as one compute fabric—with explicit cost gates and checkpoint handoffs.</p>
+        </div>
+
+        <div class="compute-strip">
+          <div><span>LOCAL BASELINE</span><strong>RTX 4080 Laptop</strong><small>profiling · pilots · resume</small></div>
+          <div class="compute-arrow">→</div>
+          <div><span>BURST WINDOW</span><strong>Remote GPU job</strong><small>bounded timeout · cost ceiling</small></div>
+          <div class="compute-arrow">→</div>
+          <div><span>DURABLE RETURN</span><strong>HF checkpoint + ledger</strong><small>hash verified · lineage retained</small></div>
+        </div>
+
+        <article class="paper-panel provider-control">
+          <div class="panel-head">
+            <div><div class="eyebrow">DISPATCH POLICY</div><h3>Spend and identity stay explicit</h3></div>
+            <span class="status-pill warning">credentials never enter Studio</span>
+          </div>
+          <div class="form-grid cols-4">
+            <label>Preferred backend<select id="provider-preferred"><option value="local">Local</option><option value="modal">Modal</option><option value="lightning">Lightning AI</option><option value="huggingface_jobs">Hugging Face Jobs</option><option value="skypilot">SkyPilot</option></select></label>
+            <label>Maximum spend / job (USD)<input id="provider-max-spend" type="number" min="0" step="1" value="30"/></label>
+            <label class="toggle-label"><input id="provider-confirm-cost" type="checkbox" checked/><span>Require cost confirmation</span></label>
+          </div>
+          <div class="button-row"><button id="save-provider-policy" class="ink">Save dispatch policy</button></div>
+        </article>
+
+        <div class="section-heading">
+          <div><div class="kicker">BACKENDS</div><h2>Readiness, not promises.</h2></div>
+          <p>A backend is “ready” only when its command and provider-native authentication store are both present. Profile names are safe aliases; tokens are never returned by the API.</p>
+        </div>
+        <div id="provider-grid" class="provider-grid"></div>
+
+        <div class="two-col">
+          <article class="paper-panel">
+            <div class="panel-head"><div><div class="eyebrow">PROFILE ROUTING</div><h3>Authorized workspaces</h3></div></div>
+            <div id="provider-profile-ledger" class="profile-ledger"></div>
+            <div class="warning-box">Separate profiles are for workspaces you are authorized to use. Studio will not create accounts, obtain promotional credits, or evade provider limits.</div>
+          </article>
+          <article class="paper-panel">
+            <div class="panel-head"><div><div class="eyebrow">RUN CONTRACT</div><h3>Every remote launch must carry</h3></div></div>
+            <div class="contract-list">
+              <div><span>01</span><strong>Immutable code + config hashes</strong></div>
+              <div><span>02</span><strong>Timeout and dollar ceiling</strong></div>
+              <div><span>03</span><strong>Provider/profile alias in experiment.json</strong></div>
+              <div><span>04</span><strong>Periodic verified checkpoint upload</strong></div>
+              <div><span>05</span><strong>Metrics, exit reason and lineage on return</strong></div>
+            </div>
+          </article>
+        </div>
+      </section>
+
       <section class="page" id="page-experiments">
         <div class="editorial-lede">
           <div>
@@ -540,8 +596,8 @@
       </section>
 
       <footer>
-        <span>AsterLM Studio 1.1</span>
-        <span>local-first · additive · research controls</span>
+        <span>AsterLM Studio 1.2</span>
+        <span>experiment flight recorder · local first · burst ready</span>
       </footer>
     </main>
   </div>

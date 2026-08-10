@@ -173,6 +173,7 @@ input:focus,select:focus,textarea:focus{border-color:var(--accent);box-shadow:0 
 .run-item:hover,.run-item.active{background:rgba(255,255,255,.35);border-left-color:var(--accent)}
 .run-item strong{font-size:11px;display:block}
 .run-item small{font-size:8px;color:var(--muted);font-family:var(--mono)}
+.run-item code{display:block;color:#55716e;font-size:7px;margin-top:5px;overflow:hidden;text-overflow:ellipsis}
 .experiment-main{min-width:0}
 .metric-picker{display:flex;gap:8px}
 .metric-picker select{width:auto}
@@ -200,10 +201,36 @@ footer{border-top:2px solid var(--ink);margin-top:50px;padding:18px 0;display:fl
 .notice.bad{border-left-color:#e06c5b}
 #toast-root{position:fixed;bottom:20px;right:20px;z-index:110}
 .toast{background:var(--ink);color:var(--paper);padding:11px 15px;margin-top:7px;font-size:10px;box-shadow:var(--shadow);max-width:420px}
+.compute-strip{display:grid;grid-template-columns:1fr auto 1fr auto 1fr;align-items:center;gap:16px;margin:22px 0;border:1px solid var(--line);background:rgba(255,253,250,.46);padding:22px}
+.compute-strip>div:not(.compute-arrow){display:flex;flex-direction:column;gap:5px}
+.compute-strip span{font-family:var(--mono);font-size:8px;letter-spacing:.14em;color:var(--accent)}
+.compute-strip strong{font-size:18px;font-weight:520}
+.compute-strip small{color:var(--muted);font-size:9px}
+.compute-arrow{font-family:var(--mono);color:var(--line);font-size:22px}
+.provider-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-top:18px}
+.provider-card{border:1px solid var(--line);border-top:3px solid var(--line);padding:17px;background:rgba(255,253,250,.42);min-height:210px;display:flex;flex-direction:column}
+.provider-card.is-ready{border-top-color:var(--accent)}
+.provider-card-top{display:flex;justify-content:space-between;gap:12px;align-items:start}
+.provider-card h3{font-family:var(--serif);font-size:21px;font-weight:400;margin:6px 0 0}
+.provider-card p{color:var(--muted);font-size:10px;line-height:1.55;flex:1}
+.provider-card a{color:var(--accent);font-family:var(--mono);font-size:8px;text-decoration:none;margin-top:14px}
+.provider-card a:hover{text-decoration:underline}
+.provider-facts{display:flex;gap:5px;flex-wrap:wrap}
+.provider-facts span,.profile-chip{border:1px solid var(--line);padding:4px 6px;font-family:var(--mono);font-size:7px;color:var(--muted)}
+.profile-ledger{display:flex;flex-direction:column}
+.profile-row{display:grid;grid-template-columns:140px 1fr;gap:12px;padding:10px 0;border-bottom:1px dotted var(--line);align-items:center}
+.profile-row strong{font-size:10px}
+.profile-row>div{display:flex;gap:5px;flex-wrap:wrap}
+.profile-chip{color:var(--accent);border-color:#315a4b}
+.contract-list{display:flex;flex-direction:column}
+.contract-list>div{display:grid;grid-template-columns:32px 1fr;gap:10px;padding:11px 0;border-bottom:1px dotted var(--line);align-items:center}
+.contract-list span{font-family:var(--mono);font-size:8px;color:var(--accent)}
+.contract-list strong{font-size:11px;font-weight:500}
 @media (max-width:1200px){
   #app-shell{grid-template-columns:190px minmax(0,1fr)}
   main{padding-left:28px;padding-right:28px}
   .dataset-grid,.capability-grid{grid-template-columns:repeat(2,1fr)}
+  .provider-grid{grid-template-columns:repeat(2,1fr)}
   .preset-grid{grid-template-columns:repeat(3,1fr)}
   .stats-grid{grid-template-columns:repeat(2,1fr)}
   .form-grid.cols-4{grid-template-columns:repeat(2,1fr)}
@@ -216,7 +243,8 @@ footer{border-top:2px solid var(--ink);margin-top:50px;padding:18px 0;display:fl
   main{padding:0 16px 40px}
   .masthead{align-items:start;flex-direction:column}
   .hero-grid,.two-col,.editorial-lede,.experiment-layout,.logs-layout{grid-template-columns:1fr}
-  .dataset-grid,.capability-grid,.preset-grid,.posttrain-grid,.timeline,.check-grid,.clean-grid{grid-template-columns:1fr}
+  .dataset-grid,.capability-grid,.provider-grid,.preset-grid,.posttrain-grid,.timeline,.check-grid,.clean-grid,.compute-strip{grid-template-columns:1fr}
+  .compute-arrow{transform:rotate(90deg);justify-self:start}
   .form-grid.cols-4,.form-grid.cols-2{grid-template-columns:1fr}
   .span-2{grid-column:span 1}
   .rules,.metric-snapshot{grid-template-columns:1fr 1fr}
