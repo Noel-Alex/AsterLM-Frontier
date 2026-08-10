@@ -7,10 +7,10 @@ def test_overview_includes_clean_corpus_status(monkeypatch) -> None:
     monkeypatch.setattr(server, "dataset_status", lambda: [{"tokens": 7}])
     monkeypatch.setattr(server, "clean_corpora_status", lambda: [{"id": "clean-main"}])
     monkeypatch.setattr(server, "system_info", lambda: {"platform": "test"})
-    monkeypatch.setattr(server, "runs_status", lambda: [])
+    monkeypatch.setattr(server, "runs_status", list)
     monkeypatch.setattr(server, "settings", lambda: {"providers": {}})
     monkeypatch.setattr(server, "provider_status", lambda _providers: [])
-    monkeypatch.setattr(server.JOBS, "list", lambda: [])
+    monkeypatch.setattr(server.JOBS, "list", list)
 
     payload = server.overview()
 
