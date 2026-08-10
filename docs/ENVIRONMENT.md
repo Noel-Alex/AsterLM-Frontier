@@ -43,11 +43,19 @@ PYTHONPATH=src python scripts/frontier_vnext_capabilities.py \
   --output runs/setup/capabilities-fedora-cuda-13.1.json
 ```
 
-In the recovered WSL environment, PyTorch currently reports CUDA runtime 13.0 while
-the NVIDIA compiler wheel is 13.3. This is a separate validation environment, not a
-claim that the Fedora machine used those versions. Aster detects the wheel toolkit's
-headers and configures Transformer Engine's NVRTC include path without overwriting an
-explicit Fedora `CUDA_HOME`/`NVTE_CUDA_INCLUDE_DIR`.
+In the recovered WSL environment, PyTorch reports CUDA runtime 13.0. A transient
+NVCC/CCCL 13.3 plus CUDA-header 13.0 mixture was proven incompatible when compiling
+TileLang. The validated KDA probe instead uses an isolated CUDA 13.0.88 compiler
+prefix selected through `CUDA_HOME`; it does not replace PyTorch's runtime packages.
+This is a separate validation environment, not a claim that the Fedora machine used
+those versions. Never combine a compiler from one CUDA minor with another toolkit's
+headers merely because import-only checks pass.
+
+The experimental Ada dropless-MoE path additionally pins the Apache-2.0
+`nv_grouped_gemm` source commit
+`efe8c40eaf4c8ef57191e0ea9aa4117aa5b1a8f2`. Its extension must be compiled for the
+exact PyTorch ABI, CUDA toolkit and SM capability, then pass
+`tests/test_moe_cutlass_cuda.py`. A wheel/import alone is not acceptance evidence.
 
 ## Verify
 

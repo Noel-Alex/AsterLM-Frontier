@@ -1,0 +1,87 @@
+{
+  "schema_version": 1,
+  "status": "systems_only_no_quality_claim",
+  "date": "2026-08-10",
+  "backend": "cuda-ada-sm89",
+  "gpu": "NVIDIA GeForce RTX 4080 Laptop GPU",
+  "torch": "2.13.0+cu130",
+  "upstream": {
+    "flash_linear_attention": "0.5.2",
+    "tilelang": "0.1.13",
+    "nv_grouped_gemm_commit": "efe8c40eaf4c8ef57191e0ea9aa4117aa5b1a8f2"
+  },
+  "kda_short_context": {
+    "sequence_length": 2048,
+    "micro_batch_size": 1,
+    "gradient_accumulation_steps": 1,
+    "candidates": {
+      "fla_baseline": {
+        "median_tokens_per_second": 5004.823300695086,
+        "median_gpu_util_percent": 78.0,
+        "median_forward_cuda_ms": 92.07404708862305,
+        "median_backward_cuda_ms": 242.59750366210938
+      },
+      "fla_tilelang": {
+        "median_tokens_per_second": 5872.607602215326,
+        "median_gpu_util_percent": 83.0,
+        "median_forward_cuda_ms": 99.88667297363281,
+        "median_backward_cuda_ms": 213.13217163085938
+      },
+      "fla_tilelang_compiled_surroundings": {
+        "median_tokens_per_second": 6746.39,
+        "median_gpu_util_percent": 87.0,
+        "median_forward_cuda_ms": 89.79,
+        "median_backward_cuda_ms": 204.60
+      },
+      "compiled_dense_mla_control": {
+        "median_tokens_per_second": 7803.12,
+        "median_gpu_util_percent": 98.0,
+        "median_forward_cuda_ms": 55.35,
+        "median_backward_cuda_ms": 184.86
+      }
+    }
+  },
+  "moe_repair": {
+    "sequence_length": 2048,
+    "fair_batch1_accum16": {
+      "te_grouped_tilelang": {
+        "median_tokens_per_second": 5826.18,
+        "median_gpu_util_percent": 41.0,
+        "peak_allocated_gib": 5.212,
+        "median_forward_cuda_ms": 2869.8,
+        "median_backward_cuda_ms": 2616.2
+      },
+      "cutlass_uncached": {
+        "median_tokens_per_second": 6757.14,
+        "median_gpu_util_percent": 53.0,
+        "peak_allocated_gib": 5.407,
+        "median_forward_cuda_ms": 2447.7,
+        "median_backward_cuda_ms": 2200.4
+      },
+      "cutlass_cached": {
+        "median_tokens_per_second": 7818.49,
+        "median_gpu_util_percent": 54.0,
+        "peak_allocated_gib": 5.414,
+        "median_forward_cuda_ms": 2166.2,
+        "median_backward_cuda_ms": 1884.8
+      }
+    },
+    "safe_batch2_accum8": {
+      "median_tokens_per_second": 12334.390889904917,
+      "mean_gpu_util_percent": 79.0625,
+      "median_gpu_util_percent": 82.0,
+      "p90_gpu_util_percent": 92.0,
+      "peak_allocated_gib": 8.265103816986084
+    },
+    "provisional_batch3_accum6": {
+      "median_tokens_per_second": 14238.356009944853,
+      "mean_gpu_util_percent": 82.0,
+      "median_gpu_util_percent": 89.0,
+      "p90_gpu_util_percent": 96.0,
+      "peak_allocated_gib": 10.916951656341553,
+      "cold_warmup_seconds": [84.7861783240005, 69.93895200399857, 146.68706709099934],
+      "status": "provisional_pending_memory_and_recovery_soak"
+    }
+  },
+  "energy_policy": "observational_only_never_used_for_selection"
+}

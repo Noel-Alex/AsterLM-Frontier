@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import os
+
 import torch
 from torch import nn
 from torch.nn import functional as F
 
 from .ffn import SwiGLU
 from .linear import build_linear
+from .moe_grouped_cutlass import CUTLASSGroupedRoutedExperts
 from .moe_grouped_te import TEGroupedRoutedExperts
 
 
@@ -52,12 +54,12 @@ class DeepSeekStyleMoE(nn.Module):
         self.register_buffer("routing_bias", torch.zeros(num_experts, dtype=torch.float32))
         self.register_buffer("load_accumulator", torch.zeros(num_experts, dtype=torch.float32), persistent=False)
         self.register_buffer("load_batches", torch.zeros((), dtype=torch.float32), persistent=False)
-        ffn_kwargs = dict(
-            loqt_rank=loqt_rank,
-            loqt_alpha=loqt_alpha,
-            loqt_group_size=loqt_group_size,
-            init_std=init_std,
-        )
+        ffn_kwargs = {
+            "loqt_rank": loqt_rank,
+            "loqt_alpha": loqt_alpha,
+            "loqt_group_size": loqt_group_size,
+            "init_std": init_std,
+        }
         self.routed = nn.ModuleList(
             [SwiGLU(dim, expert_hidden, dropout, linear_backend, **ffn_kwargs) for _ in range(num_experts)]
         )
@@ -65,9 +67,9 @@ class DeepSeekStyleMoE(nn.Module):
             [SwiGLU(dim, expert_hidden, dropout, linear_backend, **ffn_kwargs) for _ in range(shared_experts)]
         )
         requested_impl = os.environ.get("ASTER_MOE_IMPL", "reference").strip().lower()
-        if requested_impl not in {"reference", "grouped"}:
+        if requested_impl not in {"reference", "grouped", "cutlass"}:
             raise ValueError(
-                "ASTER_MOE_IMPL must be either 'reference' or 'grouped', "
+                "ASTER_MOE_IMPL must be 'reference', 'grouped', or 'cutlass', "
                 f"got {requested_impl!r}"
             )
         if requested_impl == "grouped" and linear_backend != "transformer_engine":
@@ -84,6 +86,14 @@ class DeepSeekStyleMoE(nn.Module):
                 num_experts=num_experts,
                 dropout=dropout,
                 align=16,
+            )
+        elif self.moe_impl == "cutlass":
+            self._grouped_routed = CUTLASSGroupedRoutedExperts(
+                self.routed,
+                dim=dim,
+                expert_hidden=expert_hidden,
+                num_experts=num_experts,
+                dropout=dropout,
             )
         self.last_aux_loss: torch.Tensor | None = None
         self.last_z_loss: torch.Tensor | None = None
@@ -116,7 +126,7 @@ class DeepSeekStyleMoE(nn.Module):
         top_weight = affinity.gather(-1, top_idx)
         top_weight = top_weight / top_weight.sum(dim=-1, keepdim=True).clamp_min(1e-9)
 
-        if self.moe_impl == "grouped":
+        if self.moe_impl in {"grouped", "cutlass"}:
             if self._grouped_routed is None:
                 raise RuntimeError("Grouped MoE bridge was not initialized")
             routed_out = self._grouped_routed(flat, top_idx, top_weight)

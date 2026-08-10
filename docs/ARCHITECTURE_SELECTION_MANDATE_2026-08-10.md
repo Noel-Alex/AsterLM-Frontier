@@ -103,6 +103,17 @@ Promotion order is reference correctness, forward/backward numerical parity,
 microbenchmark, full block, full model training and quality. A fast isolated GEMM
 does not overrule a slower end-to-end model.
 
+Low utilization is an implementation defect to investigate, not an architecture
+rejection criterion. Keep algorithmic/quality status separate from backend maturity.
+No candidate may be rejected for systems performance until its reference is correct
+and the viable implementation paths on the target backend have been profiled: graph
+breaks and host synchronizations, dispatch/layout, fusion, GEMM shapes, launch count,
+compiler capture and available upstream kernels. Record unresolved gaps as
+optimization debt and keep the candidate eligible for a later backend. The target is
+the highest correct end-to-end throughput with no avoidable idle gaps; a sampled
+`nvidia-smi` utilization value of exactly 100% is useful evidence, not a substitute
+for achieved-compute, memory-throughput and phase-timing measurements.
+
 Create a separate repository only when a component has a model-agnostic API,
 independent correctness suite, independent benchmarks, permissive license boundary
 and plausible reuse outside AsterLM. Until then, keep experimental adapters here.

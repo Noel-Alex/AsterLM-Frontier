@@ -84,7 +84,12 @@ def _default_registry() -> BackendRegistry:
             hardware_family="Ada consumer/laptop",
             precision_candidates=("bf16", "fp8"),
             attention_candidates=("torch_sdpa", "fla_triton", "custom_triton"),
-            moe_candidates=("torch_reference", "transformer_engine_grouped", "custom_triton"),
+            moe_candidates=(
+                "torch_reference",
+                "transformer_engine_grouped",
+                "cutlass_grouped",
+                "custom_triton",
+            ),
             notes="Primary laptop backend; every optional path requires sustained full-model evidence.",
         )
     )
@@ -96,7 +101,12 @@ def _default_registry() -> BackendRegistry:
             hardware_family="Hopper data-center",
             precision_candidates=("bf16", "fp8"),
             attention_candidates=("torch_sdpa", "flash_attention", "flash_mla", "tile_kernels"),
-            moe_candidates=("transformer_engine_grouped", "deep_gemm", "tile_kernels"),
+            moe_candidates=(
+                "transformer_engine_grouped",
+                "cutlass_grouped",
+                "deep_gemm",
+                "tile_kernels",
+            ),
             notes="Modal candidate; exact GPU type must be pinned for cost comparisons.",
         )
     )

@@ -5,8 +5,10 @@ from torch import nn
 from torch.nn import functional as F
 
 from asterlm.quantization.loqt import effective_parameter_count
+
 from .ffn import SwiGLU
 from .linear import build_linear, mark_residual
+from .moe_grouped_cutlass import CUTLASSGroupedRoutedExperts
 from .moe_grouped_te import TEGroupedRoutedExperts
 from .norm import RMSNorm
 
@@ -55,8 +57,8 @@ class LatentMoE(nn.Module):
             raise ValueError("LatentMoE latent_dim must be positive and smaller than dim")
         if shared_experts < 0:
             raise ValueError("shared_experts must be non-negative")
-        if moe_impl not in {"reference", "grouped"}:
-            raise ValueError("moe_impl must be reference or grouped")
+        if moe_impl not in {"reference", "grouped", "cutlass"}:
+            raise ValueError("moe_impl must be reference, grouped, or cutlass")
         if moe_impl == "grouped" and linear_backend != "transformer_engine":
             raise ValueError("grouped LatentMoE requires Transformer Engine expert linears")
 
@@ -87,12 +89,12 @@ class LatentMoE(nn.Module):
         )
         self.register_buffer("load_batches", torch.zeros((), dtype=torch.float32), persistent=False)
 
-        ffn_kwargs = dict(
-            loqt_rank=loqt_rank,
-            loqt_alpha=loqt_alpha,
-            loqt_group_size=loqt_group_size,
-            init_std=init_std,
-        )
+        ffn_kwargs = {
+            "loqt_rank": loqt_rank,
+            "loqt_alpha": loqt_alpha,
+            "loqt_group_size": loqt_group_size,
+            "init_std": init_std,
+        }
         self.routed = nn.ModuleList(
             [
                 SwiGLU(latent_dim, expert_hidden, dropout, linear_backend, **ffn_kwargs)
@@ -111,6 +113,14 @@ class LatentMoE(nn.Module):
                 num_experts=num_experts,
                 dropout=dropout,
                 align=16,
+            )
+        elif self.moe_impl == "cutlass":
+            self._grouped_routed = CUTLASSGroupedRoutedExperts(
+                self.routed,
+                dim=latent_dim,
+                expert_hidden=expert_hidden,
+                num_experts=num_experts,
+                dropout=dropout,
             )
 
         self.last_aux_loss: torch.Tensor | None = None
@@ -153,7 +163,7 @@ class LatentMoE(nn.Module):
         top_weight = top_weight / top_weight.sum(dim=-1, keepdim=True).clamp_min(1e-9)
 
         latent = self.down_proj(flat)
-        if self.moe_impl == "grouped":
+        if self.moe_impl in {"grouped", "cutlass"}:
             if self._grouped_routed is None:
                 raise RuntimeError("Grouped LatentMoE bridge was not initialized")
             routed_latent = self._grouped_routed(latent, top_idx, top_weight)

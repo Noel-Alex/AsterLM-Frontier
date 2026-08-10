@@ -229,6 +229,15 @@ def main() -> None:
     )
     parser.add_argument("--activation-offload", action="store_true")
     parser.add_argument("--compile", action="store_true")
+    parser.add_argument(
+        "--allow-compile-transformer-engine-experimental",
+        action="store_true",
+        help=(
+            "Allow the explicitly experimental torch.compile + Transformer Engine "
+            "combination. This is disabled by default until numerical parity and "
+            "end-to-end stability are established for the exact backend."
+        ),
+    )
     parser.add_argument("--gpu-sample-interval", type=float, default=0.5)
     parser.add_argument("--json", default=None)
     args = parser.parse_args()
@@ -305,8 +314,16 @@ def main() -> None:
         optimizer = build_optimizer(model, train)
         result["memory_after_optimizer_build"] = cuda_snapshot(device)
 
-        if train.compile and config.linear_backend == "transformer_engine":
-            raise ValueError("Do not combine --compile and Transformer Engine in the first probe")
+        if (
+            train.compile
+            and config.linear_backend == "transformer_engine"
+            and not args.allow_compile_transformer_engine_experimental
+        ):
+            raise ValueError(
+                "Compile + Transformer Engine remains experimental; pass "
+                "--allow-compile-transformer-engine-experimental only for an explicit "
+                "parity and performance probe"
+            )
         forward_model = (
             torch.compile(model, mode=train.compile_mode, dynamic=False) if train.compile else model
         )
