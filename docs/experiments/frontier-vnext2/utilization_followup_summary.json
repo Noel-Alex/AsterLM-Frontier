@@ -240,6 +240,41 @@
     },
     "decision": "reject_grouped_one_group_keep_existing_te_swiglu"
   },
+  "routed_dispatch_probe": {
+    "shape": {
+      "rows": 4096,
+      "dim": 768,
+      "hidden": 704,
+      "experts": 8,
+      "top_k": 2,
+      "assignments": 8192
+    },
+    "precision": "transformer_engine_delayed_fp8",
+    "median_ms": {
+      "dispatch_pack": 0.6574079990386963,
+      "grouped_mlp_forward": 1.1234880089759827,
+      "combine": 0.26214399933815,
+      "forward_total": 2.054655909538269,
+      "backward": 2.0311520099639893,
+      "forward_backward_total": 4.073487997055054
+    },
+    "forward_share_percent": {
+      "dispatch_pack": 31.996014319810453,
+      "grouped_mlp": 54.68010501225277,
+      "combine": 12.758535291539893
+    }
+  },
+  "te_index_map_permute_probe": {
+    "bf16_parity": {
+      "output_relative_l2": 0.0,
+      "input_grad_relative_l2": 0.0,
+      "max_weight_grad_relative_l2": 0.0
+    },
+    "current_median_forward_backward_ms": 4.930047988891602,
+    "te_permute_median_forward_backward_ms": 4.962431907653809,
+    "te_permute_speedup_percent": -0.6525816245913529,
+    "decision": "reject_direct_index_map_substitution"
+  },
   "raw_artifacts": [
     "runs/frontier-vnext2/moe-utilization-followup-20260810/matrix.json",
     "runs/frontier-vnext2/moe-utilization-dense-kda3-20260810/matrix.json",
@@ -252,6 +287,8 @@
     "runs/frontier-vnext2/phase-timing-dense-vs-grouped-b2-20260810/",
     "runs/frontier-vnext2/shared-expert-isolation-b2-20260810/matrix.json",
     "runs/frontier-vnext2/shared-expert-isolation-b2-repeat-20260810/matrix.json",
-    "runs/frontier-vnext2/te-shared-expert-probe-20260810.json"
+    "runs/frontier-vnext2/te-shared-expert-probe-20260810.json",
+    "runs/frontier-vnext2/moe-dispatch-probe-20260810.json",
+    "runs/frontier-vnext2/te-moe-permute-probe-20260810.json"
   ]
 }
