@@ -127,6 +127,31 @@
           "peak_allocated_percent": 31.57
         }
       }
+    },
+    "reference_vs_grouped_batch2_seq2k_accum8": {
+      "warmup_updates": 5,
+      "measured_updates": 20,
+      "repetitions": 3,
+      "reference-moe-kda3": {
+        "median_tokens_per_second": 7818.667397474643,
+        "median_gpu_utilization_percent": 48.0,
+        "median_gpu_power_w": 80.57,
+        "median_tokens_per_joule": 97.09614899068168,
+        "median_peak_allocated_gib": 8.485073566436768
+      },
+      "grouped-moe-kda3": {
+        "median_tokens_per_second": 11006.141335003622,
+        "median_gpu_utilization_percent": 66.0,
+        "median_gpu_power_w": 102.45,
+        "median_tokens_per_joule": 107.42939321623838,
+        "median_peak_allocated_gib": 8.12308406829834,
+        "relative_to_reference": {
+          "throughput_percent": 40.77,
+          "tokens_per_joule_percent": 10.64,
+          "gpu_utilization_points": 18.0,
+          "peak_allocated_percent": -4.27
+        }
+      }
     }
   },
   "raw_artifacts": [
@@ -136,6 +161,7 @@
     "runs/frontier-vnext2/moe-work-granularity-screen-20260810/matrix.json",
     "runs/frontier-vnext2/moe-workload-mb2-screen-20260810/matrix.json",
     "runs/frontier-vnext2/moe-workload-seq4k-screen-20260810/matrix.json",
-    "runs/frontier-vnext2/dense-vs-grouped-mb2-confirm-20260810/matrix.json"
+    "runs/frontier-vnext2/dense-vs-grouped-mb2-confirm-20260810/matrix.json",
+    "runs/frontier-vnext2/reference-vs-grouped-mb2-20260810/matrix.json"
   ]
 }
