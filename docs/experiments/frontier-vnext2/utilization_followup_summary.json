@@ -275,6 +275,47 @@
     "te_permute_speedup_percent": -0.6525816245913529,
     "decision": "reject_direct_index_map_substitution"
   },
+  "te_mask_pad_permute_probe": {
+    "precision": "transformer_engine_delayed_fp8",
+    "bf16_parity": {
+      "output_relative_l2": 0.0032607,
+      "input_grad_relative_l2": 0.0047919,
+      "max_weight_grad_relative_l2": 0.0049376
+    },
+    "current_median_forward_backward_ms": 3.800608,
+    "te_mask_pad_median_forward_backward_ms": 3.776512,
+    "te_mask_pad_speedup_percent": 0.638,
+    "decision": "advance_only_to_full_model_gate"
+  },
+  "te_mask_pad_full_model_gate": {
+    "batch2_seq2k_accum8_repetitions": 3,
+    "provenance": {
+      "base_commit": "f415376",
+      "worktree_was_dirty": true,
+      "note": "Exact experimental candidate source was committed immediately after the run, before removal."
+    },
+    "current": {
+      "median_tokens_per_second": 11343.4056,
+      "median_gpu_utilization_percent": 68.5,
+      "median_gpu_power_w": 104.63,
+      "median_tokens_per_joule": 108.4145,
+      "median_peak_allocated_gib": 8.123084
+    },
+    "te_mask_pad": {
+      "median_tokens_per_second": 11127.6386,
+      "median_gpu_utilization_percent": 67.0,
+      "median_gpu_power_w": 103.11,
+      "median_tokens_per_joule": 107.9201,
+      "median_peak_allocated_gib": 8.124007,
+      "relative_to_current": {
+        "throughput_percent": -1.9021,
+        "tokens_per_joule_percent": -0.456,
+        "gpu_utilization_points": -1.5,
+        "peak_allocated_percent": 0.01136
+      }
+    },
+    "decision": "reject_keep_current_grouped_dispatch"
+  },
   "raw_artifacts": [
     "runs/frontier-vnext2/moe-utilization-followup-20260810/matrix.json",
     "runs/frontier-vnext2/moe-utilization-dense-kda3-20260810/matrix.json",
@@ -289,6 +330,8 @@
     "runs/frontier-vnext2/shared-expert-isolation-b2-repeat-20260810/matrix.json",
     "runs/frontier-vnext2/te-shared-expert-probe-20260810.json",
     "runs/frontier-vnext2/moe-dispatch-probe-20260810.json",
-    "runs/frontier-vnext2/te-moe-permute-probe-20260810.json"
+    "runs/frontier-vnext2/te-moe-permute-probe-20260810.json",
+    "runs/frontier-vnext2/te-moe-permute-pad-probe-20260810.json",
+    "runs/frontier-vnext2/current-vs-te-mask-pad-b2-20260810/matrix.json"
   ]
 }

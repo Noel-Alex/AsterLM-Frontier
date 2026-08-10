@@ -82,6 +82,53 @@ class TEPermuteGroupedExperts:
         )
 
 
+class TEMaskPadGroupedExperts:
+    """Official TE mask-map fused permutation, padding and weighted unpermute."""
+
+    def __init__(self, bridge: TEGroupedRoutedExperts) -> None:
+        self.bridge = bridge
+
+    def __call__(
+        self,
+        flat: torch.Tensor,
+        top_idx: torch.Tensor,
+        top_weight: torch.Tensor,
+    ) -> torch.Tensor:
+        from transformer_engine.pytorch import moe_permute_and_pad_with_probs, moe_unpermute
+
+        routing_map = torch.zeros(
+            (flat.shape[0], self.bridge.num_experts),
+            dtype=torch.int32,
+            device=flat.device,
+        ).scatter_(1, top_idx, 1)
+        dense_probs = torch.zeros(
+            (flat.shape[0], self.bridge.num_experts),
+            dtype=torch.float32,
+            device=flat.device,
+        ).scatter(1, top_idx, top_weight.float())
+        tokens_per_expert = torch.bincount(
+            top_idx.reshape(-1),
+            minlength=self.bridge.num_experts,
+        )
+        permuted, _, row_id_map, pad_offsets, target_counts = moe_permute_and_pad_with_probs(
+            flat,
+            dense_probs,
+            routing_map,
+            tokens_per_expert,
+            self.bridge.align,
+        )
+        split_sizes = target_counts.to(torch.int32)
+        expert_output = self.bridge.fused(permuted, split_sizes, split_sizes)
+        return moe_unpermute(
+            expert_output,
+            row_id_map,
+            merging_probs=dense_probs,
+            restore_shape=flat.shape,
+            map_type="mask",
+            pad_offsets=pad_offsets,
+        )
+
+
 def zero_grad(parameters: list[torch.nn.Parameter]) -> None:
     for parameter in parameters:
         parameter.grad = None
@@ -153,7 +200,11 @@ def benchmark(
         "repetitions": repetitions,
         "samples_ms": samples,
         "median_ms": medians,
-        "te_permute_speedup_percent": 100.0 * (medians["current"] / medians["te_permute"] - 1.0),
+        "speedup_percent": {
+            name: 100.0 * (medians["current"] / duration - 1.0)
+            for name, duration in medians.items()
+            if name != "current"
+        },
     }
 
 
@@ -186,6 +237,7 @@ def main() -> None:
         align=16,
     )
     candidate = TEPermuteGroupedExperts(bridge)
+    mask_candidate = TEMaskPadGroupedExperts(bridge)
 
     token_ids = torch.arange(args.rows, device=device, dtype=torch.long)
     top_idx = torch.stack(
@@ -200,15 +252,23 @@ def main() -> None:
     parameters = list(experts.parameters())
     current_fn = lambda x: bridge(x, top_idx, top_weight)
     candidate_fn = lambda x: candidate(x, top_idx, top_weight)
+    mask_candidate_fn = lambda x: mask_candidate(x, top_idx, top_weight)
 
-    parity = parity_report(current_fn, candidate_fn, source, parameters)
+    parity = {
+        "te_index": parity_report(current_fn, candidate_fn, source, parameters),
+        "te_mask_pad": parity_report(current_fn, mask_candidate_fn, source, parameters),
+    }
     train = TrainConfig()
     train.precision_backend = "transformer_engine_fp8"
     train.fp8_recipe = "delayed"
     train.fp8_amax_history_len = 16
     precision = PrecisionManager(train, device, torch.bfloat16)
     timing = benchmark(
-        {"current": current_fn, "te_permute": candidate_fn},
+        {
+            "current": current_fn,
+            "te_permute": candidate_fn,
+            "te_mask_pad": mask_candidate_fn,
+        },
         source,
         parameters,
         precision,

@@ -14,10 +14,10 @@ from pathlib import Path
 from typing import Any
 
 VARIANTS = {
-    "dense-all-mla": ("model-screen-dense-all-mla.yaml", "reference"),
-    "dense-kda3": ("model-screen-dense-kda3.yaml", "reference"),
-    "grouped-moe-kda3": ("model-screen-moe-grouped-kda3.yaml", "grouped"),
-    "latent-moe-kda3": ("model-screen-latentmoe-kda3.yaml", "grouped"),
+    "dense-all-mla": ("model-screen-dense-all-mla.yaml", "reference", "current"),
+    "dense-kda3": ("model-screen-dense-kda3.yaml", "reference", "current"),
+    "grouped-moe-kda3": ("model-screen-moe-grouped-kda3.yaml", "grouped", "current"),
+    "latent-moe-kda3": ("model-screen-latentmoe-kda3.yaml", "grouped", "current"),
 }
 
 
@@ -109,7 +109,7 @@ def main() -> None:
         "--variant-spec",
         action="append",
         default=[],
-        metavar="NAME=FILENAME=IMPLEMENTATION",
+        metavar="NAME=FILENAME=IMPLEMENTATION[=DISPATCH]",
         help="Register an experiment-local model config without editing this script.",
     )
     args = parser.parse_args()
@@ -117,13 +117,22 @@ def main() -> None:
     variants = dict(VARIANTS)
     custom_names: list[str] = []
     for raw_spec in args.variant_spec:
-        try:
-            name, filename, implementation = raw_spec.split("=", 2)
-        except ValueError as exc:
-            raise SystemExit(f"Invalid --variant-spec {raw_spec!r}; expected NAME=FILENAME=IMPLEMENTATION") from exc
-        if not name or not filename or implementation not in {"reference", "grouped"}:
+        parts = raw_spec.split("=")
+        if len(parts) not in {3, 4}:
+            raise SystemExit(
+                f"Invalid --variant-spec {raw_spec!r}; expected "
+                "NAME=FILENAME=IMPLEMENTATION[=DISPATCH]"
+            )
+        name, filename, implementation = parts[:3]
+        dispatch = parts[3] if len(parts) == 4 else "current"
+        if (
+            not name
+            or not filename
+            or implementation not in {"reference", "grouped"}
+            or dispatch not in {"current", "te_mask_pad"}
+        ):
             raise SystemExit(f"Invalid --variant-spec {raw_spec!r}")
-        variants[name] = (filename, implementation)
+        variants[name] = (filename, implementation, dispatch)
         custom_names.append(name)
 
     requested = args.variants if args.variants is not None else (custom_names or list(VARIANTS))
@@ -168,19 +177,20 @@ def main() -> None:
         "trials": records,
     }
     for variant in selected_variants:
-        filename, implementation = variants[variant]
+        filename, implementation, dispatch = variants[variant]
         model_path = args.config_root / filename
         manifest["models"][variant] = {
             "path": str(model_path),
             "sha256": sha256(model_path),
             "moe_implementation": implementation,
+            "moe_dispatch": dispatch,
         }
     atomic_json(args.output / "matrix.json", manifest)
 
     for repetition in range(args.repetitions):
         order = orders[repetition % len(orders)]
         for variant in order:
-            filename, implementation = variants[variant]
+            filename, implementation, dispatch = variants[variant]
             trial_name = f"r{repetition + 1}-{variant}"
             result_path = args.output / f"{trial_name}.json"
             log_path = args.output / f"{trial_name}.log"
@@ -209,6 +219,7 @@ def main() -> None:
             ]
             environment = dict(os.environ)
             environment["ASTER_MOE_IMPL"] = implementation
+            environment["ASTER_MOE_DISPATCH"] = dispatch
             started = time.monotonic()
             with log_path.open("w", encoding="utf-8") as log:
                 completed = subprocess.run(
@@ -226,6 +237,7 @@ def main() -> None:
                 "repetition": repetition + 1,
                 "command": command,
                 "moe_implementation": implementation,
+                "moe_dispatch": dispatch,
                 "idle_before": idle,
                 "seconds": time.monotonic() - started,
                 "returncode": completed.returncode,
