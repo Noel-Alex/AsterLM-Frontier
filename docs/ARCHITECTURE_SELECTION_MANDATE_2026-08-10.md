@@ -84,6 +84,11 @@ Blackwell SM120 and a generic fallback. Optimized execution may change fusion,
 precision, layout and cache representation, but not mathematical connectivity,
 routing, positions or canonical checkpoint meaning.
 
+The initial exact-match policy is implemented in `asterlm.backends`. Unknown CUDA
+capabilities deliberately resolve to `cuda-generic`; they never inherit a newer
+architecture's kernels through a broad greater-than comparison. Every run manifest
+records the resolved backend and its eligible implementation families.
+
 Promotion order is reference correctness, forward/backward numerical parity,
 microbenchmark, full block, full model training and quality. A fast isolated GEMM
 does not overrule a slower end-to-end model.
@@ -124,4 +129,3 @@ SOAP is a Modal challenger if its total cost is competitive.
 The 27 required final-run gates live in
 `configs/experiments/promotion_gates.yaml`. No final full-scale run starts while any
 required gate is not passed. The dense fallback remains runnable at all times.
-

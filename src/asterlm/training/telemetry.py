@@ -13,15 +13,18 @@ from typing import Any
 
 import torch
 
+from asterlm.backends import execution_backend_manifest
+
 
 def _run(command: list[str]) -> str | None:
     try:
         return subprocess.check_output(command, text=True, stderr=subprocess.DEVNULL, timeout=5).strip()
-    except Exception:
+    except (OSError, subprocess.SubprocessError):
         return None
 
 
 def static_system_manifest(device: torch.device) -> dict[str, Any]:
+    capability = torch.cuda.get_device_capability(device) if device.type == "cuda" else None
     manifest: dict[str, Any] = {
         "python": platform.python_version(),
         "platform": platform.platform(),
@@ -32,6 +35,7 @@ def static_system_manifest(device: torch.device) -> dict[str, Any]:
         "git_commit": _run(["git", "rev-parse", "HEAD"]),
         "git_dirty": bool(_run(["git", "status", "--porcelain"])),
         "nvidia_smi": _run(["nvidia-smi", "--query-gpu=name,driver_version,pstate,power.limit,memory.total", "--format=csv,noheader"]),
+        "execution_backend": execution_backend_manifest(device.type, capability),
     }
     try:
         import psutil
@@ -46,7 +50,7 @@ def static_system_manifest(device: torch.device) -> dict[str, Any]:
         manifest["gpu"] = {
             "name": props.name,
             "total_memory_gib": props.total_memory / 2**30,
-            "compute_capability": list(torch.cuda.get_device_capability(device)),
+            "compute_capability": list(capability) if capability else None,
             "multiprocessors": props.multi_processor_count,
             "bf16_supported": torch.cuda.is_bf16_supported(),
         }
@@ -108,7 +112,9 @@ class SystemSampler:
                         "gpu_memory_used_mib",
                     ]
                     out.update(dict(zip(keys, vals, strict=True)))
-                except Exception:
+                except (TypeError, ValueError):
+                    # `nvidia-smi` may emit N/A for unsupported counters. Other
+                    # process and CUDA metrics remain valid for this sample.
                     pass
         self._last_time = now
         self._last = out
