@@ -73,9 +73,41 @@
       "aten_mm_events": 1592
     }
   },
+  "one_repetition_causal_screens": {
+    "grouped_e8k2_batch1_seq2k": {
+      "tokens_per_second": 6238.567382742815,
+      "gpu_utilization_percent": 44.0,
+      "peak_allocated_gib": 5.211589813232422
+    },
+    "grouped_e4k2_batch1_seq2k": {
+      "tokens_per_second": 6534.548517915171,
+      "gpu_utilization_percent": 45.0,
+      "peak_allocated_gib": 4.523122787475586
+    },
+    "grouped_e4k1wide_batch1_seq2k": {
+      "tokens_per_second": 6722.501335508546,
+      "gpu_utilization_percent": 48.0,
+      "peak_allocated_gib": 5.385076522827148
+    },
+    "grouped_e8k2_batch2_seq2k": {
+      "tokens_per_second": 11151.760099504896,
+      "gpu_utilization_percent": 66.0,
+      "tokens_per_joule": 106.16679454974197,
+      "peak_allocated_gib": 8.113532066345215
+    },
+    "grouped_e8k2_batch1_seq4k": {
+      "tokens_per_second": 10567.849427750863,
+      "gpu_utilization_percent": 64.5,
+      "tokens_per_joule": 104.56487832336481,
+      "peak_allocated_gib": 8.12308406829834
+    }
+  },
   "raw_artifacts": [
     "runs/frontier-vnext2/moe-utilization-followup-20260810/matrix.json",
     "runs/frontier-vnext2/moe-utilization-dense-kda3-20260810/matrix.json",
-    "runs/frontier-vnext2/operator-profiles-20260810/"
+    "runs/frontier-vnext2/operator-profiles-20260810/",
+    "runs/frontier-vnext2/moe-work-granularity-screen-20260810/matrix.json",
+    "runs/frontier-vnext2/moe-workload-mb2-screen-20260810/matrix.json",
+    "runs/frontier-vnext2/moe-workload-seq4k-screen-20260810/matrix.json"
   ]
 }

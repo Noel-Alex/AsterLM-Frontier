@@ -57,6 +57,7 @@ There is no accepted final architecture yet. Dense all-MLA is a control, and the
 
 Read these first:
 
+- [engineering and research handoff](docs/HANDOFF_2026-08-10.md)
 - [vNext2 findings](docs/experiments/frontier-vnext2/FINDINGS_2026-08-10.md)
 - [kernel compatibility boundaries](docs/research/KERNEL_COMPATIBILITY_2026-08-10.md)
 - [100B experiment design](docs/100B_EXPERIMENT.md)
