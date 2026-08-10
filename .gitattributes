@@ -1,0 +1,42 @@
+* text=auto
+
+# Source and configuration stay LF so Windows, WSL, and Linux produce the same tree.
+*.py text eol=lf
+*.pyi text eol=lf
+*.sh text eol=lf
+*.toml text eol=lf
+*.yaml text eol=lf
+*.yml text eol=lf
+*.json text eol=lf
+*.jsonl text eol=lf
+*.md text eol=lf
+*.txt text eol=lf
+*.html text eol=lf
+*.css text eol=lf
+*.js text eol=lf
+*.csv text eol=lf
+
+# Native Windows launchers use the platform convention.
+*.ps1 text eol=crlf
+*.cmd text eol=crlf
+
+# Model, dataset, archive, profiler, and image artifacts are binary.
+*.bin -text
+*.pt -text
+*.pth -text
+*.safetensors -text
+*.npy -text
+*.npz -text
+*.parquet -text
+*.arrow -text
+*.zst -text
+*.gz -text
+*.zip -text
+*.tar -text
+*.tgz -text
+*.nsys-rep -text
+*.sqlite -text
+*.png -text
+*.jpg -text
+*.jpeg -text
+*.webp -text
