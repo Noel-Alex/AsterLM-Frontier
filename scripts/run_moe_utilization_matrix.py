@@ -102,13 +102,37 @@ def main() -> None:
     parser.add_argument(
         "--variants",
         nargs="+",
-        choices=tuple(VARIANTS),
-        default=list(VARIANTS),
-        help="Subset of variants to benchmark (default: all).",
+        default=None,
+        help="Subset of registered variant names to benchmark.",
+    )
+    parser.add_argument(
+        "--variant-spec",
+        action="append",
+        default=[],
+        metavar="NAME=FILENAME=IMPLEMENTATION",
+        help="Register an experiment-local model config without editing this script.",
     )
     args = parser.parse_args()
 
-    selected_variants = list(dict.fromkeys(args.variants))
+    variants = dict(VARIANTS)
+    custom_names: list[str] = []
+    for raw_spec in args.variant_spec:
+        try:
+            name, filename, implementation = raw_spec.split("=", 2)
+        except ValueError as exc:
+            raise SystemExit(f"Invalid --variant-spec {raw_spec!r}; expected NAME=FILENAME=IMPLEMENTATION") from exc
+        if not name or not filename or implementation not in {"reference", "grouped"}:
+            raise SystemExit(f"Invalid --variant-spec {raw_spec!r}")
+        variants[name] = (filename, implementation)
+        custom_names.append(name)
+
+    requested = args.variants if args.variants is not None else (custom_names or list(VARIANTS))
+    selected_variants = list(dict.fromkeys(requested))
+    unknown = [name for name in selected_variants if name not in variants]
+    if unknown:
+        raise SystemExit(
+            "Unknown variant(s): " + ", ".join(unknown) + ". Available: " + ", ".join(sorted(variants))
+        )
     orders = balanced_orders(selected_variants)
 
     args.output.mkdir(parents=True, exist_ok=True)
@@ -144,7 +168,7 @@ def main() -> None:
         "trials": records,
     }
     for variant in selected_variants:
-        filename, implementation = VARIANTS[variant]
+        filename, implementation = variants[variant]
         model_path = args.config_root / filename
         manifest["models"][variant] = {
             "path": str(model_path),
@@ -156,7 +180,7 @@ def main() -> None:
     for repetition in range(args.repetitions):
         order = orders[repetition % len(orders)]
         for variant in order:
-            filename, implementation = VARIANTS[variant]
+            filename, implementation = variants[variant]
             trial_name = f"r{repetition + 1}-{variant}"
             result_path = args.output / f"{trial_name}.json"
             log_path = args.output / f"{trial_name}.log"
