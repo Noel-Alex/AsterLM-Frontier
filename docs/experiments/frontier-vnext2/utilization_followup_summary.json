@@ -291,6 +291,7 @@
     "batch2_seq2k_accum8_repetitions": 3,
     "provenance": {
       "base_commit": "f415376",
+      "candidate_commit": "1f70691",
       "worktree_was_dirty": true,
       "note": "Exact experimental candidate source was committed immediately after the run, before removal."
     },

@@ -54,21 +54,3 @@ def test_reference_state_dict_has_no_grouped_bridge_keys(monkeypatch):
     keys = set(moe.state_dict())
     assert any(k.startswith("routed.0.") for k in keys)
     assert not any("grouped" in k for k in keys)
-
-
-def test_grouped_dispatch_switch_rejects_unknown_value(monkeypatch):
-    monkeypatch.setenv("ASTER_MOE_IMPL", "grouped")
-    monkeypatch.setenv("ASTER_MOE_DISPATCH", "unknown")
-    try:
-        DeepSeekStyleMoE(
-            dim=32,
-            expert_hidden=48,
-            num_experts=4,
-            top_k=2,
-            shared_experts=1,
-            linear_backend="transformer_engine",
-        )
-    except ValueError as exc:
-        assert "ASTER_MOE_DISPATCH" in str(exc)
-    else:
-        raise AssertionError("unknown grouped dispatch should be rejected")

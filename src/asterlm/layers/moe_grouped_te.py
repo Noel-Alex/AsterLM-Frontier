@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import os
-
 import torch
 from torch import nn
 from torch.nn import functional as F
@@ -37,12 +35,6 @@ class TEGroupedRoutedExperts:
         self.num_experts = int(num_experts)
         self.dropout = float(dropout)
         self.align = int(align)
-        self.dispatch_impl = os.environ.get("ASTER_MOE_DISPATCH", "current").strip().lower()
-        if self.dispatch_impl not in {"current", "te_mask_pad"}:
-            raise ValueError(
-                "ASTER_MOE_DISPATCH must be either 'current' or 'te_mask_pad', "
-                f"got {self.dispatch_impl!r}"
-            )
 
         try:
             from transformer_engine.pytorch.ops import GroupedLinear, Sequential, SwiGLU
@@ -159,9 +151,6 @@ class TEGroupedRoutedExperts:
         if top_idx.ndim != 2 or top_weight.shape != top_idx.shape:
             raise ValueError("top_idx and top_weight must have matching [N, top_k] shapes")
 
-        if self.dispatch_impl == "te_mask_pad":
-            return self._forward_te_mask_pad(flat, top_idx, top_weight)
-
         packed, split_sizes, real_positions, sorted_token_idx, sorted_weight = self._dispatch_and_pad(
             flat, top_idx, top_weight
         )
@@ -178,56 +167,3 @@ class TEGroupedRoutedExperts:
         routed_out = torch.zeros_like(flat)
         routed_out.index_add_(0, sorted_token_idx, weighted)
         return routed_out
-
-    def _forward_te_mask_pad(
-        self,
-        flat: torch.Tensor,
-        top_idx: torch.Tensor,
-        top_weight: torch.Tensor,
-    ) -> torch.Tensor:
-        """Experimental official TE fused permutation/padding and weighted combine."""
-
-        try:
-            from transformer_engine.pytorch import moe_permute_and_pad_with_probs, moe_unpermute
-        except ImportError as exc:
-            raise ImportError(
-                "ASTER_MOE_DISPATCH=te_mask_pad requires Transformer Engine MoE permutation ops"
-            ) from exc
-
-        routing_map = torch.zeros(
-            (flat.shape[0], self.num_experts),
-            dtype=torch.int32,
-            device=flat.device,
-        ).scatter_(1, top_idx, 1)
-        dense_probs = torch.zeros(
-            (flat.shape[0], self.num_experts),
-            dtype=torch.float32,
-            device=flat.device,
-        ).scatter(1, top_idx, top_weight.float())
-        tokens_per_expert = torch.bincount(
-            top_idx.reshape(-1),
-            minlength=self.num_experts,
-        )
-        permuted, _, row_id_map, pad_offsets, target_counts = moe_permute_and_pad_with_probs(
-            flat,
-            dense_probs,
-            routing_map,
-            tokens_per_expert,
-            self.align,
-        )
-        split_sizes = target_counts.to(torch.int32)
-        expert_output = self.fused(permuted, split_sizes, split_sizes)
-        if self.dropout:
-            expert_output = F.dropout(
-                expert_output,
-                p=self.dropout,
-                training=bool(self.routed_experts[0].training),
-            )
-        return moe_unpermute(
-            expert_output,
-            row_id_map,
-            merging_probs=dense_probs,
-            restore_shape=flat.shape,
-            map_type="mask",
-            pad_offsets=pad_offsets,
-        )
