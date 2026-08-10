@@ -573,10 +573,6 @@ class Trainer:
                     output = self._forward(batch)
                     loss = output.loss / cfg.gradient_accumulation_steps
                     window_forward_s += time.perf_counter() - started
-                    if not torch.isfinite(loss):
-                        raise FloatingPointError(
-                            f"Non-finite loss at step {self.step}: {float(loss)}"
-                        )
 
                     started = time.perf_counter()
                     loss.backward()
@@ -603,6 +599,11 @@ class Trainer:
                 grad_norm = torch.nn.utils.clip_grad_norm_(
                     self.model.parameters(), cfg.max_grad_norm
                 )
+                # Do not convert/check each microbatch loss on the host. With high
+                # gradient accumulation that serialized every forward pass and left
+                # the GPU idle between otherwise independent queued kernels. The
+                # gradient check below is the single pre-step safety gate: any NaN or
+                # Inf produced by a loss/backward is caught before parameters mutate.
                 if not torch.isfinite(grad_norm).all():
                     bad_grads: list[str] = []
                     for name, parameter in self.model.named_parameters():

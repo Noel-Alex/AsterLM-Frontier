@@ -2,7 +2,7 @@
 set -euo pipefail
 
 PYTHON_BIN="${PYTHON_BIN:-python3.12}"
-TORCH_INDEX_URL="${TORCH_INDEX_URL:-https://download.pytorch.org/whl/cu126}"
+TORCH_INDEX_URL="${TORCH_INDEX_URL:-}"
 WITH_FP8=0
 WITH_TORCHAO=0
 WITH_TRACKING=0
@@ -25,7 +25,7 @@ Options:
 
 Environment variables:
   PYTHON_BIN        Python executable used to create .venv (default: python3.12).
-  TORCH_INDEX_URL   PyTorch wheel index (default: CUDA 12.6 index).
+  TORCH_INDEX_URL   Optional PyTorch wheel index. Unset uses PyPI's current Linux wheel.
 EOF
 }
 
@@ -50,7 +50,11 @@ source .venv/bin/activate
 python -m pip install --upgrade pip setuptools wheel
 
 if [[ "$SKIP_TORCH" == "0" ]]; then
-  python -m pip install --upgrade torch --index-url "$TORCH_INDEX_URL"
+  if [[ -n "$TORCH_INDEX_URL" ]]; then
+    python -m pip install --upgrade torch --index-url "$TORCH_INDEX_URL"
+  else
+    python -m pip install --upgrade torch
+  fi
 else
   python - <<'PY_CHECK'
 import torch
@@ -70,7 +74,7 @@ if [[ "$WITH_TORCHAO" == "1" ]]; then
   python -m pip install -e ".[quant]"
 fi
 if [[ "$WITH_FP8" == "1" ]]; then
-  python -m pip install -e ".[fp8]"
+  ASTERLM_VENV_PATH="$VIRTUAL_ENV" bash scripts/install_transformer_engine_linux.sh
 fi
 if [[ "$WITH_TRACKING" == "1" ]]; then
   python -m pip install -e ".[tracking]"

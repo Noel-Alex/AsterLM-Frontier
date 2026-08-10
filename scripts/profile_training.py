@@ -179,7 +179,7 @@ def main() -> None:
             if device.type == "cuda":
                 torch.cuda.reset_peak_memory_stats(device)
             started = time.perf_counter()
-            loss_value = 0.0
+            loss_value = torch.zeros((), device=device, dtype=torch.float32)
             for _ in range(train.gradient_accumulation_steps):
                 ids = torch.randint(
                     0,
@@ -200,15 +200,13 @@ def main() -> None:
                         output = forward_model(ids, labels=labels, return_logits=False)
                         if output.loss is None:
                             raise FloatingPointError("model returned no loss")
-                        if not torch.isfinite(output.loss.detach()).all():
-                            raise FloatingPointError(
-                                f"non-finite loss before backward at iteration {iteration + 1}: "
-                                f"{float(output.loss.detach())}"
-                            )
                         loss = output.loss / train.gradient_accumulation_steps
                 loss.backward()
-                loss_value += float(output.loss.detach())
+                loss_value.add_(output.loss.detach().float())
             grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), train.max_grad_norm)
+            # The gradient gate catches any non-finite loss/backward before the
+            # optimizer mutates parameters, while avoiding one GPU->CPU sync per
+            # accumulation microbatch in the measured workload.
             if not torch.isfinite(grad_norm).all():
                 bad_grads = []
                 for name, parameter in model.named_parameters():
@@ -234,7 +232,7 @@ def main() -> None:
                 "warmup": iteration < args.warmup,
                 "seconds": duration,
                 "tokens_per_second": tokens_per_step / duration,
-                "loss": loss_value / train.gradient_accumulation_steps,
+                "loss": float(loss_value / train.gradient_accumulation_steps),
                 "grad_norm": float(grad_norm),
                 "memory": cuda_snapshot(device),
                 "system": sampler.sample(force=True),

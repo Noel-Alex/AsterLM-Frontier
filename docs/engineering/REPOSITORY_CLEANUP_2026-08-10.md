@@ -1,4 +1,4 @@
-# Repository cleanup record — 2026-08-10
+# Repository cleanup record - 2026-08-10
 
 ## Safety baseline
 

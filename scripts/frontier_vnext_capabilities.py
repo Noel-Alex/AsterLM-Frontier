@@ -15,6 +15,10 @@ from typing import Any, Callable
 
 import torch
 
+from asterlm.runtime import configure_transformer_engine_runtime
+
+configure_transformer_engine_runtime()
+
 
 def version_of(name: str) -> str | None:
     try:
