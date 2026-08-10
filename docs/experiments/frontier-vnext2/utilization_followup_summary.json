@@ -317,6 +317,56 @@
     },
     "decision": "reject_keep_current_grouped_dispatch"
   },
+  "optimizer_fragmentation_confirmation": {
+    "classification": "systems_only_no_quality_claim",
+    "batch2_seq2k_accum8_repetitions": 3,
+    "provenance": {
+      "commit": "b7cfff7337cd6813f45ec171eaec07b1be1d860f",
+      "worktree_was_dirty": false,
+      "tracked_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "apollo_mini_with_norm_limiter": {
+      "median_tokens_per_second": 10636.842715187317,
+      "median_optimizer_cuda_ms": 216.83113861083984,
+      "median_clip_cuda_ms": 18.83891201019287,
+      "median_gpu_utilization_percent": 65.0,
+      "median_tokens_per_joule": 105.6919983623541,
+      "median_peak_allocated_gib": 8.124053001403809
+    },
+    "apollo_mini_without_norm_limiter": {
+      "median_tokens_per_second": 10722.095150087605,
+      "median_optimizer_cuda_ms": 123.64724731445312,
+      "median_clip_cuda_ms": 18.12289524078369,
+      "median_gpu_utilization_percent": 64.0,
+      "median_tokens_per_joule": 105.1495062281809,
+      "median_peak_allocated_gib": 8.122798919677734,
+      "relative_to_limiter": {
+        "throughput_percent": 0.801482518666607,
+        "optimizer_cuda_ms_percent": -42.9753272031789,
+        "gpu_utilization_points": -1.0,
+        "tokens_per_joule_percent": -0.513276447204003,
+        "peak_allocated_percent": -0.01543665121162
+      },
+      "decision": "cost_control_only_requires_quality_and_stability_gate"
+    },
+    "muon_fused_adamw": {
+      "median_tokens_per_second": 9612.857795757316,
+      "median_optimizer_cuda_ms": 460.0936584472656,
+      "median_clip_cuda_ms": 19.4683198928833,
+      "median_gpu_utilization_percent": 67.0,
+      "median_tokens_per_joule": 95.97535090259443,
+      "median_peak_allocated_gib": 9.639641761779785,
+      "relative_to_apollo_limiter": {
+        "throughput_percent": -9.62677503887457,
+        "optimizer_cuda_ms_percent": 112.18984569971,
+        "gpu_utilization_points": 2.0,
+        "tokens_per_joule_percent": -9.1933614751489,
+        "peak_allocated_percent": 18.6555745034417
+      },
+      "decision": "reject_for_current_grouped_moe_recipe"
+    },
+    "default_decision": "retain_apollo_mini_with_norm_limiter"
+  },
   "raw_artifacts": [
     "runs/frontier-vnext2/moe-utilization-followup-20260810/matrix.json",
     "runs/frontier-vnext2/moe-utilization-dense-kda3-20260810/matrix.json",
@@ -333,6 +383,8 @@
     "runs/frontier-vnext2/moe-dispatch-probe-20260810.json",
     "runs/frontier-vnext2/te-moe-permute-probe-20260810.json",
     "runs/frontier-vnext2/te-moe-permute-pad-probe-20260810.json",
-    "runs/frontier-vnext2/current-vs-te-mask-pad-b2-20260810/matrix.json"
+    "runs/frontier-vnext2/current-vs-te-mask-pad-b2-20260810/matrix.json",
+    "runs/frontier-vnext2/optimizer-fragmentation-screen-20260810/matrix.json",
+    "runs/frontier-vnext2/optimizer-fragmentation-confirm-20260810/matrix.json"
   ]
 }
