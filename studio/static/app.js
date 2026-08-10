@@ -95,7 +95,7 @@ function gotoPage(page) {
   $("#page-title").textContent=PAGE_TITLES[page]||page;
   history.replaceState(null,"",`#${page}`);
   if(page==="architecture") loadConfigs("model").catch(showError);
-  if(page==="experiments") renderRuns();
+  if(page==="experiments"){renderRuns();loadDiagnostics().catch(showError);}
   if(page==="logs") renderJobs();
 }
 
@@ -459,6 +459,21 @@ function renderMetricSnapshot(metrics) {
 }
 function renderCheckpoints(rows) {
   $("#checkpoint-table").innerHTML=rows.length?rows.map(x=>`<div class="checkpoint-row"><code>${esc(x.name)}</code><span>${fmtTokens(x.tokens_seen)}</span><span>${esc(x.reason||"—")}</span><span>${x.permanent?'<span class="status-pill good">KEEP</span>':'rolling'}</span><span>${fmtBytes(x.model_bytes)}</span></div>`).join(""):`<div class="empty-state">No checkpoints yet.</div>`;
+}
+
+async function loadDiagnostics() {
+  const holder=$("#diagnostic-matrix-list");if(!holder)return;
+  const rows=await api("/api/diagnostics?limit=60");
+  holder.innerHTML=rows.length?rows.map(matrix=>{
+    const variants=Object.entries(matrix.aggregate||{}).map(([name,value])=>{
+      const tps=Number(value?.median_tokens_per_second);
+      const util=Number(value?.median_gpu_utilization);
+      const reps=value?.successful_repetitions;
+      return `<div class="diagnostic-variant"><code>${esc(name)}</code><span>${Number.isFinite(tps)?`${fmtTokens(tps)} tok/s`:"—"}</span><span>${Number.isFinite(util)?`${util.toFixed(1)}% GPU`:"—"}</span><span>${reps!=null?`${esc(reps)} reps`:"—"}</span></div>`;
+    }).join("");
+    const failure=matrix.failures?.length?`<span class="status-pill warning">${matrix.failures.length} failed</span>`:`<span class="status-pill good">${matrix.successful_trials}/${matrix.trial_count} ok</span>`;
+    return `<details class="diagnostic-matrix"><summary><span><strong>${esc(matrix.name)}</strong><small>${ago(matrix.modified)} · ${esc((matrix.git_commit||"").slice(0,8)||"unbound")}</small></span>${failure}</summary><div class="diagnostic-body">${variants||'<div class="empty-state">Matrix is still running or has no aggregate.</div>'}<code class="diagnostic-path">${esc(matrix.path)}</code></div></details>`;
+  }).join(""):`<div class="empty-state">No matrix.json diagnostics found under runs/.</div>`;
 }
 
 function renderJobs() {

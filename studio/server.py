@@ -455,6 +455,53 @@ def runs_status() -> list[dict[str, Any]]:
     return rows[:100]
 
 
+def diagnostic_matrices(limit: int = 100) -> list[dict[str, Any]]:
+    """Return secret-safe summaries of nested systems/architecture matrices."""
+
+    runs_root = ROOT / "runs"
+    if not runs_root.exists():
+        return []
+    rows: list[dict[str, Any]] = []
+    for path in runs_root.rglob("matrix.json"):
+        payload = read_state(path)
+        if not isinstance(payload, dict):
+            continue
+        trials = payload.get("trials")
+        trials = trials if isinstance(trials, list) else []
+        aggregate = payload.get("aggregate")
+        aggregate = aggregate if isinstance(aggregate, dict) else {}
+        failures = [
+            {
+                "name": trial.get("name"),
+                "status": trial.get("status"),
+                "returncode": trial.get("returncode"),
+            }
+            for trial in trials
+            if isinstance(trial, dict) and trial.get("status") not in {None, "ok"}
+        ]
+        rows.append(
+            {
+                "name": path.parent.name,
+                "path": rel(path),
+                "modified": path.stat().st_mtime,
+                "created_utc": payload.get("created_utc"),
+                "completed_utc": payload.get("completed_utc"),
+                "status": "completed" if payload.get("completed_utc") else "in_progress",
+                "git_commit": payload.get("git_commit"),
+                "classification": payload.get("classification"),
+                "protocol": payload.get("protocol") if isinstance(payload.get("protocol"), dict) else {},
+                "aggregate": aggregate,
+                "trial_count": len(trials),
+                "successful_trials": sum(
+                    isinstance(trial, dict) and trial.get("status") == "ok" for trial in trials
+                ),
+                "failures": failures,
+            }
+        )
+    rows.sort(key=lambda row: float(row["modified"]), reverse=True)
+    return rows[: max(1, min(int(limit), 500))]
+
+
 class JobManager:
     def __init__(self) -> None:
         LOG_ROOT.mkdir(parents=True, exist_ok=True)
@@ -1214,6 +1261,9 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json(config_files(kind))
             if path == "/api/runs":
                 return self.send_json(runs_status())
+            if path == "/api/diagnostics":
+                limit = int(query.get("limit", ["100"])[0])
+                return self.send_json(diagnostic_matrices(limit))
             if path == "/api/metrics":
                 run = repo_path(query["run"][0])
                 limit = int(query.get("limit", ["500"])[0])

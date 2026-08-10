@@ -185,6 +185,16 @@ input:focus,select:focus,textarea:focus{border-color:var(--accent);box-shadow:0 
 .checkpoint-table{overflow:auto}
 .checkpoint-row{display:grid;grid-template-columns:minmax(180px,1fr) 90px 120px 100px 80px;gap:10px;padding:9px 0;border-bottom:1px dotted var(--line);font-size:10px;align-items:center}
 .checkpoint-row code{font-size:9px}
+.diagnostic-matrix-list{display:flex;flex-direction:column;border-top:1px solid var(--line);margin-top:12px}
+.diagnostic-matrix{border-bottom:1px dotted var(--line)}
+.diagnostic-matrix summary{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:11px 0;cursor:pointer;list-style:none}
+.diagnostic-matrix summary::-webkit-details-marker{display:none}
+.diagnostic-matrix summary strong{display:block;font-size:11px}
+.diagnostic-matrix summary small{display:block;color:var(--muted);font-family:var(--mono);font-size:8px;margin-top:3px}
+.diagnostic-body{padding:0 0 12px 14px}
+.diagnostic-variant{display:grid;grid-template-columns:minmax(190px,1fr) repeat(3,90px);gap:9px;padding:7px 0;border-top:1px solid rgba(182,172,158,.45);font-size:9px}
+.diagnostic-variant code{font-size:8px}
+.diagnostic-path{display:block;color:var(--muted);font-size:7px;margin-top:10px;overflow:hidden;text-overflow:ellipsis}
 .prompt-box{min-height:170px;resize:vertical;font-family:var(--serif);font-size:17px;line-height:1.55}
 .logs-layout{display:grid;grid-template-columns:350px 1fr;gap:18px}
 .logs-layout>.paper-panel{margin-top:0}
