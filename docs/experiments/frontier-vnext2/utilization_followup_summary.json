@@ -154,6 +154,38 @@
       }
     }
   },
+  "one_repetition_phase_localization": {
+    "batch2_seq2k_accum8": {
+      "dense-kda3": {
+        "parameter_tensors": 434,
+        "cuda_ms": {
+          "forward": 682.570240020752,
+          "backward": 952.4362449645996,
+          "clip_and_finite_gate": 8.18345594406128,
+          "optimizer": 86.10790252685547,
+          "router_balance": 0.026479999185539782,
+          "synthetic_data": 0.09424000093713403
+        }
+      },
+      "grouped-moe-kda3": {
+        "parameter_tensors": 808,
+        "cuda_ms": {
+          "forward": 1326.167869567871,
+          "backward": 1271.080451965332,
+          "clip_and_finite_gate": 16.372751235961914,
+          "optimizer": 193.6802520751953,
+          "router_balance": 2.484320044517517,
+          "synthetic_data": 0.1722880033776164
+        }
+      },
+      "moe_minus_dense_ms": 1080.53936943586,
+      "gap_share_percent": {
+        "forward": 59.56,
+        "backward": 29.49,
+        "optimizer": 9.96
+      }
+    }
+  },
   "raw_artifacts": [
     "runs/frontier-vnext2/moe-utilization-followup-20260810/matrix.json",
     "runs/frontier-vnext2/moe-utilization-dense-kda3-20260810/matrix.json",
@@ -162,6 +194,7 @@
     "runs/frontier-vnext2/moe-workload-mb2-screen-20260810/matrix.json",
     "runs/frontier-vnext2/moe-workload-seq4k-screen-20260810/matrix.json",
     "runs/frontier-vnext2/dense-vs-grouped-mb2-confirm-20260810/matrix.json",
-    "runs/frontier-vnext2/reference-vs-grouped-mb2-20260810/matrix.json"
+    "runs/frontier-vnext2/reference-vs-grouped-mb2-20260810/matrix.json",
+    "runs/frontier-vnext2/phase-timing-dense-vs-grouped-b2-20260810/"
   ]
 }

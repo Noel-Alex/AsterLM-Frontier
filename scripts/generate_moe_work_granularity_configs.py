@@ -25,6 +25,15 @@ VARIANTS: dict[str, dict[str, int]] = {
         "moe_top_k": 1,
         "moe_expert_hidden": 1408,
     },
+    # This is an implementation-cost isolation control, not an architecture
+    # candidate. Removing the always-on shared expert changes model capacity and
+    # must never be promoted from a throughput result alone.
+    "grouped-moe-e8k2-no-shared-kda3": {
+        "moe_num_experts": 8,
+        "moe_top_k": 2,
+        "moe_expert_hidden": 704,
+        "moe_shared_experts": 0,
+    },
 }
 
 
@@ -66,6 +75,7 @@ def main() -> None:
             "routed_rows_per_expert_at_2048_tokens": 2048 * changes["moe_top_k"] / changes["moe_num_experts"],
             "active_routed_hidden": changes["moe_top_k"] * changes["moe_expert_hidden"],
             "total_routed_hidden": changes["moe_num_experts"] * changes["moe_expert_hidden"],
+            "shared_experts": payload["model"].get("moe_shared_experts", 0),
         }
     atomic_text(args.output / "moe-work-granularity-manifest.json", json.dumps(manifest, indent=2) + "\n")
     print(json.dumps(manifest, indent=2))
