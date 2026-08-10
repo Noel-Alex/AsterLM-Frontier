@@ -176,6 +176,6 @@ At 18.4B and 50B, compare the permanent checkpoint against the previous tier usi
 - long-context retrieval and natural-document perplexity;
 - expert load/pathway stability;
 - memorization and contamination probes;
-- throughput, energy and wall-clock cost per unit quality gain.
+- throughput and wall-clock cost per unit quality gain; record energy separately as non-decision telemetry.
 
 A loss plateau alone is not a stopping rule if downstream generalization and pathway structure are still improving. Conversely, a training-loss improvement without held-out or downstream gain is not evidence of useful grokking.

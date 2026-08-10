@@ -12,7 +12,8 @@ gates:
   - {id: long_context_retrieval, required: true, status: not_run}
   - {id: repeated_warm_throughput, required: true, status: not_run}
   - {id: gpu_utilization_root_cause, required: true, status: not_run}
-  - {id: energy_and_power, required: true, status: not_run}
+  # Observational telemetry only. Energy never blocks or ranks a training candidate.
+  - {id: energy_and_power, required: false, status: not_run}
   - {id: vram, required: true, status: not_run}
   - {id: checkpoint_round_trip, required: true, status: not_run}
   - {id: optimizer_scheduler_exact_resume, required: true, status: not_run}

@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "status": "systems_only_no_quality_claim",
+  "git_sha": "28d950d5b88576326196ddce35c2e938a69f8dce",
+  "backend": "cuda-ada-sm89",
+  "gpu": "NVIDIA GeForce RTX 4080 Laptop GPU",
+  "torch": "2.13.0+cu130",
+  "cuda_runtime": "13.0",
+  "workload": {"sequence_length": 2048, "micro_batch_size": 1, "gradient_accumulation_steps": 1, "precision": "bfloat16", "optimizer": "adamw", "warmup_steps": 3, "measured_steps": 8},
+  "candidates": {
+    "tier0-dense-mla-480m": {"trainable_parameters": 411628896, "median_tokens_per_second": 6416.603271735025, "median_gpu_util_percent": 95.5, "peak_allocated_gib": 3.35383939743042, "median_forward_cuda_ms": 72.11366271972656, "median_backward_cuda_ms": 227.5742645263672, "median_optimizer_cuda_ms": 17.195008277893066, "median_power_w_observational": 114.1},
+    "tier1-dense-kda3-mla-480m": {"trainable_parameters": 423993696, "median_tokens_per_second": 5004.823300695086, "median_gpu_util_percent": 78.0, "peak_allocated_gib": 3.483804702758789, "median_forward_cuda_ms": 92.07404708862305, "median_backward_cuda_ms": 242.59750366210938, "median_optimizer_cuda_ms": 18.323840141296387, "median_power_w_observational": 105.51}
+  },
+  "delta_kda3_vs_mla": {"tokens_per_second_percent": -22.001983156084997, "gpu_util_percentage_points": -17.5, "peak_allocated_vram_percent": 3.875120121373233}
+}

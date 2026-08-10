@@ -89,6 +89,7 @@ def summarize_gpu_samples(samples: list[dict[str, Any]]) -> dict[str, float | in
     for field in ContinuousGpuSampler._FIELDS:
         values = [float(sample[field]) for sample in measured if field in sample]
         if values:
+            summary[f"mean_{field.replace('.', '_')}"] = statistics.fmean(values)
             summary[f"median_{field.replace('.', '_')}"] = statistics.median(values)
             summary[f"p10_{field.replace('.', '_')}"] = sorted(values)[max(0, int(0.1 * (len(values) - 1)))]
             summary[f"p90_{field.replace('.', '_')}"] = sorted(values)[min(len(values) - 1, int(0.9 * (len(values) - 1)))]
@@ -463,6 +464,8 @@ def main() -> None:
         result["summary"] = {
             "median_seconds": median,
             "median_tokens_per_second": tokens_per_step / median,
+            "measured_wall_time_seconds": sum(durations),
+            "measured_tokens": tokens_per_step * len(durations),
             "final_memory": cuda_snapshot(device),
             "fits_11p25_gib_peak": cuda_snapshot(device).get("peak_allocated_gib", 0) <= 11.25,
             "median_phase_timing": summarize_phase_timing(measured_phase_records),
@@ -475,6 +478,19 @@ def main() -> None:
             if isinstance(median_power, (int, float)) and median_power > 0:
                 result["summary"]["median_tokens_per_joule"] = (
                     result["summary"]["median_tokens_per_second"] / median_power
+                )
+            mean_power = result["summary"]["gpu"].get("mean_power_draw")
+            measured_seconds = result["summary"]["measured_wall_time_seconds"]
+            measured_tokens = result["summary"]["measured_tokens"]
+            if isinstance(mean_power, (int, float)) and mean_power > 0:
+                # `nvidia-smi` samples board power, so this is estimated GPU energy,
+                # not whole-laptop wall energy. It is recorded for diagnostics and
+                # research statistics only and never participates in promotion.
+                energy_joules = mean_power * measured_seconds
+                result["summary"]["estimated_gpu_energy_joules"] = energy_joules
+                result["summary"]["estimated_gpu_energy_kwh"] = energy_joules / 3_600_000.0
+                result["summary"]["estimated_gpu_joules_per_token"] = (
+                    energy_joules / measured_tokens
                 )
         result["status"] = "ok"
     except torch.cuda.OutOfMemoryError as exc:

@@ -7,9 +7,13 @@ without new contradictory measurements or a direct user instruction.
 ## Objective and workload order
 
 Promote the measured Pareto frontier across validation quality per token, wall hour
-and dollar; training throughput; prefill/decode speed; VRAM; energy per token;
-long-context quality; stability; and recoverability. Logical FLOPs, nominal sparsity
-and activated parameters are explanatory metrics, not promotion criteria.
+and dollar; training throughput; prefill/decode speed; VRAM; long-context quality;
+stability; and recoverability. Logical FLOPs, nominal sparsity and activated
+parameters are explanatory metrics, not promotion criteria.
+
+Energy is observational telemetry only. Record power, total energy and energy per
+token for diagnostics and research statistics, but never use them to rank, reject,
+stop or promote a training candidate.
 
 Inference priorities are:
 
@@ -132,6 +136,7 @@ research-only option. Baseline AdamW; first-class challenger Muon for suitable
 matrices plus AdamW for sensitive/non-matrix parameters, with QK stability work;
 SOAP is a Modal challenger if its total cost is competitive.
 
-The 27 required final-run gates live in
-`configs/experiments/promotion_gates.yaml`. No final full-scale run starts while any
-required gate is not passed. The dense fallback remains runnable at all times.
+The final-run gates live in `configs/experiments/promotion_gates.yaml`: 26 are
+required, while energy/power is explicitly non-blocking observational telemetry. No
+final full-scale run starts while any required gate is not passed. The dense
+fallback remains runnable at all times.

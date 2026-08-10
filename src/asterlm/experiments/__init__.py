@@ -12,15 +12,25 @@ from .campaign import (
     load_architecture_campaign,
     materialize_architecture_campaign,
 )
+from .promotion import (
+    REQUIRED_FINAL_RUN_GATES,
+    PromotionDecision,
+    PromotionGate,
+    evaluate_promotion_gates,
+)
 from .registry import ExperimentRegistry
 
 __all__ = [
     "BENCHMARK_SCHEMA_VERSION",
     "MANDATORY_BENCHMARK_FIELDS",
+    "REQUIRED_FINAL_RUN_GATES",
     "ArchitectureCampaign",
     "ArchitectureCandidate",
     "BenchmarkRecordError",
     "ExperimentRegistry",
+    "PromotionDecision",
+    "PromotionGate",
+    "evaluate_promotion_gates",
     "load_architecture_campaign",
     "materialize_architecture_campaign",
     "validate_benchmark_record",

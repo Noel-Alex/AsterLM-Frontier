@@ -23,7 +23,7 @@ The principal research candidate is a **3:1 KDA/latent-attention hybrid MoE**, b
 - optional LoQT-style packed INT4 FFN/expert bases with low-rank updates
 - hot BF16 + cold Hadamard-rotated INT4 latent cache
 
-This architecture must beat matched dense controls on quality, training throughput, peak memory, energy, stability, and inference latency before it is accepted. Current vNext2 profiling shows a material single-GPU MoE utilization deficit, so the repository does not call it the winner yet.
+This architecture must beat matched dense controls on quality, time-to-quality, training throughput, peak memory, stability, and inference latency before it is accepted. Energy remains recorded as observational telemetry but is never a promotion criterion. Current vNext2 profiling shows a material single-GPU MoE utilization deficit, so the repository does not call it the winner yet.
 
 ## Model candidates
 
