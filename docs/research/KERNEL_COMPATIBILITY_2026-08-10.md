@@ -20,6 +20,22 @@ fastest kernel is active in an Aster run.
 Machine-readable evidence is stored in `runs/setup/capabilities-wsl-cu13-fixed.json` and bound by
 hash from `runs/setup/runtime-manifest-wsl-cu13.json`.
 
+### 2026-08-11 CUDA build-stack drift and repair
+
+The 128-dimensional-head KDA quality gate initially failed before its first update. This was not a
+KDA numerical or performance result: PyTorch and the packaged CUDA runtime were 13.0, while pip had
+upgraded NVCC, CCCL, CRT, NVVM and nvJitLink to 13.3. TileLang correctly rejected the mixed compiler
+and CUDA-header minor versions. The WSL cu130 build stack is now pinned in
+`constraints/cuda130-wsl.txt`, repairable through `scripts/repair_cuda130_wsl.sh`, and audited by
+`scripts/check_cuda_toolchain.py`. Architecture campaigns that select an FLA KDA execution variant
+refuse to start when the packaged compiler stack is incoherent.
+
+After aligning those build components to CUDA 13.0, the exact
+`tier1-dense-kda3-mla-h128-samewidth-220m` / `fla-kda-compile-bf16` smoke compiled the TileLang kernel
+and completed two optimizer updates plus evaluation. Evidence is under
+`runs/architecture-campaign/kda-toolchain-repair-smoke-v2`. This is a kernel/correctness gate only;
+it is not a quality or throughput adjudication.
+
 ## What Aster currently means by KDA
 
 `src/asterlm/layers/kda.py` instantiates FLA's `KimiDeltaAttention` with chunk mode, short

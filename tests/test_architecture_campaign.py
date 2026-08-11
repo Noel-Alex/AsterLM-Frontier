@@ -8,7 +8,7 @@ import yaml
 
 from asterlm.config import AsterConfig
 from asterlm.experiments import load_architecture_campaign, materialize_architecture_campaign
-from scripts.run_architecture_quality_campaign import _execution_matrix
+from scripts.run_architecture_quality_campaign import _execution_matrix, _train_payload
 
 ROOT = Path(__file__).resolve().parents[1]
 CAMPAIGN = ROOT / "configs/experiments/architecture_campaign.yaml"
@@ -88,3 +88,26 @@ def test_execution_matrix_rejects_variant_not_used_by_selected_candidate(tmp_pat
             ("tier0-dense-mla-220m",),
             ("cutlass-grouped",),
         )
+
+
+def test_smoke_train_payload_avoids_duplicate_full_state_milestone(tmp_path):
+    base = yaml.safe_load(
+        (ROOT / "configs/train/campaign_quality_2k_adamw.yaml").read_text(encoding="utf-8")
+    )
+    payload = _train_payload(
+        base,
+        run_dir=tmp_path / "run",
+        seed=7,
+        max_tokens=32_768,
+        tokenizer=ROOT / "artifacts/tokenizer_quality_stackfree.json",
+        train_overrides={"compile": False},
+        no_compile=False,
+        smoke=True,
+        resume=None,
+    )
+    train = payload["train"]
+    assert train["eval_batches"] == 1
+    assert train["milestone_tokens"] == []
+    assert train["milestone_eval"] is False
+    assert train["save_interval"] > 2
+    assert train["keep_last_checkpoints"] == 1

@@ -15,6 +15,7 @@ from importlib.metadata import distributions
 from pathlib import Path
 from typing import Any
 
+from asterlm.cuda_toolchain import cuda_toolchain_report
 from asterlm.runtime import configure_transformer_engine_runtime
 
 configure_transformer_engine_runtime()
@@ -132,6 +133,7 @@ def main() -> None:
             "nvcc_version": command_output([str(nvcc), "--version"], timeout=10) if nvcc else None,
             "cuda_home": os.environ.get("CUDA_HOME"),
             "nvte_cuda_include_dir": os.environ.get("NVTE_CUDA_INCLUDE_DIR"),
+            "compatibility": cuda_toolchain_report(),
         },
         "nvidia_smi": command_output(
             [

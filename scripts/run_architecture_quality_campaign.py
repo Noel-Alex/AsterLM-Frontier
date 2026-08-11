@@ -15,6 +15,7 @@ import yaml
 
 from asterlm.artifacts import atomic_write_json
 from asterlm.config import AsterConfig, DataConfig, TrainConfig
+from asterlm.cuda_toolchain import require_compatible_cuda_toolchain
 from asterlm.experiments import load_architecture_campaign, materialize_architecture_campaign
 from asterlm.experiments.quality import (
     audit_named_initialization,
@@ -64,6 +65,7 @@ def _train_payload(
     tokenizer: Path,
     train_overrides: dict[str, Any],
     no_compile: bool,
+    smoke: bool,
     resume: Path | None,
 ) -> dict[str, Any]:
     payload = copy.deepcopy(base)
@@ -92,12 +94,20 @@ def _train_payload(
     )
     total_steps = math.ceil(max_tokens / tokens_per_update)
     train["warmup_steps"] = min(int(train.get("warmup_steps", 0)), max(0, total_steps - 1))
-    milestones = [
-        int(value)
-        for value in train.get("milestone_tokens", [])
-        if 0 < int(value) < max_tokens
-    ]
-    train["milestone_tokens"] = sorted({*milestones, max_tokens})
+    if smoke:
+        train["eval_batches"] = 1
+        train["eval_interval"] = max(1, total_steps)
+        train["save_interval"] = max(1, total_steps + 1)
+        train["keep_last_checkpoints"] = 1
+        train["milestone_tokens"] = []
+        train["milestone_eval"] = False
+    else:
+        milestones = [
+            int(value)
+            for value in train.get("milestone_tokens", [])
+            if 0 < int(value) < max_tokens
+        ]
+        train["milestone_tokens"] = sorted({*milestones, max_tokens})
     train["resume"] = resume.as_posix() if resume is not None else None
     TrainConfig(**train)
     return payload
@@ -162,6 +172,14 @@ def main() -> None:
     parser.add_argument("--seed", action="append", type=int, default=[])
     parser.add_argument("--tokens", type=int, default=16_777_216)
     parser.add_argument("--preflight-only", action="store_true")
+    parser.add_argument(
+        "--smoke",
+        action="store_true",
+        help=(
+            "Run a storage-bounded execution gate: one evaluation batch, no periodic or "
+            "permanent milestone checkpoint, and one final resumable checkpoint."
+        ),
+    )
     parser.add_argument("--continue-on-error", action="store_true")
     parser.add_argument("--no-compile", action="store_true")
     args = parser.parse_args()
@@ -199,6 +217,9 @@ def main() -> None:
         candidates,
         tuple(args.execution_variant),
     )
+    cuda_toolchain = None
+    if any(variant_id.startswith("fla-kda") for _, variant_id in execution_matrix):
+        cuda_toolchain = require_compatible_cuda_toolchain()
 
     configs = [
         (
@@ -209,9 +230,19 @@ def main() -> None:
         )
         for candidate_id in candidates
     ]
-    initialization_audits = {
-        str(seed): audit_named_initialization(configs, seed) for seed in seeds
-    }
+    initialization_audits = (
+        {str(seed): audit_named_initialization(configs, seed) for seed in seeds}
+        if len(configs) > 1
+        else {
+            str(seed): {
+                "seed": seed,
+                "reference": configs[0][0],
+                "status": "single_candidate_not_applicable",
+                "candidates": {},
+            }
+            for seed in seeds
+        }
+    )
     manifest: dict[str, Any] = {
         "schema_version": 2,
         "status": "preflight_ok",
@@ -228,7 +259,9 @@ def main() -> None:
         ],
         "seeds": list(seeds),
         "tokens_per_candidate": args.tokens,
+        "smoke": args.smoke,
         "initialization_audits": initialization_audits,
+        "cuda_toolchain": cuda_toolchain,
         "runs": {},
     }
     output.mkdir(parents=True, exist_ok=True)
@@ -263,6 +296,7 @@ def main() -> None:
                     "train_overrides"
                 ],
                 no_compile=args.no_compile,
+                smoke=args.smoke,
                 resume=resume,
             )
             generated = (
