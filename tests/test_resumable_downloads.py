@@ -214,6 +214,20 @@ def test_explicit_hf_token_path_is_not_replaced(tmp_path: Path, monkeypatch) -> 
     assert env["HF_TOKEN_PATH"] == str(explicit)
 
 
+def test_selected_hf_home_replaces_inherited_subcaches(tmp_path: Path, monkeypatch) -> None:
+    from types import SimpleNamespace
+
+    module = _load_script_module("download_data")
+    selected = tmp_path / "linux-safe-cache"
+    monkeypatch.setenv("HF_HUB_CACHE", str(tmp_path / "windows-hub-cache"))
+    monkeypatch.setenv("HF_XET_CACHE", str(tmp_path / "windows-xet-cache"))
+
+    env = module.build_environment(SimpleNamespace(hf_home=str(selected), network_mode="low"))
+
+    assert env["HF_HUB_CACHE"] == str(selected.resolve() / "hub")
+    assert env["HF_XET_CACHE"] == str(selected.resolve() / "xet")
+
+
 def test_checkout_guard_rejects_another_checkout_virtualenv(tmp_path: Path) -> None:
     module = _load_script_module("download_data")
     repo = tmp_path / "repo"

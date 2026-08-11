@@ -662,6 +662,10 @@ async function commonAction(action) {
 }
 
 function bind() {
+  const auxiliaryList=$("#page-data .action-list");
+  if(auxiliaryList&&!auxiliaryList.querySelector('[data-profile="posttrain-modern"]')){
+    auxiliaryList.insertAdjacentHTML("beforeend",'<div><strong>Modern post-training candidates</strong><span>LongAlign 64K / OpenThoughts3 / modern preference / tool-use</span><button data-profile="posttrain-modern" class="ghost small profile-download">Download</button></div><div><strong>Quarantined agent traces</strong><span>2026 Agent SFT; isolated from general assistant style</span><button data-profile="posttrain-agent" class="ghost small profile-download">Download</button></div>');
+  }
   $("#nav").addEventListener("click",e=>{const b=e.target.closest("[data-page]");if(b)gotoPage(b.dataset.page);});
   document.addEventListener("click",e=>{const b=e.target.closest("[data-goto]");if(b)gotoPage(b.dataset.goto);});
   document.addEventListener("click",e=>{const b=e.target.closest("[data-action]");if(b)commonAction(b.dataset.action).catch(showError);});

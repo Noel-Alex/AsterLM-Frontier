@@ -160,6 +160,18 @@ posttrain:
   open_thoughts: {label: "OpenThoughts 114K", profile: "posttrain"}
   ultrafeedback_binarized: {label: "UltraFeedback Binarized", profile: "posttrain"}
 
+posttrain_modern:
+  smoltalk2_longalign_think: {label: "SmolTalk2 LongAlign 64K", profile: "posttrain-modern"}
+  smoltalk2_toolcalling_think: {label: "SmolTalk2 Tool Calling", profile: "posttrain-modern"}
+  smoltalk2_everyday_reasoning: {label: "SmolTalk2 Everyday Reasoning", profile: "posttrain-modern"}
+  smoltalk2_system_reasoning: {label: "SmolTalk2 System Reasoning", profile: "posttrain-modern"}
+  smoltalk2_openthoughts3: {label: "SmolTalk2 OpenThoughts3", profile: "posttrain-modern"}
+  smoltalk2_preference_think: {label: "Modern Thinking Preferences", profile: "posttrain-modern"}
+  smoltalk2_preference_direct: {label: "Modern Direct Preferences", profile: "posttrain-modern"}
+
+posttrain_agent:
+  openthoughts_agent_sft_100k: {label: "OpenThoughts Agent SFT 100K (quarantined)", profile: "posttrain-agent"}
+
 reasoning:
   mixture_of_thoughts: {label: "Mixture of Thoughts", profile: "reasoning"}
   dapo_math: {label: "DAPO Math", profile: "reasoning"}

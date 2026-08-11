@@ -4,10 +4,13 @@ from __future__ import annotations
 import argparse
 import difflib
 import json
+import multiprocessing as mp
+import queue
 import time
+from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any
 
 import yaml
 
@@ -146,7 +149,7 @@ def validate(spec: SourceSpec, sample: bool, policy: RetryPolicy) -> dict[str, A
     while True:
         try:
             return validate_once(spec, sample)
-        except BaseException as exc:
+        except Exception as exc:  # noqa: BLE001 - classify arbitrary network/backend failures
             failures += 1
             if not is_retryable_exception(exc) or not policy.permits(failures):
                 return {
@@ -167,6 +170,80 @@ def validate(spec: SourceSpec, sample: bool, policy: RetryPolicy) -> dict[str, A
             time.sleep(delay)
 
 
+def _validate_worker(
+    result_queue: Any,
+    spec: SourceSpec,
+    sample: bool,
+    policy: RetryPolicy,
+) -> None:
+    """Run one source probe out of process so native loader hangs are killable."""
+    try:
+        result_queue.put(validate(spec, sample, policy))
+    except Exception as exc:  # noqa: BLE001 - serialize child failures for the parent
+        result_queue.put(
+            {
+                "id": spec.id,
+                "path": spec.path,
+                "name": spec.name,
+                "split": spec.split,
+                "status": "error",
+                "error": f"{type(exc).__name__}: {exc}",
+            }
+        )
+
+
+def validate_with_timeout(
+    spec: SourceSpec,
+    sample: bool,
+    policy: RetryPolicy,
+    timeout_seconds: float,
+) -> dict[str, Any]:
+    if timeout_seconds <= 0:
+        return validate(spec, sample, policy)
+
+    context = mp.get_context("spawn")
+    result_queue = context.Queue(maxsize=1)
+    process = context.Process(
+        target=_validate_worker,
+        args=(result_queue, spec, sample, policy),
+        daemon=True,
+    )
+    process.start()
+    process.join(timeout_seconds)
+    if process.is_alive():
+        process.terminate()
+        process.join(10)
+        if process.is_alive():
+            process.kill()
+            process.join(10)
+        result_queue.cancel_join_thread()
+        result_queue.close()
+        return {
+            "id": spec.id,
+            "path": spec.path,
+            "name": spec.name,
+            "split": spec.split,
+            "status": "timeout",
+            "timeout_seconds": timeout_seconds,
+            "error": "source probe exceeded its wall-clock deadline",
+        }
+
+    try:
+        return result_queue.get(timeout=5)
+    except queue.Empty:
+        return {
+            "id": spec.id,
+            "path": spec.path,
+            "name": spec.name,
+            "split": spec.split,
+            "status": "error",
+            "error": f"source probe exited with code {process.exitcode} without a result",
+        }
+    finally:
+        result_queue.cancel_join_thread()
+        result_queue.close()
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Validate Hugging Face dataset configs/splits and optionally sample required fields"
@@ -175,9 +252,21 @@ def main() -> None:
     parser.add_argument("--no-sample", action="store_true", help="Only validate metadata; do not stream one row")
     parser.add_argument("--output", default="data/source_validation.json")
     parser.add_argument("--continue-on-error", action="store_true")
+    parser.add_argument(
+        "--source-id",
+        action="append",
+        default=[],
+        help="Validate only the named source id; repeat to select multiple sources",
+    )
     parser.add_argument("--max-retries", type=int, default=10, help="0 means unlimited transient retries")
     parser.add_argument("--retry-base-seconds", type=float, default=3.0)
     parser.add_argument("--retry-max-seconds", type=float, default=60.0)
+    parser.add_argument(
+        "--source-timeout-seconds",
+        type=float,
+        default=300.0,
+        help="Kill and record a source probe that exceeds this deadline; 0 disables the deadline",
+    )
     args = parser.parse_args()
 
     policy = RetryPolicy(args.max_retries, args.retry_base_seconds, args.retry_max_seconds)
@@ -188,8 +277,15 @@ def main() -> None:
     for config in args.config:
         path = Path(config)
         for spec in specs_from_config(path):
+            if args.source_id and spec.id not in args.source_id:
+                continue
             print(f"validating {spec.id}: {spec.path}/{spec.name or '<default>'}:{spec.split}", flush=True)
-            result = validate(spec, sample=not args.no_sample, policy=policy)
+            result = validate_with_timeout(
+                spec,
+                sample=not args.no_sample,
+                policy=policy,
+                timeout_seconds=args.source_timeout_seconds,
+            )
             result["config_file"] = str(path)
             results.append(result)
             print(json.dumps(result, indent=2, default=str))

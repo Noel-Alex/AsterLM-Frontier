@@ -1,0 +1,63 @@
+records:
+  output_dir: data/posttrain-modern-candidates
+  shard_size_mb: 256
+  state_flush_records: 1000
+  checkpoint_seconds: 180
+  checkpoint_records: 10000
+  sources:
+    - id: smoltalk2_longalign_think
+      path: HuggingFaceTB/smoltalk2
+      name: SFT
+      revision: fc6cc2103c066455aade5d7fbb346039ae36ca5e
+      split: LongAlign_64k_Qwen3_32B_yarn_131k_think
+      target_records: null
+      keep_fields: [messages, source, chat_template_kwargs]
+      shuffle_seed: 2400
+    - id: smoltalk2_toolcalling_think
+      path: HuggingFaceTB/smoltalk2
+      name: SFT
+      revision: fc6cc2103c066455aade5d7fbb346039ae36ca5e
+      split: smolagents_toolcalling_traces_think
+      target_records: null
+      keep_fields: [messages, source, chat_template_kwargs]
+      shuffle_seed: 2401
+    - id: smoltalk2_everyday_reasoning
+      path: HuggingFaceTB/smoltalk2
+      name: SFT
+      revision: fc6cc2103c066455aade5d7fbb346039ae36ca5e
+      split: smoltalk_everyday_convs_reasoning_Qwen3_32B_think
+      target_records: null
+      keep_fields: [messages, source, chat_template_kwargs]
+      shuffle_seed: 2402
+    - id: smoltalk2_system_reasoning
+      path: HuggingFaceTB/smoltalk2
+      name: SFT
+      revision: fc6cc2103c066455aade5d7fbb346039ae36ca5e
+      split: smoltalk_systemchats_Qwen3_32B_think
+      target_records: null
+      keep_fields: [messages, source, chat_template_kwargs]
+      shuffle_seed: 2403
+    - id: smoltalk2_openthoughts3
+      path: HuggingFaceTB/smoltalk2
+      name: SFT
+      revision: fc6cc2103c066455aade5d7fbb346039ae36ca5e
+      split: OpenThoughts3_1.2M_think
+      target_records: 250000
+      keep_fields: [messages, source, chat_template_kwargs]
+      shuffle_seed: 2404
+    - id: smoltalk2_preference_think
+      path: HuggingFaceTB/smoltalk2
+      name: Preference
+      revision: fc6cc2103c066455aade5d7fbb346039ae36ca5e
+      split: tulu_3_8b_pref_mix_Qwen3_32B_Qwen3_0.6B_think
+      target_records: null
+      keep_fields: [chosen, rejected, prompt, source, chat_template_kwargs]
+      shuffle_seed: 2405
+    - id: smoltalk2_preference_direct
+      path: HuggingFaceTB/smoltalk2
+      name: Preference
+      revision: fc6cc2103c066455aade5d7fbb346039ae36ca5e
+      split: llama_3.1_tulu_3_8b_preference_mixture_no_think
+      target_records: null
+      keep_fields: [chosen, rejected, prompt, source, chat_template_kwargs]
+      shuffle_seed: 2406

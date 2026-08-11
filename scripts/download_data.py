@@ -28,6 +28,8 @@ VALIDATION_CONFIGS: dict[str, list[str]] = {
     "overtrain100": ["configs/corpus/corpus_overtrain_100b.yaml", "configs/corpus/stack_edu_13b.yaml"],
     "nemotron-candidates": ["configs/corpus/corpus_nemotron_candidates_16b.yaml"],
     "posttrain": ["configs/corpus/posttrain_frontier.yaml"],
+    "posttrain-modern": ["configs/corpus/posttrain_modern_candidates.yaml"],
+    "posttrain-agent": ["configs/corpus/posttrain_agent_candidates.yaml"],
     "reasoning": ["configs/corpus/reasoning_frontier.yaml"],
     "benchmarks": ["configs/corpus/decontamination_benchmarks.yaml"],
 }
@@ -39,6 +41,8 @@ PROFILE_DISK_ESTIMATES_GIB = {
     "overtrain100": 620,
     "nemotron-candidates": 140,
     "posttrain": 15,
+    "posttrain-modern": 18,
+    "posttrain-agent": 25,
     "reasoning": 12,
     "benchmarks": 2,
     "all": 140,
@@ -136,6 +140,30 @@ PROFILES: dict[str, list[Stage]] = {
             ],
         )
     ],
+    "posttrain-modern": [
+        Stage(
+            id="posttrain-modern-candidates",
+            profile="posttrain-modern",
+            command=[
+                sys.executable,
+                "scripts/materialize_hf_records.py",
+                "--config",
+                "configs/corpus/posttrain_modern_candidates.yaml",
+            ],
+        )
+    ],
+    "posttrain-agent": [
+        Stage(
+            id="posttrain-agent-candidates",
+            profile="posttrain-agent",
+            command=[
+                sys.executable,
+                "scripts/materialize_hf_records.py",
+                "--config",
+                "configs/corpus/posttrain_agent_candidates.yaml",
+            ],
+        )
+    ],
 
     "reasoning": [
         Stage(
@@ -221,6 +249,16 @@ def existing_hf_token_path(env: dict[str, str]) -> Path:
     return Path.home() / ".cache" / "huggingface" / "token"
 
 
+def default_hf_home() -> str:
+    """Keep WSL Hub metadata off DrvFS, where symlinks are not portable."""
+    explicit = os.environ.get("ASTER_HF_HOME")
+    if explicit:
+        return explicit
+    if os.name == "posix" and Path.cwd().as_posix().startswith("/mnt/"):
+        return "~/.cache/asterlm/huggingface"
+    return "data/hf-cache"
+
+
 def execution_context_errors(
     *,
     repo_root: Path,
@@ -251,8 +289,10 @@ def build_environment(args: argparse.Namespace) -> dict[str, str]:
     hf_home = Path(args.hf_home).expanduser().resolve()
     hf_home.mkdir(parents=True, exist_ok=True)
     env["HF_HOME"] = str(hf_home)
-    env.setdefault("HF_HUB_CACHE", str(hf_home / "hub"))
-    env.setdefault("HF_XET_CACHE", str(hf_home / "xet"))
+    # --hf-home is authoritative. Inheriting either sub-cache from another
+    # runtime can silently mix Windows reparse points with Linux symlinks.
+    env["HF_HUB_CACHE"] = str(hf_home / "hub")
+    env["HF_XET_CACHE"] = str(hf_home / "xet")
     # Keep authentication independent from the project-local cache. HF_TOKEN has
     # higher priority, and an explicitly supplied HF_TOKEN_PATH is never replaced.
     if not env.get("HF_TOKEN") and not env.get("HF_TOKEN_PATH") and token_path.is_file():
@@ -391,6 +431,8 @@ def main() -> None:
             "overtrain100",
             "nemotron-candidates",
             "posttrain",
+            "posttrain-modern",
+            "posttrain-agent",
             "reasoning",
             "benchmarks",
             "all",
@@ -400,7 +442,7 @@ def main() -> None:
         default="pilot",
     )
     parser.add_argument("--network-mode", choices=sorted(NETWORK_MODES), default="balanced")
-    parser.add_argument("--hf-home", default="data/hf-cache")
+    parser.add_argument("--hf-home", default=default_hf_home())
     parser.add_argument("--allow-external-venv", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--validate-first", action="store_true")

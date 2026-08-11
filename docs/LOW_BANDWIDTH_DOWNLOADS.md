@@ -170,6 +170,13 @@ python scripts/download_data.py \
   --profile all \
   --network-mode low \
   --hf-home /path/on/large/ssd/huggingface
+
+On WSL, the default Hub cache is stored on the Linux filesystem at
+`~/.cache/asterlm/huggingface`. Keep it there unless the selected Windows drive
+is mounted with working Linux symlink metadata: Hugging Face snapshot metadata
+uses symlinks, and a cache shared directly between native Windows and WSL can
+otherwise appear valid while exposing 112-byte reparse-point files. Downloaded
+Aster shards still use the output paths in the corpus configuration.
 ```
 
 Checkpoint every five minutes instead of the default fifteen:

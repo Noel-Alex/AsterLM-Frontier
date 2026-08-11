@@ -932,8 +932,8 @@ def start_action(action: str, payload: dict[str, Any]) -> dict[str, Any]:
 
     if action == "download_profile":
         profile = str(payload["profile"])
-        if profile not in {"benchmarks", "posttrain", "reasoning"}:
-            raise ValueError("Only benchmarks/posttrain/reasoning profiles are exposed here")
+        if profile not in {"benchmarks", "posttrain", "posttrain-modern", "posttrain-agent", "reasoning"}:
+            raise ValueError("Only benchmark, post-training, and reasoning profiles are exposed here")
         command = [
             py,
             "scripts/download_data.py",
