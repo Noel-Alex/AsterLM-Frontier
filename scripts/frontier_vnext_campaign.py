@@ -282,13 +282,13 @@ def discover_local_source(name: str) -> Path | None:
 
 def build_local_data_config() -> tuple[Path | None, dict[str, str]]:
     found = {name: discover_local_source(name) for name in (
-        "fineweb_edu", "dclm", "finemath_4plus", "stack_edu", "cosmopedia_v2"
+        "fineweb_edu", "dclm", "finemath_4plus", "cosmopedia_v2"
     )}
     paths = {k: str(v) for k, v in found.items() if v is not None}
-    train_names = [n for n in ("fineweb_edu", "dclm", "finemath_4plus", "stack_edu") if found[n] is not None]
+    train_names = [n for n in ("fineweb_edu", "dclm", "finemath_4plus") if found[n] is not None]
     if len(train_names) < 2 or found["cosmopedia_v2"] is None:
         return None, paths
-    desired = {"fineweb_edu": 0.50, "dclm": 0.20, "finemath_4plus": 0.20, "stack_edu": 0.10}
+    desired = {"fineweb_edu": 0.55, "dclm": 0.20, "finemath_4plus": 0.25}
     z = sum(desired[n] for n in train_names)
     sources = [
         {
