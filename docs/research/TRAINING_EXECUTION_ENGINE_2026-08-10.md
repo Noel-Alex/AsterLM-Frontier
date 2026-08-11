@@ -86,6 +86,9 @@ reported as usable.
 
 ### Laptop, one Ada GPU
 
+- launch Studio GPU jobs with an explicit `expandable_segments:True` allocator policy
+  under both current and legacy PyTorch environment names, reject conflicting overrides,
+  and record the resolved policy in the run manifest;
 - maximize safe microbatch before accumulation;
 - bucket sequence lengths so compiled graphs stay stable;
 - keep the data pipeline ahead of the GPU with pinned, nonblocking transfers;
@@ -129,6 +132,29 @@ The engine campaign is iterative rather than a one-time framework choice:
 9. promote only when quality is unchanged and the end-to-end run wins.
 
 Energy is recorded for research statistics only and never participates in promotion.
+
+### Decision trace mode
+
+`scripts/profile_training.py` has an opt-in bounded PyTorch trace mode for the decision
+runs in step 1:
+
+```bash
+python scripts/profile_training.py \
+  --model configs/model/aster_k3_latentmoe_270m_a188m.yaml \
+  --train-config configs/train/probe_memory_matrix.yaml \
+  --moe-implementation cutlass \
+  --warmup 2 --steps 5 \
+  --torch-trace runs/profiles/k3-cutlass/trace.json \
+  --json runs/profiles/k3-cutlass/profile.json
+```
+
+The trace includes named `aster::synthetic_data`, `forward`, `backward`,
+`clip_and_finite_gate`, `optimizer`, and `router_balance` ranges, input shapes, memory,
+FLOP estimates where PyTorch supports them, and CPU/CUDA activities. The result JSON
+stores a device-time-sorted operator table and the trace size/SHA-256. At most 20 total
+iterations may be captured. Profiled timing is labeled diagnostic-only and must never
+be compared directly with an unprofiled throughput result; its job is to explain the
+result's kernel-launch, host-synchronization, and operator-time structure.
 
 ## Promotion gates
 

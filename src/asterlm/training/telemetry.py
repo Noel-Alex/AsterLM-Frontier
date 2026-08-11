@@ -36,6 +36,10 @@ def static_system_manifest(device: torch.device) -> dict[str, Any]:
         "git_dirty": bool(_run(["git", "status", "--porcelain"])),
         "nvidia_smi": _run(["nvidia-smi", "--query-gpu=name,driver_version,pstate,power.limit,memory.total", "--format=csv,noheader"]),
         "execution_backend": execution_backend_manifest(device.type, capability),
+        "pytorch_allocator": {
+            "PYTORCH_ALLOC_CONF": os.environ.get("PYTORCH_ALLOC_CONF"),
+            "PYTORCH_CUDA_ALLOC_CONF": os.environ.get("PYTORCH_CUDA_ALLOC_CONF"),
+        },
     }
     try:
         import psutil

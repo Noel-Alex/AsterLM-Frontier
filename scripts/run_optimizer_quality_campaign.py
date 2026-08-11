@@ -16,6 +16,7 @@ import yaml
 
 from asterlm.artifacts import atomic_write_json
 from asterlm.config import AsterConfig, TrainConfig
+from asterlm.cuda_allocator import cuda_allocator_environment
 from asterlm.cuda_toolchain import require_compatible_cuda_toolchain
 from asterlm.experiments.quality import (
     archive_incomplete_quality_run,
@@ -363,7 +364,7 @@ def main() -> None:
                     "--data",
                     str(execution_data),
                 ]
-                environment = os.environ.copy()
+                environment = cuda_allocator_environment(os.environ)
                 environment["PYTHONPATH"] = os.pathsep.join(
                     filter(None, (str(pinned.path / "src"), environment.get("PYTHONPATH")))
                 )

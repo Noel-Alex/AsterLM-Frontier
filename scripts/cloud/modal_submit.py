@@ -9,6 +9,8 @@ import json
 import os
 from pathlib import Path
 
+from asterlm.cuda_allocator import cuda_allocator_environment
+
 MAX_CACHED_MANIFEST_BYTES = 64 * 1024 * 1024
 
 
@@ -121,6 +123,7 @@ def main() -> None:
         "XDG_CACHE_HOME": "/var/cache/aster/xdg",
         "WANDB_DIR": "/opt/aster/runs/wandb",
     }
+    environment = cuda_allocator_environment(environment)
     if job_kind == "training":
         environment["ASTERLM_REMOTE_CONTRACT_B64"] = base64.b64encode(payload_bytes).decode("ascii")
         entrypoint = "scripts/cloud/modal_entrypoint.py"

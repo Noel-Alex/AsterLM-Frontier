@@ -16,6 +16,7 @@ import yaml
 
 from asterlm.artifacts import atomic_write_json
 from asterlm.config import AsterConfig, DataConfig, TrainConfig
+from asterlm.cuda_allocator import cuda_allocator_environment
 from asterlm.cuda_toolchain import require_compatible_cuda_toolchain
 from asterlm.experiments import load_architecture_campaign, materialize_architecture_campaign
 from asterlm.experiments.quality import (
@@ -533,7 +534,7 @@ def main() -> None:
             ]
             if resume is not None:
                 command.extend(["--resume", str(resume)])
-            environment = os.environ.copy()
+            environment = dict(os.environ)
             pinned_pythonpath = str(pinned.path / "src")
             existing_pythonpath = environment.get("PYTHONPATH")
             environment["PYTHONPATH"] = (
@@ -547,6 +548,7 @@ def main() -> None:
             environment["ASTERLM_EXECUTION_VARIANT"] = variant_id
             environment_delta = dict(effective_variant["environment"])
             environment.update(environment_delta)
+            environment = cuda_allocator_environment(environment)
             print("$", " ".join(command), flush=True)
             completed = subprocess.run(
                 command, cwd=pinned.path, env=environment, check=False

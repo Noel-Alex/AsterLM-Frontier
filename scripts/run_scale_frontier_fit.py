@@ -16,9 +16,9 @@ from pathlib import Path
 from typing import Any
 
 from asterlm.artifacts import atomic_write_json
+from asterlm.cuda_allocator import cuda_allocator_environment
 from asterlm.experiments.source_checkout import create_pinned_source_checkout
 from asterlm.source_provenance import assert_expected_checkout_source
-
 
 DEFAULT_MODELS = (
     "configs/model/aster_k3_latentmoe_868m_a483m.yaml",
@@ -186,7 +186,7 @@ def main() -> None:
                 "--json",
                 str(result_path),
             ]
-            environment = os.environ.copy()
+            environment = cuda_allocator_environment(os.environ)
             environment["PYTHONPATH"] = str(pinned.path / "src")
             started = datetime.now(UTC).isoformat()
             try:

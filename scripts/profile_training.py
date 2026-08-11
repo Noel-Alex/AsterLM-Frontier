@@ -2,13 +2,14 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import statistics
 import subprocess
 import threading
 import time
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from pathlib import Path
 from typing import Any
 
@@ -163,6 +164,7 @@ def measure_phase(
     device: torch.device,
     host_seconds: dict[str, float],
     cuda_events: dict[str, list[tuple[torch.cuda.Event, torch.cuda.Event]]],
+    record_trace: bool = False,
 ):
     """Record host submission/synchronization time and default-stream CUDA time."""
 
@@ -171,8 +173,10 @@ def measure_phase(
     if device.type == "cuda":
         event_pair = (torch.cuda.Event(enable_timing=True), torch.cuda.Event(enable_timing=True))
         event_pair[0].record()
+    marker = torch.profiler.record_function(f"aster::{name}") if record_trace else nullcontext()
     try:
-        yield
+        with marker:
+            yield
     finally:
         if event_pair is not None:
             event_pair[1].record()
@@ -199,6 +203,52 @@ def summarize_phase_timing(records: list[dict[str, Any]]) -> dict[str, dict[str,
             for name in names
         }
     return summary
+
+
+def summarize_torch_profiler_events(events: Any, *, limit: int = 200) -> list[dict[str, Any]]:
+    """Create a stable machine-readable operator table across PyTorch profiler versions."""
+
+    rows: list[dict[str, Any]] = []
+    for event in events:
+        device_us = float(
+            getattr(
+                event,
+                "self_device_time_total",
+                getattr(event, "self_cuda_time_total", 0.0),
+            )
+            or 0.0
+        )
+        rows.append(
+            {
+                "name": str(getattr(event, "key", "unknown")),
+                "count": int(getattr(event, "count", 0) or 0),
+                "self_cpu_time_us": float(getattr(event, "self_cpu_time_total", 0.0) or 0.0),
+                "self_device_time_us": device_us,
+                "cpu_memory_bytes": int(getattr(event, "cpu_memory_usage", 0) or 0),
+                "device_memory_bytes": int(
+                    getattr(
+                        event,
+                        "device_memory_usage",
+                        getattr(event, "cuda_memory_usage", 0),
+                    )
+                    or 0
+                ),
+                "input_shapes": str(getattr(event, "input_shapes", "")),
+            }
+        )
+    rows.sort(
+        key=lambda row: (row["self_device_time_us"], row["self_cpu_time_us"]),
+        reverse=True,
+    )
+    return rows[: max(1, int(limit))]
+
+
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(8 * 1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def main() -> None:
@@ -259,6 +309,16 @@ def main() -> None:
         ),
     )
     parser.add_argument("--gpu-sample-interval", type=float, default=0.5)
+    parser.add_argument(
+        "--torch-trace",
+        type=Path,
+        default=None,
+        help=(
+            "Export one bounded Chrome trace and machine-readable operator summary. "
+            "Disabled by default because profiling changes timing."
+        ),
+    )
+    parser.add_argument("--torch-trace-operator-limit", type=int, default=200)
     parser.add_argument("--json", default=None)
     args = parser.parse_args()
 
@@ -368,6 +428,23 @@ def main() -> None:
         data_generator.manual_seed(train.seed + 100003)
         tokens_per_step = train.sequence_length * train.micro_batch_size * train.gradient_accumulation_steps
         total_iterations = args.warmup + args.steps
+        if args.torch_trace and total_iterations > 20:
+            raise ValueError("Bounded torch traces may capture at most 20 total iterations")
+        trace_profiler = None
+        trace_running = False
+        if args.torch_trace:
+            activities = [torch.profiler.ProfilerActivity.CPU]
+            if device.type == "cuda":
+                activities.append(torch.profiler.ProfilerActivity.CUDA)
+            trace_profiler = torch.profiler.profile(
+                activities=activities,
+                record_shapes=True,
+                profile_memory=True,
+                with_stack=False,
+                with_flops=True,
+            )
+            trace_profiler.start()
+            trace_running = True
         if gpu_sampler is not None:
             gpu_sampler.start()
         for iteration in range(total_iterations):
@@ -391,6 +468,7 @@ def main() -> None:
                     device=device,
                     host_seconds=phase_host_seconds,
                     cuda_events=phase_cuda_events,
+                    record_trace=trace_profiler is not None,
                 ):
                     ids = torch.randint(
                         0,
@@ -411,6 +489,7 @@ def main() -> None:
                     device=device,
                     host_seconds=phase_host_seconds,
                     cuda_events=phase_cuda_events,
+                    record_trace=trace_profiler is not None,
                 ), precision.activation_context(), precision.forward_context():
                     output = forward_model(ids, labels=labels, return_logits=False)
                     if output.loss is None:
@@ -421,6 +500,7 @@ def main() -> None:
                     device=device,
                     host_seconds=phase_host_seconds,
                     cuda_events=phase_cuda_events,
+                    record_trace=trace_profiler is not None,
                 ):
                     loss.backward()
                 loss_value.add_(output.loss.detach().float())
@@ -429,6 +509,7 @@ def main() -> None:
                 device=device,
                 host_seconds=phase_host_seconds,
                 cuda_events=phase_cuda_events,
+                record_trace=trace_profiler is not None,
             ):
                 grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), train.max_grad_norm)
                 # The gradient gate catches any non-finite loss/backward before the
@@ -454,6 +535,7 @@ def main() -> None:
                 device=device,
                 host_seconds=phase_host_seconds,
                 cuda_events=phase_cuda_events,
+                record_trace=trace_profiler is not None,
             ):
                 optimizer.step()
             with measure_phase(
@@ -461,6 +543,7 @@ def main() -> None:
                 device=device,
                 host_seconds=phase_host_seconds,
                 cuda_events=phase_cuda_events,
+                record_trace=trace_profiler is not None,
             ):
                 balance = model.update_moe_router_biases()
             if device.type == "cuda":
@@ -500,6 +583,26 @@ def main() -> None:
             if iteration >= args.warmup:
                 durations.append(duration)
                 measured_phase_records.append(record)
+            if trace_profiler is not None:
+                trace_profiler.step()
+
+        if trace_profiler is not None:
+            trace_profiler.stop()
+            trace_running = False
+            args.torch_trace.parent.mkdir(parents=True, exist_ok=True)
+            trace_profiler.export_chrome_trace(str(args.torch_trace))
+            result["torch_profiler"] = {
+                "trace_path": str(args.torch_trace),
+                "trace_sha256": _sha256(args.torch_trace),
+                "trace_size_bytes": args.torch_trace.stat().st_size,
+                "includes_warmup": True,
+                "profiled_iterations": total_iterations,
+                "timing_policy": "diagnostic_only_not_comparable_to_unprofiled_throughput",
+                "operators": summarize_torch_profiler_events(
+                    trace_profiler.key_averages(group_by_input_shape=True),
+                    limit=args.torch_trace_operator_limit,
+                ),
+            }
 
         ordered_durations = sorted(durations)
         n_durations = len(ordered_durations)
@@ -555,6 +658,8 @@ def main() -> None:
         result["error"] = f"{type(exc).__name__}: {exc}"
         print(result["error"])
     finally:
+        if "trace_profiler" in locals() and trace_profiler is not None and trace_running:
+            trace_profiler.stop()
         if "gpu_sampler" in locals() and gpu_sampler is not None and gpu_sampler._thread is not None:
             gpu_sampler.stop()
             result.setdefault("gpu_samples", gpu_sampler.samples)

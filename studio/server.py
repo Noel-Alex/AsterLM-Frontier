@@ -33,6 +33,7 @@ from asterlm.cloud import (
     load_gcp_profile,
     load_modal_profile,
 )
+from asterlm.cuda_allocator import cuda_allocator_environment
 from studio.providers import PROVIDER_CATALOG, provider_status
 from studio.remote_contracts import build_contract, list_contracts, persist_contract
 from studio.research_archive import ResearchArchive
@@ -712,6 +713,8 @@ class JobManager:
             merged_env = dict(os.environ)
             if env:
                 merged_env.update(env)
+            if resource == "gpu":
+                merged_env = cuda_allocator_environment(merged_env)
             proc = subprocess.Popen(
                 command,
                 cwd=ROOT,
