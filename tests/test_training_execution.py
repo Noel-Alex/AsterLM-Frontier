@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -20,7 +21,54 @@ def test_local_execution_plan_is_explicit_and_auditable(monkeypatch: pytest.Monk
     assert engine.plan.topology.world_size == 1
     assert engine.plan.distributed_strategy == "none"
     assert not engine.plan.compile_enabled
+    assert engine.plan.moe_implementation == "reference"
+    assert engine.plan.moe_selection_source == "not_applicable_dense_ffn"
     assert engine.prepare_model(nn.Linear(4, 4)).__class__ is nn.Linear
+
+
+def test_moe_backend_is_first_class_and_environment_conflicts_fail(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    model = AsterConfig(ffn_type="moe")
+    configured = TrainConfig(
+        device="cpu", execution_autotune=False, moe_implementation="reference"
+    )
+    engine = resolve_execution_engine(model, configured, torch.device("cpu"))
+    assert engine.plan.moe_implementation == "reference"
+    assert engine.plan.moe_selection_source == "train_config"
+
+    monkeypatch.setenv("ASTER_MOE_IMPL", "cutlass")
+    with pytest.raises(RuntimeError, match="Conflicting MoE execution selections"):
+        resolve_execution_engine(model, configured, torch.device("cpu"))
+
+
+def test_verified_autotune_cache_is_consumed_and_manifested(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    model = AsterConfig(ffn_type="moe")
+    train = TrainConfig(device="cpu", execution_autotune=True)
+    first = resolve_execution_engine(model, train, torch.device("cpu"))
+    assert first.plan.autotune_cache_key
+    cache = tmp_path / "autotune.json"
+    cache.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "entries": {
+                    first.plan.autotune_cache_key: {
+                        "winner": "reference",
+                        "status": "promoted",
+                        "numerical_parity": True,
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("ASTERLM_EXECUTION_AUTOTUNE_CACHE", str(cache))
+    resolved = resolve_execution_engine(model, train, torch.device("cpu"))
+    assert resolved.plan.moe_implementation == "reference"
+    assert resolved.plan.moe_selection_source == "verified_autotune_cache"
 
 
 def test_unpromoted_external_engine_is_never_silently_claimed() -> None:

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import json
 import os
 import subprocess
 from dataclasses import asdict, dataclass, field
@@ -11,6 +13,7 @@ import torch
 import yaml
 from torch import nn
 
+from asterlm.backends import EXECUTION_BACKENDS
 from asterlm.config import AsterConfig, TrainConfig
 
 
@@ -64,6 +67,10 @@ class ExecutionPlan:
     activation_offload: bool
     cuda_graphs: bool
     distributed_strategy: str
+    hardware_backend_id: str
+    moe_implementation: str
+    moe_selection_source: str
+    autotune_cache_key: str | None
     decisions: tuple[str, ...] = field(default_factory=tuple)
 
     def to_dict(self) -> dict[str, Any]:
@@ -100,6 +107,100 @@ _BACKEND_PACKAGES: dict[str, tuple[str, str | None]] = {
     "torchtitan": ("torchtitan", "torchtitan"),
     "deepspeed": ("deepspeed", "deepspeed"),
 }
+
+_MOE_REGISTRY_NAMES = {
+    "reference": "torch_reference",
+    "grouped": "transformer_engine_grouped",
+    "cutlass": "cutlass_grouped",
+    "torch_grouped": "torch_grouped",
+}
+
+
+def _moe_autotune_key(
+    hardware_backend_id: str,
+    model: AsterConfig,
+    train: TrainConfig,
+) -> str:
+    shape = {
+        "hardware_backend_id": hardware_backend_id,
+        "ffn_type": model.ffn_type,
+        "d_model": model.d_model,
+        "expert_hidden": model.moe_expert_hidden,
+        "latent_moe_dim": model.latent_moe_dim,
+        "num_experts": model.moe_num_experts,
+        "top_k": model.moe_top_k,
+        "shared_experts": model.moe_shared_experts,
+        "dtype": train.dtype,
+        "precision_backend": train.precision_backend,
+        "sequence_length": train.sequence_length,
+        "micro_batch_size": train.micro_batch_size,
+    }
+    encoded = json.dumps(shape, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _verified_autotune_winner(cache_key: str) -> str | None:
+    cache = Path(
+        os.environ.get(
+            "ASTERLM_EXECUTION_AUTOTUNE_CACHE",
+            "data/execution/autotune.json",
+        )
+    )
+    if not cache.is_file():
+        return None
+    try:
+        payload = json.loads(cache.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if payload.get("schema_version") != 1:
+        return None
+    raw = payload.get("entries", {}).get(cache_key)
+    if not isinstance(raw, dict):
+        return None
+    if raw.get("status") != "promoted" or raw.get("numerical_parity") is not True:
+        return None
+    winner = str(raw.get("winner", ""))
+    return winner if winner in _MOE_REGISTRY_NAMES else None
+
+
+def _resolve_moe_implementation(
+    model: AsterConfig,
+    train: TrainConfig,
+    topology: ExecutionTopology,
+) -> tuple[str, str, str, str | None]:
+    hardware = EXECUTION_BACKENDS.resolve(topology.device_type, topology.cuda_capability)
+    if model.ffn_type not in {"moe", "latent_moe"}:
+        return "reference", "not_applicable_dense_ffn", hardware.backend_id, None
+
+    configured = train.moe_implementation
+    environment = os.environ.get("ASTER_MOE_IMPL")
+    environment = environment.strip().lower() if environment else None
+    if environment and environment not in _MOE_REGISTRY_NAMES:
+        raise ValueError(f"Unsupported ASTER_MOE_IMPL override: {environment!r}")
+    if configured != "auto" and environment and configured != environment:
+        raise RuntimeError(
+            "Conflicting MoE execution selections: "
+            f"train.moe_implementation={configured!r}, ASTER_MOE_IMPL={environment!r}"
+        )
+
+    cache_key = _moe_autotune_key(hardware.backend_id, model, train)
+    if configured != "auto":
+        selected, source = configured, "train_config"
+    elif environment:
+        selected, source = environment, "environment_override_recorded"
+    elif train.execution_autotune and (winner := _verified_autotune_winner(cache_key)):
+        selected, source = winner, "verified_autotune_cache"
+    else:
+        selected = "reference"
+        source = "safe_reference_autotune_cache_miss" if train.execution_autotune else "safe_reference"
+
+    registry_name = _MOE_REGISTRY_NAMES[selected]
+    if registry_name not in hardware.moe_candidates:
+        raise RuntimeError(
+            f"MoE implementation {selected!r} is not eligible for {hardware.backend_id}; "
+            f"eligible={list(hardware.moe_candidates)}"
+        )
+    return selected, source, hardware.backend_id, cache_key
 
 
 def _find_module(module: str) -> bool:
@@ -269,6 +370,9 @@ def resolve_execution_engine(
     """
 
     topology = ExecutionTopology.detect(device)
+    moe_impl, moe_source, hardware_backend_id, autotune_cache_key = _resolve_moe_implementation(
+        model_config, train_config, topology
+    )
     requested = train_config.execution_backend
     if requested not in {"auto", "aster_local"}:
         raise NotImplementedError(
@@ -288,6 +392,8 @@ def resolve_execution_engine(
 
     compile_enabled = train_config.compile
     decisions: list[str] = ["single-process Aster execution plan"]
+    decisions.append(f"hardware_backend={hardware_backend_id}")
+    decisions.append(f"moe={moe_impl} selected_by={moe_source}")
     if compile_enabled and model_config.linear_backend == "transformer_engine":
         raise ValueError(
             "Compile and Transformer Engine remain an experimental combination; "
@@ -311,6 +417,10 @@ def resolve_execution_engine(
         activation_offload=train_config.activation_offload,
         cuda_graphs=False,
         distributed_strategy="none",
+        hardware_backend_id=hardware_backend_id,
+        moe_implementation=moe_impl,
+        moe_selection_source=moe_source,
+        autotune_cache_key=autotune_cache_key,
         decisions=tuple(decisions),
     )
     return AsterLocalExecutionEngine(plan)

@@ -61,7 +61,7 @@ class CUTLASSGroupedRoutedExperts:
             from grouped_gemm import ops
         except ImportError as exc:
             raise ImportError(
-                "ASTER_MOE_IMPL=cutlass requires the Apache-2.0 nv_grouped_gemm "
+                "moe_implementation=cutlass requires the Apache-2.0 nv_grouped_gemm "
                 "extension built for the exact PyTorch, CUDA and SM backend"
             ) from exc
 

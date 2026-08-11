@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import atexit
 import copy
 import json
 import math
@@ -22,6 +23,7 @@ from asterlm.experiments.quality import (
     latest_complete_checkpoint,
     summarize_quality_run,
 )
+from asterlm.experiments.source_checkout import create_pinned_source_checkout
 from asterlm.source_provenance import assert_expected_checkout_source
 
 DEFAULT_CANDIDATES = (
@@ -56,6 +58,24 @@ def _validate_data(data_path: Path, root: Path) -> DataConfig:
     return config
 
 
+def _absolute_data_config(data_path: Path, root: Path, target: Path) -> Path:
+    payload = yaml.safe_load(data_path.read_text(encoding="utf-8")) or {}
+    data = payload["data"] if "data" in payload else payload
+    for key in ("sources", "validation_sources"):
+        for source in data.get(key, []):
+            candidate = Path(str(source["path"]))
+            if not candidate.is_absolute() and (root / candidate).exists():
+                source["path"] = str((root / candidate).resolve())
+    manifest = data.get("manifest_path")
+    if manifest:
+        candidate = Path(str(manifest))
+        if not candidate.is_absolute() and (root / candidate).is_file():
+            data["manifest_path"] = str((root / candidate).resolve())
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(yaml.safe_dump(payload, sort_keys=False), encoding="utf-8")
+    return target
+
+
 def _train_payload(
     base: dict[str, Any],
     *,
@@ -67,6 +87,7 @@ def _train_payload(
     no_compile: bool,
     smoke: bool,
     resume: Path | None,
+    environment: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     payload = copy.deepcopy(base)
     if "train" in payload:
@@ -75,6 +96,8 @@ def _train_payload(
         train = payload
         payload = {"train": train}
     train.update(copy.deepcopy(train_overrides))
+    if environment and environment.get("ASTER_MOE_IMPL"):
+        train["moe_implementation"] = environment["ASTER_MOE_IMPL"]
     if no_compile and train.get("compile") is True:
         raise ValueError(
             "--no-compile cannot relabel an execution variant that requires compile=true; "
@@ -226,6 +249,10 @@ def main() -> None:
 
     root = Path(__file__).resolve().parents[1]
     source = assert_expected_checkout_source(root)
+    if source.get("dirty"):
+        raise RuntimeError(
+            "Architecture quality campaigns require a clean checkout before source pinning"
+        )
     data_path = (root / args.data).resolve() if not args.data.is_absolute() else args.data.resolve()
     train_path = (root / args.train).resolve() if not args.train.is_absolute() else args.train.resolve()
     tokenizer = (
@@ -314,12 +341,20 @@ def main() -> None:
         "runs": {},
     }
     output.mkdir(parents=True, exist_ok=True)
+    execution_data_path = _absolute_data_config(
+        data_path, root, output / "execution-data-absolute.yaml"
+    )
     atomic_write_json(output / "quality-campaign.json", manifest)
     if args.preflight_only:
         print(json.dumps(manifest, indent=2))
         return
 
     base_train = yaml.safe_load(train_path.read_text(encoding="utf-8")) or {}
+    pinned = create_pinned_source_checkout(root, str(source["git_commit"]))
+    atexit.register(pinned.close)
+    manifest["execution_checkout"] = pinned.manifest()
+    manifest["execution_data"] = str(execution_data_path)
+    atomic_write_json(output / "quality-campaign.json", manifest)
     failures = 0
     for seed in seeds:
         for candidate_id, variant_id in execution_matrix:
@@ -344,6 +379,7 @@ def main() -> None:
                 train_overrides=materialized["execution_variants"][variant_id][
                     "train_overrides"
                 ],
+                environment=materialized["execution_variants"][variant_id]["environment"],
                 no_compile=args.no_compile,
                 smoke=args.smoke,
                 resume=resume,
@@ -361,17 +397,24 @@ def main() -> None:
             model_path = Path(effective_variant["materialized_config"])
             command = [
                 sys.executable,
-                str(root / "scripts/train_pretrain.py"),
+                str(pinned.path / "scripts/train_pretrain.py"),
                 "--model",
                 str(model_path),
                 "--train",
                 str(generated),
                 "--data",
-                str(data_path),
+                str(execution_data_path),
             ]
             if resume is not None:
                 command.extend(["--resume", str(resume)])
             environment = os.environ.copy()
+            pinned_pythonpath = str(pinned.path / "src")
+            existing_pythonpath = environment.get("PYTHONPATH")
+            environment["PYTHONPATH"] = (
+                pinned_pythonpath
+                if not existing_pythonpath
+                else os.pathsep.join((pinned_pythonpath, existing_pythonpath))
+            )
             environment["ASTERLM_EXPERIMENT_HYPOTHESIS"] = str(
                 materialized["candidates"][candidate_id]["hypothesis"]
             )
@@ -379,7 +422,9 @@ def main() -> None:
             environment_delta = dict(effective_variant["environment"])
             environment.update(environment_delta)
             print("$", " ".join(command), flush=True)
-            completed = subprocess.run(command, cwd=root, env=environment, check=False)
+            completed = subprocess.run(
+                command, cwd=pinned.path, env=environment, check=False
+            )
             summary = summarize_quality_run(run_dir)
             summary.update(
                 {
@@ -406,6 +451,7 @@ def main() -> None:
 
     manifest["status"] = "complete" if failures == 0 else "partial_failure"
     atomic_write_json(output / "quality-campaign.json", manifest)
+    pinned.close()
     print(json.dumps(manifest, indent=2))
 
 

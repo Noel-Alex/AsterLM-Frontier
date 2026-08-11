@@ -58,6 +58,13 @@ class _NullLogger:
         del values
 
 
+def format_evaluation_metrics(values: dict[str, Any]) -> str:
+    return ", ".join(
+        f"{key}={value:.4f}" if isinstance(value, (int, float)) else f"{key}={value}"
+        for key, value in values.items()
+    )
+
+
 class Trainer:
     """Single-GPU, VRAM-first trainer for pretraining and response-only SFT.
 
@@ -124,11 +131,14 @@ class Trainer:
                 "ordinary nn.Linear modules would remain BF16."
             )
 
+        self.execution = resolve_execution_engine(model_config, train_config, self.device)
+
         self.model = AsterLM(
             model_config,
             named_initialization_seed=(
                 train_config.seed if train_config.deterministic_named_initialization else None
             ),
+            moe_implementation=self.execution.plan.moe_implementation,
         )
         # Autocast alone does not reduce persistent FP32 parameter storage. Store CUDA
         # weights in BF16 (or FP32 when explicitly requested) before optimizer creation.
@@ -208,7 +218,6 @@ class Trainer:
         if train_config.resume and self.tokens_seen and resume_data_state is None:
             self._restore_training_data_position()
 
-        self.execution = resolve_execution_engine(model_config, train_config, self.device)
         self.forward_model = self.execution.prepare_model(self.model)
 
         self.output = Path(train_config.output_dir)
@@ -857,7 +866,7 @@ class Trainer:
                     last_eval_step = self.step
                     last_eval_metrics = metrics
                     self._log(metrics)
-                    print("evaluation:", ", ".join(f"{k}={v:.4f}" for k, v in metrics.items()))
+                    print("evaluation:", format_evaluation_metrics(metrics))
                     window_excluded_s += time.perf_counter() - excluded_started
 
                 if self.step % cfg.save_interval == 0:

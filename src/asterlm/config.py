@@ -301,6 +301,8 @@ class TrainConfig:
     # candidates until an adapter passes parity, recovery, and throughput gates.
     execution_backend: str = "auto"  # auto | aster_local | megatron_core | torchtitan | deepspeed
     execution_autotune: bool = True
+    # Physical expert execution only; this never changes routing/model semantics.
+    moe_implementation: str = "auto"  # auto | reference | grouped | cutlass | torch_grouped
     cuda_graphs: bool = False
     precision_backend: str = "amp"  # amp | transformer_engine_fp8
     fp8_format: str = "hybrid"  # hybrid | e4m3
@@ -408,6 +410,14 @@ class TrainConfig:
             "deepspeed",
         }:
             raise ValueError("unsupported execution_backend")
+        if self.moe_implementation not in {
+            "auto",
+            "reference",
+            "grouped",
+            "cutlass",
+            "torch_grouped",
+        }:
+            raise ValueError("unsupported moe_implementation")
         if self.optimizer not in {
             "adamw",
             "muon_adamw",

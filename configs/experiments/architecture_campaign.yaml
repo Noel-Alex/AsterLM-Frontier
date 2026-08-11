@@ -40,33 +40,33 @@ execution_variants:
   torch-reference:
     description: Reference per-expert PyTorch MoE execution in BF16.
     model_overrides: {linear_backend: torch, ffn_linear_backend: torch}
-    train_overrides: {compile: false, precision_backend: amp}
-    environment: {ASTER_MOE_IMPL: reference}
+    train_overrides: {compile: false, precision_backend: amp, moe_implementation: reference}
+    environment: {}
   transformer-engine-grouped:
     description: Transformer Engine grouped experts with the validated FP8 surroundings.
     model_overrides: {linear_backend: transformer_engine, ffn_linear_backend: transformer_engine}
-    train_overrides: {compile: false, precision_backend: transformer_engine_fp8}
-    environment: {ASTER_MOE_IMPL: grouped}
+    train_overrides: {compile: false, precision_backend: transformer_engine_fp8, moe_implementation: grouped}
+    environment: {}
   cutlass-grouped:
     description: Current Ada winner using cached CUTLASS grouped expert GEMMs and BF16 expert weights.
     model_overrides: {linear_backend: transformer_engine, ffn_linear_backend: transformer_engine}
-    train_overrides: {compile: false, precision_backend: transformer_engine_fp8}
-    environment: {ASTER_MOE_IMPL: cutlass}
+    train_overrides: {compile: false, precision_backend: transformer_engine_fp8, moe_implementation: cutlass}
+    environment: {}
   torch-grouped:
     description: GPU-resident native PyTorch grouped experts with jagged offsets and no host expert-size synchronization.
     model_overrides: {linear_backend: transformer_engine, ffn_linear_backend: transformer_engine}
-    train_overrides: {compile: false, precision_backend: transformer_engine_fp8}
-    environment: {ASTER_MOE_IMPL: torch_grouped}
+    train_overrides: {compile: false, precision_backend: transformer_engine_fp8, moe_implementation: torch_grouped}
+    environment: {}
   cutlass-grouped-k3-muon:
     description: Ada CUTLASS grouped experts with Kimi K3 per-head Muon and cosine schedule; requires independent hyperparameter tuning before comparison.
     model_overrides: {linear_backend: transformer_engine, ffn_linear_backend: transformer_engine}
-    train_overrides: {compile: false, precision_backend: transformer_engine_fp8, optimizer: muon_adamw, muon_per_head: true, schedule_type: cosine}
-    environment: {ASTER_MOE_IMPL: cutlass}
+    train_overrides: {compile: false, precision_backend: transformer_engine_fp8, moe_implementation: cutlass, optimizer: muon_adamw, muon_per_head: true, schedule_type: cosine}
+    environment: {}
   torch-grouped-k3-muon:
     description: GPU-resident native grouped experts with Kimi K3 per-head Muon and independently tuned cosine schedule.
     model_overrides: {linear_backend: transformer_engine, ffn_linear_backend: transformer_engine}
-    train_overrides: {compile: false, precision_backend: transformer_engine_fp8, optimizer: muon_adamw, muon_per_head: true, schedule_type: cosine}
-    environment: {ASTER_MOE_IMPL: torch_grouped}
+    train_overrides: {compile: false, precision_backend: transformer_engine_fp8, moe_implementation: torch_grouped, optimizer: muon_adamw, muon_per_head: true, schedule_type: cosine}
+    environment: {}
 candidates:
   - id: tier0-dense-mla-220m
     tier: 0

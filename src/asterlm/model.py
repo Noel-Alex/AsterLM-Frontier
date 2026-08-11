@@ -76,7 +76,14 @@ def _aster_activation_checkpoint(
 
 
 class AsterBlock(nn.Module):
-    def __init__(self, config: AsterConfig, kind: str, layer_idx: int, kda_idx: int | None) -> None:
+    def __init__(
+        self,
+        config: AsterConfig,
+        kind: str,
+        layer_idx: int,
+        kda_idx: int | None,
+        moe_implementation: str,
+    ) -> None:
         super().__init__()
         self.kind = kind
         self.layer_idx = layer_idx
@@ -112,7 +119,7 @@ class AsterBlock(nn.Module):
                 balance_strategy=config.moe_balance_strategy,
                 bias_update_speed=config.moe_router_bias_update_speed,
                 linear_backend=config.ffn_backend,
-                moe_impl=os.environ.get("ASTER_MOE_IMPL", "reference").strip().lower(),
+                moe_impl=moe_implementation,
                 loqt_rank=config.loqt_rank,
                 loqt_alpha=config.loqt_alpha,
                 loqt_group_size=config.loqt_group_size,
@@ -141,6 +148,7 @@ class AsterBlock(nn.Module):
                 config.loqt_alpha,
                 config.loqt_group_size,
                 config.init_std,
+                moe_implementation,
             )
         else:
             self.ffn = SwiGLU(
@@ -238,9 +246,15 @@ class AsterLM(nn.Module):
         config: AsterConfig,
         *,
         named_initialization_seed: int | None = None,
+        moe_implementation: str | None = None,
     ) -> None:
         super().__init__()
         self.config = config
+        self.moe_implementation = (
+            moe_implementation
+            if moe_implementation is not None
+            else os.environ.get("ASTER_MOE_IMPL", "reference").strip().lower()
+        )
         self.token_embedding = nn.Embedding(config.vocab_size, config.d_model)
         self.embedding_in_proj = (
             nn.Linear(config.d_model, config.d_model, bias=False)
@@ -260,7 +274,9 @@ class AsterLM(nn.Module):
         self.n_gdn2_layers = 0
         for layer_idx, kind in enumerate(config.pattern):
             idx = recurrent_idx if kind in {"kda", "gdn2"} else None
-            blocks.append(AsterBlock(config, kind, layer_idx, idx))
+            blocks.append(
+                AsterBlock(config, kind, layer_idx, idx, self.moe_implementation)
+            )
             if kind in {"kda", "gdn2"}:
                 recurrent_idx += 1
             if kind == "kda":
@@ -313,6 +329,7 @@ class AsterLM(nn.Module):
                     config.mtp_block_kind,
                     config.n_layers,
                     recurrent_idx if config.mtp_block_kind in {"kda", "gdn2"} else None,
+                    self.moe_implementation,
                 )
                 self.mtp_final_norm = build_norm(config.d_model, config.rms_eps, config.norm_type)
         if named_initialization_seed is None:
@@ -880,6 +897,7 @@ class AsterLM(nn.Module):
             "max_sequence_length": self.config.max_seq_len,
             "ffn_type": self.config.ffn_type,
             "moe_layers": sum(isinstance(block.ffn, (DeepSeekStyleMoE, LatentMoE)) for block in self.blocks),
+            "moe_implementation": self.moe_implementation,
             "active_parameters_estimate": self.active_parameter_count(),
             "attention_window": self.config.attention_window,
             "latent_cache_width": self.config.latent_rank + self.config.rope_dim,

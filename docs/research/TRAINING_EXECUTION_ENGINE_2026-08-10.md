@@ -52,6 +52,9 @@ The plan records:
 - exact device/process topology;
 - engine and distributed strategy;
 - precision and compile policy;
+- resolved hardware-family backend;
+- physical MoE implementation and whether it came from train config, a recorded
+  compatibility override, or a verified autotune cache;
 - static versus dynamic shape policy;
 - activation/offload and graph-capture policy;
 - human-readable decisions.
@@ -60,6 +63,14 @@ The plan records:
 `deepspeed`. Only an actually validated adapter may execute. Requesting an
 unimplemented adapter fails loudly instead of running a different engine while the
 manifest claims otherwise.
+
+`moe_implementation` is now first-class train configuration (`auto`, `reference`,
+`grouped`, `cutlass`, or `torch_grouped`). Legacy `ASTER_MOE_IMPL` overrides remain
+available for old experiment launchers, but the resolved plan records them and rejects
+a conflict with explicit config. `execution_autotune` consumes only cache entries that
+are marked promoted and numerically equivalent for the exact hardware/shape key; a
+missing, malformed, or unverified cache fails back to the reference path rather than
+silently selecting a fast kernel.
 
 Each run manifest also contains an `execution_backends` capability report. It keeps
 the following evidence separate for every candidate: Python package importability

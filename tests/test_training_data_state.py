@@ -4,7 +4,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from asterlm.training.engine import Trainer
+from asterlm.training.engine import Trainer, format_evaluation_metrics
 
 
 class FakeDataset:
@@ -63,3 +63,10 @@ def test_trainer_rejects_cursor_identity_mismatch():
                 "validation": None,
             }
         )
+
+
+def test_evaluation_console_format_accepts_semantic_role() -> None:
+    rendered = format_evaluation_metrics(
+        {"eval_main_loss": 1.23456, "eval_role": "architecture_holdout"}
+    )
+    assert rendered == "eval_main_loss=1.2346, eval_role=architecture_holdout"

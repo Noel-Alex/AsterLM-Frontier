@@ -23,7 +23,7 @@ class TorchGroupedRoutedExperts(CUTLASSGroupedRoutedExperts):
         super().__init__(*args, **kwargs)
         if not hasattr(F, "grouped_mm"):
             raise RuntimeError(
-                "ASTER_MOE_IMPL=torch_grouped requires a PyTorch build with "
+                "moe_implementation=torch_grouped requires a PyTorch build with "
                 "differentiable torch.nn.functional.grouped_mm"
             )
 

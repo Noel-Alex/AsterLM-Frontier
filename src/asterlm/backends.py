@@ -88,6 +88,7 @@ def _default_registry() -> BackendRegistry:
                 "torch_reference",
                 "transformer_engine_grouped",
                 "cutlass_grouped",
+                "torch_grouped",
                 "custom_triton",
             ),
             notes="Primary laptop backend; every optional path requires sustained full-model evidence.",

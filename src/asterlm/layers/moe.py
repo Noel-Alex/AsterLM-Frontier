@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import os
-
 import torch
 from torch import nn
 from torch.nn import functional as F
@@ -38,6 +36,7 @@ class DeepSeekStyleMoE(nn.Module):
         loqt_alpha: float = 32.0,
         loqt_group_size: int = 64,
         init_std: float = 0.02,
+        moe_impl: str = "reference",
     ) -> None:
         super().__init__()
         if num_experts < 1 or not 1 <= top_k <= num_experts:
@@ -68,16 +67,16 @@ class DeepSeekStyleMoE(nn.Module):
         self.shared = nn.ModuleList(
             [SwiGLU(dim, expert_hidden, dropout, linear_backend, **ffn_kwargs) for _ in range(shared_experts)]
         )
-        requested_impl = os.environ.get("ASTER_MOE_IMPL", "reference").strip().lower()
+        requested_impl = moe_impl.strip().lower()
         if requested_impl not in {"reference", "grouped", "cutlass", "torch_grouped"}:
             raise ValueError(
-                "ASTER_MOE_IMPL must be 'reference', 'grouped', 'cutlass', or "
+                "moe_impl must be 'reference', 'grouped', 'cutlass', or "
                 "'torch_grouped', "
                 f"got {requested_impl!r}"
             )
         if requested_impl == "grouped" and linear_backend != "transformer_engine":
             raise ValueError(
-                "ASTER_MOE_IMPL=grouped currently requires linear_backend='transformer_engine'"
+                "moe_impl=grouped currently requires linear_backend='transformer_engine'"
             )
         self.moe_impl = requested_impl
         self._grouped_routed = None

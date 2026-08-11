@@ -8,7 +8,11 @@ import yaml
 
 from asterlm.config import AsterConfig
 from asterlm.experiments import load_architecture_campaign, materialize_architecture_campaign
-from scripts.run_architecture_quality_campaign import _execution_matrix, _train_payload
+from scripts.run_architecture_quality_campaign import (
+    _absolute_data_config,
+    _execution_matrix,
+    _train_payload,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 CAMPAIGN = ROOT / "configs/experiments/architecture_campaign.yaml"
@@ -18,12 +22,13 @@ def test_project_architecture_campaign_is_valid_and_materializable(tmp_path):
     campaign = load_architecture_campaign(CAMPAIGN, repo_root=ROOT)
     assert campaign.context_lengths == (4096, 8192, 16384, 32768, 65536, 131072)
     assert campaign.candidates[0].candidate_id == "tier0-dense-mla-220m"
-    assert campaign.execution_variants["cutlass-grouped"].environment == {
-        "ASTER_MOE_IMPL": "cutlass"
-    }
-    assert campaign.execution_variants["torch-grouped"].environment == {
-        "ASTER_MOE_IMPL": "torch_grouped"
-    }
+    assert campaign.execution_variants["cutlass-grouped"].train_overrides[
+        "moe_implementation"
+    ] == "cutlass"
+    assert campaign.execution_variants["cutlass-grouped"].environment == {}
+    assert campaign.execution_variants["torch-grouped"].train_overrides[
+        "moe_implementation"
+    ] == "torch_grouped"
     manifest = materialize_architecture_campaign(campaign, tmp_path)
     assert len(manifest["candidates"]) == len(campaign.candidates)
     for item in manifest["candidates"].values():
@@ -80,6 +85,40 @@ def test_execution_matrix_is_a_real_candidate_backend_cross_product(tmp_path):
         ("tier0-dense-mla-220m", "torch-compile-bf16"),
         ("tier1-dense-kda3-mla-220m", "fla-kda-compile-bf16"),
     ]
+
+
+def test_quality_train_config_promotes_moe_environment_to_first_class_field(tmp_path):
+    base = yaml.safe_load(Path("configs/train/campaign_quality_2k_adamw.yaml").read_text())
+    payload = _train_payload(
+        base,
+        run_dir=tmp_path / "run",
+        seed=1337,
+        max_tokens=1_048_576,
+        tokenizer=Path("artifacts/tokenizer_proxy.json"),
+        train_overrides={"compile": False},
+        environment={"ASTER_MOE_IMPL": "cutlass"},
+        no_compile=False,
+        smoke=True,
+        resume=None,
+    )
+    assert payload["train"]["moe_implementation"] == "cutlass"
+
+
+def test_quality_execution_data_paths_are_independent_of_pinned_checkout(tmp_path):
+    source = tmp_path / "train.jsonl"
+    source.write_text('{"text":"hello"}\n', encoding="utf-8")
+    data_path = tmp_path / "data.yaml"
+    data_path.write_text(
+        yaml.safe_dump(
+            {"data": {"sources": [{"path": "train.jsonl", "weight": 1.0}]}},
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+    target = tmp_path / "generated" / "absolute.yaml"
+    generated = _absolute_data_config(data_path, tmp_path, target)
+    payload = yaml.safe_load(generated.read_text(encoding="utf-8"))
+    assert payload["data"]["sources"][0]["path"] == str(source.resolve())
 
 
 def test_execution_matrix_rejects_variant_not_used_by_selected_candidate(tmp_path):
