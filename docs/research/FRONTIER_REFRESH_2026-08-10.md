@@ -52,13 +52,22 @@ Source: https://github.com/deepseek-ai/TileKernels
 
 Action:
 
-1. implement tiny semantic CSA/HCA and mHC references with forward/backward tests;
-2. reproduce compression, local branch, causal visibility and indexer semantics;
+1. [done] implement a portable semantic gated-compression, causal index-selection
+   and mHC/Sinkhorn oracle with forward/backward tests in
+   `src/asterlm/layers/deepseek_v4_reference.py`;
+2. [in progress] integrate the local attention branch and reproduce end-to-end
+   CSA/HCA causal visibility against the pinned oracle;
 3. benchmark dense reference crossover by sequence length;
 4. evaluate an Ada-capable Triton/TileLang/CUDA route only after the reference and
    retrieval tests pass;
 5. reuse upstream SM90/SM100 kernels through a backend adapter where parity and full
    model measurements pass.
+
+The first reference gate covers ratio-4 overlap exactly, incomplete-group causality,
+DeepSeek's ReLU/head-weighted compressed top-k rule, invalid early-query indices,
+the 4-stream split, and all 20 Sinkhorn row/column normalization passes. This is
+correctness infrastructure, not a throughput claim: the portable PyTorch code must
+not be selected as the production long-context backend.
 
 ### Kimi Linear: 3:1 KDA/MLA
 
