@@ -276,6 +276,11 @@ def main() -> None:
         default=None,
     )
     parser.add_argument("--hub-repo", default=None)
+    parser.add_argument(
+        "--remote-durable",
+        action="store_true",
+        help="Require persistent output plus verified full-state Hub upload at every save",
+    )
     args = parser.parse_args()
 
     train_config = TrainConfig.from_yaml(args.train)
@@ -283,6 +288,17 @@ def main() -> None:
         train_config.resume = args.resume
     if args.hub_repo:
         train_config.hub_repo_id = args.hub_repo
+    if args.remote_durable:
+        if not args.hub_repo:
+            raise ValueError("--remote-durable requires --hub-repo")
+        remote_run_root = Path(os.environ.get("ASTERLM_REMOTE_RUN_ROOT", "/opt/aster/runs"))
+        train_config.output_dir = str(remote_run_root / Path(train_config.output_dir).name)
+        train_config.hub_private = True
+        train_config.hub_upload_every_save = True
+        train_config.hub_upload_milestones = True
+        train_config.hub_upload_final = True
+        train_config.hub_include_optimizer = True
+        train_config.hub_fail_on_error = True
 
     trainer = StudioTrainer(
         AsterConfig.from_yaml(args.model),

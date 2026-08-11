@@ -10,14 +10,31 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-CONTRACT_VERSION = 2
+CONTRACT_VERSION = 3
 SAFE_ALIAS = re.compile(r"^[A-Za-z0-9_.-]+$")
 SAFE_HUB_REPO = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
+SAFE_HUB_REVISION = re.compile(r"^[A-Za-z0-9._/-]+$")
 REMOTE_PROVIDERS = {"modal", "gcp", "lightning", "huggingface_jobs", "skypilot"}
 
 
 def _sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _tree_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    files = sorted(candidate for candidate in path.rglob("*") if candidate.is_file())
+    if not files:
+        raise ValueError(f"Contract directory contains no files: {path}")
+    for candidate in files:
+        if candidate.is_symlink():
+            raise ValueError(f"Contract directories may not contain symlinks: {candidate}")
+        relative = candidate.relative_to(path).as_posix().encode("utf-8")
+        digest.update(len(relative).to_bytes(8, "big"))
+        digest.update(relative)
+        digest.update(candidate.stat().st_size.to_bytes(8, "big"))
+        digest.update(bytes.fromhex(_sha256(candidate)))
+    return digest.hexdigest()
 
 
 def _repo_file(root: Path, value: str) -> Path:
@@ -29,6 +46,34 @@ def _repo_file(root: Path, value: str) -> Path:
     if not path.is_file():
         raise ValueError(f"Contract input does not exist: {value}")
     return path
+
+
+def _repo_checkpoint(root: Path, value: str) -> tuple[Path, str, str]:
+    path = (root / value).resolve() if not Path(value).is_absolute() else Path(value).resolve()
+    try:
+        path.relative_to(root.resolve())
+    except ValueError as exc:
+        raise ValueError(f"Contract path must stay inside the repository: {value}") from exc
+    if path.is_dir():
+        return path, "directory", _tree_sha256(path)
+    if path.is_file():
+        return path, "file", _sha256(path)
+    raise ValueError(f"Contract resume checkpoint does not exist: {value}")
+
+
+def _hub_checkpoint(payload: dict[str, Any], default_repo: str) -> dict[str, str] | None:
+    path = str(payload.get("resume_hub_path") or "").strip().strip("/")
+    if not path:
+        return None
+    if path.startswith(".") or ".." in Path(path).parts or not path.startswith("runs/"):
+        raise ValueError("resume_hub_path must be a safe runs/... checkpoint folder")
+    repo = str(payload.get("resume_hub_repo") or default_repo).strip()
+    if not SAFE_HUB_REPO.fullmatch(repo):
+        raise ValueError("resume_hub_repo must use namespace/repository form")
+    revision = str(payload.get("resume_hub_revision") or "main").strip()
+    if not SAFE_HUB_REVISION.fullmatch(revision) or ".." in revision:
+        raise ValueError("resume_hub_revision contains unsafe characters")
+    return {"repo_id": repo, "revision": revision, "path": path}
 
 
 def git_state(root: Path) -> dict[str, Any]:
@@ -97,13 +142,23 @@ def build_contract(
         inputs[key] = {"path": normalized, "sha256": _sha256(path)}
         command.extend([option, normalized])
     command.extend(["--hub-repo", hub_repo])
+    command.append("--remote-durable")
 
     resume = str(payload.get("resume") or "").strip()
+    hub_checkpoint = _hub_checkpoint(payload, hub_repo)
+    if resume and hub_checkpoint:
+        raise ValueError("Use either resume or resume_hub_path, not both")
     if resume:
-        resume_path = _repo_file(root, resume)
+        resume_path, resume_kind, resume_sha = _repo_checkpoint(root, resume)
         normalized_resume = str(resume_path.relative_to(root.resolve())).replace(os.sep, "/")
-        inputs["resume"] = {"path": normalized_resume, "sha256": _sha256(resume_path)}
+        inputs["resume"] = {
+            "path": normalized_resume,
+            "kind": resume_kind,
+            "sha256": resume_sha,
+        }
         command.extend(["--resume", normalized_resume])
+    elif hub_checkpoint:
+        command.extend(["--resume", "__ASTER_HUB_RESUME__"])
 
     repository = repository or git_state(root)
     blockers: list[str] = []
@@ -124,6 +179,7 @@ def build_contract(
         "estimated_spend_usd": estimated_spend,
         "max_spend_usd": policy_ceiling,
         "hub_repo": hub_repo,
+        "resume_hub": hub_checkpoint,
         "parent_run_id": payload.get("parent_run_id"),
         "wandb_project": payload.get("wandb_project"),
     }
@@ -138,7 +194,10 @@ def build_contract(
         "provider_ready_at_creation": bool(provider.get("ready")),
         "blockers": blockers,
         "status": "ready" if not blockers else "blocked",
-        "dispatch_adapter": "gcloud_compute_v1" if provider_id == "gcp" else "planned",
+        "dispatch_adapter": {
+            "gcp": "gcloud_compute_v1",
+            "modal": "modal_sandbox_v1",
+        }.get(provider_id, "planned"),
     }
 
 

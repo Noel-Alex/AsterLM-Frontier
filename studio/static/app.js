@@ -818,12 +818,35 @@ function bind() {
         train:$("#contract-train").value.trim(),
         data:$("#contract-data").value.trim(),
         hub_repo:$("#contract-hub-repo").value.trim(),
+        resume_hub_path:$("#contract-resume-hub-path").value.trim(),
+        resume_hub_repo:$("#contract-resume-hub-repo").value.trim(),
+        resume_hub_revision:$("#contract-resume-hub-revision").value.trim(),
         timeout_minutes:Number($("#contract-timeout").value),
         estimated_spend_usd:Number($("#contract-spend").value),
         cost_confirmed:$("#contract-cost-confirmed").checked,
       });
+      S.providerContract=contract;
+      $("#plan-provider-launch").disabled=false;
+      $("#dispatch-provider-launch").disabled=contract.status!=="ready";
       $("#provider-contract-result").textContent=JSON.stringify(contract,null,2);
       toast(`Contract ${contract.contract_id} is ${contract.status}.`);
+    }catch(e){showError(e);}
+  };
+  $("#plan-provider-launch").onclick=async()=>{
+    try{
+      if(!S.providerContract)throw new Error("Create a contract first.");
+      const result=await post("/api/provider/launch",{contract_id:S.providerContract.contract_id,execute:false});
+      $("#provider-contract-result").textContent=JSON.stringify(result,null,2);
+      toast(`Launch plan is ${result.status||result.plan?.status||"ready"}.`);
+    }catch(e){showError(e);}
+  };
+  $("#dispatch-provider-launch").onclick=async()=>{
+    try{
+      if(!S.providerContract)throw new Error("Create a contract first.");
+      if(!confirm(`Dispatch ${S.providerContract.contract_id} to ${S.providerContract.provider}? This can consume paid credit.`))return;
+      const result=await post("/api/provider/launch",{contract_id:S.providerContract.contract_id,execute:true});
+      $("#provider-contract-result").textContent=JSON.stringify(result,null,2);
+      toast(`Remote contract ${result.status}.`);
     }catch(e){showError(e);}
   };
 }

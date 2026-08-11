@@ -24,6 +24,14 @@ from urllib.parse import parse_qs, urlparse
 
 import yaml
 
+from asterlm.cloud import (
+    build_gcp_launch_plan,
+    build_modal_launch_plan,
+    dispatch_gcp_launch_plan,
+    dispatch_modal_launch_plan,
+    load_gcp_profile,
+    load_modal_profile,
+)
 from studio.providers import PROVIDER_CATALOG, provider_status
 from studio.remote_contracts import build_contract, list_contracts, persist_contract
 from studio.research_archive import ResearchArchive
@@ -34,6 +42,7 @@ LOG_ROOT = STUDIO_ROOT / "logs"
 JOB_STATE = STUDIO_ROOT / "jobs.json"
 SETTINGS_PATH = STUDIO_ROOT / "settings.json"
 REMOTE_CONTRACT_ROOT = STUDIO_ROOT / "remote-contracts"
+REMOTE_PLAN_ROOT = STUDIO_ROOT / "remote-plans"
 CATALOG_PATH = ROOT / "studio" / "catalog.yaml"
 STATIC_ROOT = ROOT / "studio" / "static"
 GIB = 2**30
@@ -79,6 +88,32 @@ DEFAULT_SETTINGS: dict[str, Any] = {
 }
 
 SAFE_ID = re.compile(r"^[A-Za-z0-9_.-]+$")
+CONTRACT_ID = re.compile(r"^[0-9a-f]{20}$")
+
+
+def provider_launch(contract_id: str, *, execute: bool) -> dict[str, Any]:
+    if not CONTRACT_ID.fullmatch(contract_id):
+        raise ValueError("Invalid remote contract id")
+    contract_path = REMOTE_CONTRACT_ROOT / f"{contract_id}.json"
+    contract = json.loads(contract_path.read_text(encoding="utf-8"))
+    if contract.get("contract_id") != contract_id:
+        raise RuntimeError("Remote contract filename and identity differ")
+    provider = contract.get("provider")
+    profile_alias = str(contract["profile_alias"])
+    if provider == "modal":
+        profile = load_modal_profile(ROOT / "configs/providers/modal_boost.yaml", profile_alias)
+        plan = build_modal_launch_plan(
+            contract, profile, root=ROOT, contract_path=contract_path
+        )
+        result = dispatch_modal_launch_plan(plan, execute=execute)
+    elif provider == "gcp":
+        profile = load_gcp_profile(ROOT / "configs/providers/gcp_boost.yaml", profile_alias)
+        plan = build_gcp_launch_plan(contract, profile, root=ROOT)
+        result = dispatch_gcp_launch_plan(plan, execute=execute)
+    else:
+        raise ValueError(f"Provider {provider!r} does not have a dispatch adapter")
+    atomic_json(REMOTE_PLAN_ROOT / f"{contract_id}-{provider}.json", plan)
+    return result
 
 
 def atomic_json(path: Path, payload: Any) -> None:
@@ -1414,6 +1449,13 @@ class Handler(BaseHTTPRequestHandler):
                 target = persist_contract(REMOTE_CONTRACT_ROOT, contract)
                 contract["path"] = rel(target)
                 return self.send_json(contract, 201)
+            if path == "/api/provider/launch":
+                return self.send_json(
+                    provider_launch(
+                        str(payload["contract_id"]), execute=bool(payload.get("execute", False))
+                    ),
+                    202 if payload.get("execute", False) else 200,
+                )
             if path == "/api/clean/plan":
                 target = create_clean_plan(payload)
                 return self.send_json(

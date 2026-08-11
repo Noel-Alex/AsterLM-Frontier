@@ -41,6 +41,62 @@ def test_gcp_contract_selects_real_dispatch_adapter(tmp_path):
     assert contract["blockers"] == ["provider_not_ready"]
 
 
+def test_modal_contract_selects_real_dispatch_adapter(tmp_path):
+    for name in ("model.yaml", "train.yaml", "data.yaml"):
+        (tmp_path / name).write_text(name, encoding="utf-8")
+    contract = build_contract(
+        _payload(),
+        root=tmp_path,
+        policy={"max_spend_usd_per_job": 30, "require_cost_confirmation": True},
+        providers=_providers(),
+        repository={"commit": "d" * 40, "dirty": False},
+    )
+    assert contract["dispatch_adapter"] == "modal_sandbox_v1"
+
+
+def test_contract_accepts_directory_resume_and_hashes_tree(tmp_path):
+    for name in ("model.yaml", "train.yaml", "data.yaml"):
+        (tmp_path / name).write_text(name, encoding="utf-8")
+    checkpoint = tmp_path / "runs" / "trial" / "checkpoints" / "step-10"
+    checkpoint.mkdir(parents=True)
+    (checkpoint / "checkpoint_manifest.json").write_text("{}", encoding="utf-8")
+    (checkpoint / "model.safetensors").write_bytes(b"weights")
+    payload = _payload()
+    payload["resume"] = "runs/trial/checkpoints/step-10"
+    contract = build_contract(
+        payload,
+        root=tmp_path,
+        policy={"max_spend_usd_per_job": 30, "require_cost_confirmation": True},
+        providers=_providers(),
+        repository={"commit": "e" * 40, "dirty": False},
+    )
+    assert contract["inputs"]["resume"]["kind"] == "directory"
+    assert len(contract["inputs"]["resume"]["sha256"]) == 64
+
+
+def test_contract_records_cross_provider_hub_resume(tmp_path):
+    for name in ("model.yaml", "train.yaml", "data.yaml"):
+        (tmp_path / name).write_text(name, encoding="utf-8")
+    payload = _payload()
+    payload.update(
+        {
+            "resume_hub_repo": "student/aster-checkpoints",
+            "resume_hub_revision": "main",
+            "resume_hub_path": "runs/trial/checkpoints/tokens-1000000",
+        }
+    )
+    contract = build_contract(
+        payload,
+        root=tmp_path,
+        policy={"max_spend_usd_per_job": 30, "require_cost_confirmation": True},
+        providers=_providers(),
+        repository={"commit": "f" * 40, "dirty": False},
+    )
+    assert contract["resume_hub"]["path"].endswith("tokens-1000000")
+    assert "__ASTER_HUB_RESUME__" in contract["command"]
+    assert "resume" not in contract["inputs"]
+
+
 def test_contract_hashes_inputs_and_never_contains_credentials(tmp_path):
     for name in ("model.yaml", "train.yaml", "data.yaml"):
         (tmp_path / name).write_text(name, encoding="utf-8")
