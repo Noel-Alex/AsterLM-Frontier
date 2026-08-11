@@ -799,6 +799,11 @@ class Trainer:
                         torch.cuda.synchronize(self.device)
                     wall_elapsed = max(time.perf_counter() - window_start, 1e-9)
                     elapsed = max(wall_elapsed - window_excluded_s, 1e-9)
+                    grad_norm_value = float(grad_norm)
+                    grad_clip_coefficient = min(
+                        1.0,
+                        cfg.max_grad_norm / max(grad_norm_value, 1e-12),
+                    )
                     values: dict[str, Any] = {
                         "loss": float(accumulated_loss / cfg.gradient_accumulation_steps),
                         "main_loss": float(accumulated_main / cfg.gradient_accumulation_steps),
@@ -809,7 +814,13 @@ class Trainer:
                         "router_z_loss": float(
                             accumulated_router_z / cfg.gradient_accumulation_steps
                         ),
-                        "grad_norm_clipped": float(grad_norm),
+                        # clip_grad_norm_ returns the norm *before* clipping. Keep
+                        # the legacy key for old dashboards and add unambiguous
+                        # fields for optimizer stability comparisons.
+                        "grad_norm_clipped": grad_norm_value,
+                        "grad_norm_pre_clip": grad_norm_value,
+                        "grad_clip_coefficient": grad_clip_coefficient,
+                        "grad_was_clipped": int(grad_clip_coefficient < 1.0),
                         "lr_multiplier": multiplier,
                         "tokens_per_second": window_tokens / elapsed,
                         "window_seconds": elapsed,

@@ -857,7 +857,70 @@ class ResearchArchive:
     @staticmethod
     def _public_trial(row: sqlite3.Row) -> dict[str, Any]:
         payload = dict(row)
-        payload.pop("raw_json", None)
+        raw_json = payload.pop("raw_json", None)
+        try:
+            raw = json.loads(raw_json) if raw_json else {}
+        except (TypeError, json.JSONDecodeError):
+            raw = {}
+        stability = raw.get("aggregate") or raw.get("record") or {}
+        if isinstance(stability, dict):
+            payload.update(
+                {
+                    "run_survival_percent": (
+                        _as_float(stability.get("run_survival_rate")) * 100
+                        if _as_float(stability.get("run_survival_rate")) is not None
+                        else (100.0 if stability.get("run_survived") else None)
+                    ),
+                    "gradient_nonfinite_count": _as_int(
+                        stability.get("gradient_nonfinite_count")
+                    ),
+                    "training_loss_nonfinite_count": _as_int(
+                        stability.get("training_loss_nonfinite_count")
+                    ),
+                    "gradient_norm_p95": _as_float(
+                        stability.get("gradient_norm_p95_mean")
+                        if stability.get("gradient_norm_p95_mean") is not None
+                        else stability.get("gradient_norm_p95")
+                    ),
+                    "gradient_clip_percent": (
+                        _as_float(stability.get("gradient_clip_fraction_mean")) * 100
+                        if _as_float(stability.get("gradient_clip_fraction_mean")) is not None
+                        else (
+                            _as_float(stability.get("gradient_clip_fraction")) * 100
+                            if _as_float(stability.get("gradient_clip_fraction")) is not None
+                            else None
+                        )
+                    ),
+                    "loss_upward_jump_gt_0_5_count": _as_int(
+                        stability.get("loss_upward_jump_gt_0_5_count")
+                    ),
+                    "parameter_rms_drift_percent": (
+                        _as_float(stability.get("parameter_global_rms_relative_drift_mean"))
+                        * 100
+                        if _as_float(
+                            stability.get("parameter_global_rms_relative_drift_mean")
+                        )
+                        is not None
+                        else (
+                            _as_float(stability.get("parameter_global_rms_relative_drift"))
+                            * 100
+                            if _as_float(
+                                stability.get("parameter_global_rms_relative_drift")
+                            )
+                            is not None
+                            else None
+                        )
+                    ),
+                    "optimizer_wall_percent": (
+                        _as_float(stability.get("optimizer_wall_fraction_mean")) * 100
+                        if _as_float(stability.get("optimizer_wall_fraction_mean")) is not None
+                        else None
+                    ),
+                    "muon_relative_update_rms": _as_float(
+                        stability.get("muon_relative_update_rms_mean")
+                    ),
+                }
+            )
         return payload
 
     def compare(self, ids: list[str]) -> dict[str, Any]:

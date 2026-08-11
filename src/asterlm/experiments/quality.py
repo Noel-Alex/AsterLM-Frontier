@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
 import statistics
 from collections.abc import Iterable
 from datetime import UTC, datetime
+from itertools import pairwise
 from pathlib import Path
 from typing import Any
 
@@ -144,6 +146,76 @@ def summarize_quality_run(run_dir: str | Path) -> dict[str, Any]:
     training_by_step = sorted(
         training, key=lambda row: (int(row.get("step", 0)), int(row.get("tokens_seen", 0)))
     )
+    train_config = (experiment.get("train") or {}).get("config") or {}
+    max_grad_norm = train_config.get("max_grad_norm")
+    losses = [
+        float(row["loss"])
+        for row in training_by_step
+        if isinstance(row.get("loss"), (int, float)) and math.isfinite(float(row["loss"]))
+    ]
+    nonfinite_loss_count = sum(
+        isinstance(row.get("loss"), (int, float)) and not math.isfinite(float(row["loss"]))
+        for row in training_by_step
+    )
+    grad_norms = [
+        float(row.get("grad_norm_pre_clip", row.get("grad_norm_clipped")))
+        for row in training_by_step
+        if isinstance(row.get("grad_norm_pre_clip", row.get("grad_norm_clipped")), (int, float))
+        and math.isfinite(float(row.get("grad_norm_pre_clip", row.get("grad_norm_clipped"))))
+    ]
+    nonfinite_grad_count = sum(
+        row.get("grad_all_finite") == 0
+        or (
+            isinstance(row.get("grad_norm_pre_clip", row.get("grad_norm_clipped")), (int, float))
+            and not math.isfinite(
+                float(row.get("grad_norm_pre_clip", row.get("grad_norm_clipped")))
+            )
+        )
+        for row in training_by_step
+    )
+    clip_events = [
+        bool(row.get("grad_was_clipped"))
+        if row.get("grad_was_clipped") is not None
+        else bool(max_grad_norm is not None and value > float(max_grad_norm))
+        for row, value in (
+            (row, float(row.get("grad_norm_pre_clip", row.get("grad_norm_clipped"))))
+            for row in training_by_step
+            if isinstance(row.get("grad_norm_pre_clip", row.get("grad_norm_clipped")), (int, float))
+        )
+    ]
+    diagnostic_rows = [
+        row
+        for row in training_by_step
+        if isinstance(row.get("param_global_rms"), (int, float))
+    ]
+    parameter_rms_drift = None
+    if len(diagnostic_rows) >= 2:
+        first_rms = float(diagnostic_rows[0]["param_global_rms"])
+        last_rms = float(diagnostic_rows[-1]["param_global_rms"])
+        if first_rms:
+            parameter_rms_drift = (last_rms - first_rms) / first_rms
+    optimizer_fractions = [
+        float(row["optimizer_submit_seconds"]) / float(row["window_seconds"])
+        for row in training_by_step
+        if isinstance(row.get("optimizer_submit_seconds"), (int, float))
+        and isinstance(row.get("window_seconds"), (int, float))
+        and float(row["window_seconds"]) > 0
+    ]
+    muon_relative_updates = [
+        float(row["muon_relative_update_rms_mean"])
+        for row in training_by_step
+        if isinstance(row.get("muon_relative_update_rms_mean"), (int, float))
+    ]
+
+    def percentile(values: list[float], fraction: float) -> float | None:
+        if not values:
+            return None
+        ordered = sorted(values)
+        position = (len(ordered) - 1) * fraction
+        lower = int(position)
+        upper = min(lower + 1, len(ordered) - 1)
+        weight = position - lower
+        return ordered[lower] * (1.0 - weight) + ordered[upper] * weight
 
     def curve_point(row: dict[str, Any]) -> dict[str, Any]:
         step = int(row.get("step", 0))
@@ -170,6 +242,28 @@ def summarize_quality_run(run_dir: str | Path) -> dict[str, Any]:
         "mean_gpu_util_percent": statistics.fmean(utilization) if utilization else None,
         "peak_vram_gib": max(peak_vram) if peak_vram else None,
         "wall_clock_total_seconds": max(wall_seconds) if wall_seconds else None,
+        "run_survived": experiment.get("status") == "ok",
+        "training_loss_nonfinite_count": nonfinite_loss_count,
+        "gradient_nonfinite_count": nonfinite_grad_count,
+        "gradient_norm_mean": statistics.fmean(grad_norms) if grad_norms else None,
+        "gradient_norm_p95": percentile(grad_norms, 0.95),
+        "gradient_norm_max": max(grad_norms, default=None),
+        "gradient_clip_fraction": statistics.fmean(clip_events) if clip_events else None,
+        "loss_max_upward_logged_step": max(
+            (right - left for left, right in pairwise(losses)),
+            default=None,
+        ),
+        "loss_upward_jump_gt_0_5_count": sum(
+            right - left > 0.5 for left, right in pairwise(losses)
+        ),
+        "diagnostic_snapshot_count": len(diagnostic_rows),
+        "parameter_global_rms_relative_drift": parameter_rms_drift,
+        "optimizer_wall_fraction_mean": (
+            statistics.fmean(optimizer_fractions) if optimizer_fractions else None
+        ),
+        "muon_relative_update_rms_mean": (
+            statistics.fmean(muon_relative_updates) if muon_relative_updates else None
+        ),
         "learning_curve": [curve_point(row) for row in evaluations],
     }
 

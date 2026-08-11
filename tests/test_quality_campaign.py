@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 from asterlm import AsterConfig
 from asterlm.experiments.quality import (
     archive_incomplete_quality_run,
@@ -66,12 +68,31 @@ def test_quality_summary_and_latest_checkpoint(tmp_path):
     rows = [
         {
             "tokens_seen": 2048,
+            "step": 1,
             "tokens_per_second": 100.0,
             "gpu_util_percent": 90.0,
             "cuda_peak_allocated_gb": 2.0,
             "wall_clock_total_seconds": 30.0,
+            "loss": 4.0,
+            "grad_norm_pre_clip": 2.0,
+            "grad_was_clipped": 1,
+            "optimizer_submit_seconds": 3.0,
+            "window_seconds": 10.0,
+            "param_global_rms": 0.5,
         },
-        {"tokens_seen": 4096, "eval_main_loss": 3.5, "eval_perplexity": 33.1},
+        {
+            "tokens_seen": 3072,
+            "step": 2,
+            "tokens_per_second": 110.0,
+            "wall_clock_total_seconds": 40.0,
+            "loss": 3.0,
+            "grad_norm_pre_clip": 1.0,
+            "grad_was_clipped": 0,
+            "optimizer_submit_seconds": 2.0,
+            "window_seconds": 10.0,
+            "param_global_rms": 0.55,
+        },
+        {"tokens_seen": 4096, "step": 2, "eval_main_loss": 3.5, "eval_perplexity": 33.1},
     ]
     (run / "metrics.jsonl").write_text(
         "\n".join(json.dumps(row) for row in rows) + "\n", encoding="utf-8"
@@ -83,8 +104,12 @@ def test_quality_summary_and_latest_checkpoint(tmp_path):
 
     summary = summarize_quality_run(run)
     assert summary["eval_main_loss"] == 3.5
-    assert summary["median_training_tokens_per_second"] == 100.0
-    assert summary["learning_curve"][0]["wall_clock_total_seconds"] == 30.0
+    assert summary["median_training_tokens_per_second"] == 105.0
+    assert summary["learning_curve"][0]["wall_clock_total_seconds"] == 40.0
+    assert summary["gradient_norm_p95"] == 1.95
+    assert summary["gradient_clip_fraction"] == 0.5
+    assert summary["parameter_global_rms_relative_drift"] == pytest.approx(0.1)
+    assert summary["optimizer_wall_fraction_mean"] == 0.25
     assert latest_complete_checkpoint(run) == checkpoint
 
 
@@ -135,8 +160,6 @@ def test_resume_contract_rejects_changed_token_budget():
         "tokens_per_candidate": 4096,
         "smoke": False,
     }
-    import pytest
-
     with pytest.raises(ValueError, match="tokens_per_candidate"):
         runner._validate_resume_contract(
             existing,

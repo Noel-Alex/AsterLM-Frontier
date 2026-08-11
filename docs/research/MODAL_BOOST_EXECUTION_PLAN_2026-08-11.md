@@ -6,6 +6,12 @@ Modal is an explicitly profiled, asynchronous training backend; it is not a repl
 
 The real adapter is `modal_sandbox_v1`. Studio can create an immutable contract, build a dry-run launch plan, and dispatch only after a second cost confirmation. Defaults are deliberately blocked until the profile has a digest-pinned NVIDIA image, matching credentials, and `dispatch_enabled: true`.
 
+Each launch creates exactly one training Sandbox and stops trying GPU fallbacks as soon as that
+Sandbox exists. The hard contract/profile timeout is a billing backstop. Normal completion exits
+the Sandbox immediately. Studio exposes a graceful stop that waits for an optimizer boundary,
+writes full state, verifies the Hub upload, and then exits; an emergency terminate is also present
+to stop billing immediately when losing work since the last completed checkpoint is acceptable.
+
 ## Remote filesystem contract
 
 | Container path | Durable backing | Purpose |

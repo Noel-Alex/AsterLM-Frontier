@@ -1,11 +1,18 @@
 from __future__ import annotations
 
 import json
+import subprocess
 from pathlib import Path
 
+import pytest
 import yaml
 
-from asterlm.cloud import build_modal_launch_plan, dispatch_modal_launch_plan, load_modal_profile
+from asterlm.cloud import (
+    build_modal_launch_plan,
+    control_modal_sandbox,
+    dispatch_modal_launch_plan,
+    load_modal_profile,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -76,3 +83,43 @@ def test_modal_dispatch_is_dry_run_by_default(tmp_path):
     )
     result = dispatch_modal_launch_plan(plan)
     assert result["status"] == "dry_run"
+
+
+def test_modal_control_is_profile_isolated_and_structured(monkeypatch):
+    observed = {}
+
+    def fake_run(command, **kwargs):
+        observed["command"] = command
+        observed["environment"] = kwargs["env"]
+        payload = {
+            "status": "graceful_stop_requested",
+            "sandbox_id": "sb-AbC123",
+        }
+        return subprocess.CompletedProcess(
+            command,
+            0,
+            stdout="ASTER_MODAL_CONTROL_RESULT=" + json.dumps(payload) + "\n",
+            stderr="",
+        )
+
+    monkeypatch.setattr("asterlm.cloud.modal.subprocess.run", fake_run)
+    result = control_modal_sandbox(
+        profile_alias="noelalex404",
+        modal_environment="main",
+        sandbox_id="sb-AbC123",
+        mode="graceful",
+    )
+    assert result["status"] == "graceful_stop_requested"
+    assert observed["environment"]["MODAL_PROFILE"] == "noelalex404"
+    assert observed["environment"]["MODAL_ENVIRONMENT"] == "main"
+    assert observed["command"][-1] == "graceful"
+
+
+def test_modal_control_rejects_unknown_targets():
+    with pytest.raises(ValueError, match="Sandbox id"):
+        control_modal_sandbox(
+            profile_alias="noelalex404",
+            modal_environment="main",
+            sandbox_id="not-a-sandbox",
+            mode="terminate",
+        )

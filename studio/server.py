@@ -27,6 +27,7 @@ import yaml
 from asterlm.cloud import (
     build_gcp_launch_plan,
     build_modal_launch_plan,
+    control_modal_sandbox,
     dispatch_gcp_launch_plan,
     dispatch_modal_launch_plan,
     load_gcp_profile,
@@ -43,6 +44,7 @@ JOB_STATE = STUDIO_ROOT / "jobs.json"
 SETTINGS_PATH = STUDIO_ROOT / "settings.json"
 REMOTE_CONTRACT_ROOT = STUDIO_ROOT / "remote-contracts"
 REMOTE_PLAN_ROOT = STUDIO_ROOT / "remote-plans"
+REMOTE_JOB_ROOT = STUDIO_ROOT / "remote-jobs"
 CATALOG_PATH = ROOT / "studio" / "catalog.yaml"
 STATIC_ROOT = ROOT / "studio" / "static"
 GIB = 2**30
@@ -113,6 +115,31 @@ def provider_launch(contract_id: str, *, execute: bool) -> dict[str, Any]:
     else:
         raise ValueError(f"Provider {provider!r} does not have a dispatch adapter")
     atomic_json(REMOTE_PLAN_ROOT / f"{contract_id}-{provider}.json", plan)
+    if execute and result.get("status") == "dispatched":
+        atomic_json(
+            REMOTE_JOB_ROOT / f"{result['sandbox_id']}.json",
+            {
+                **result,
+                "contract_id": contract_id,
+                "modal_environment": plan.get("modal_environment"),
+                "created_at": time.time(),
+            },
+        )
+    return result
+
+
+def provider_control(sandbox_id: str, *, mode: str) -> dict[str, Any]:
+    if not re.fullmatch(r"sb-[A-Za-z0-9]+", sandbox_id):
+        raise ValueError("Invalid Modal Sandbox id")
+    job_path = REMOTE_JOB_ROOT / f"{sandbox_id}.json"
+    job = json.loads(job_path.read_text(encoding="utf-8"))
+    result = control_modal_sandbox(
+        profile_alias=str(job["profile_alias"]),
+        modal_environment=str(job["modal_environment"]),
+        sandbox_id=sandbox_id,
+        mode=mode,
+    )
+    atomic_json(job_path, {**job, "last_control": result, "updated_at": time.time()})
     return result
 
 
@@ -1410,6 +1437,16 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json(provider_status(settings().get("providers")))
             if path == "/api/provider/contracts":
                 return self.send_json(list_contracts(REMOTE_CONTRACT_ROOT))
+            if path == "/api/provider/jobs":
+                return self.send_json(
+                    [
+                        value
+                        for item in sorted(REMOTE_JOB_ROOT.glob("*.json"), reverse=True)
+                        if (value := load_json(item, None)) is not None
+                    ]
+                    if REMOTE_JOB_ROOT.is_dir()
+                    else []
+                )
             if path == "/favicon.ico":
                 self.send_response(204)
                 self.end_headers()
@@ -1455,6 +1492,12 @@ class Handler(BaseHTTPRequestHandler):
                         str(payload["contract_id"]), execute=bool(payload.get("execute", False))
                     ),
                     202 if payload.get("execute", False) else 200,
+                )
+            if path == "/api/provider/control":
+                return self.send_json(
+                    provider_control(
+                        str(payload["sandbox_id"]), mode=str(payload["mode"])
+                    )
                 )
             if path == "/api/clean/plan":
                 target = create_clean_plan(payload)

@@ -220,3 +220,46 @@ def dispatch_modal_launch_plan(plan: dict[str, Any], *, execute: bool = False) -
     if result_line is None:
         raise RuntimeError("Modal dispatcher returned no structured result")
     return json.loads(result_line)
+
+
+def control_modal_sandbox(
+    *,
+    profile_alias: str,
+    modal_environment: str,
+    sandbox_id: str,
+    mode: str,
+) -> dict[str, Any]:
+    if mode not in {"status", "graceful", "terminate"}:
+        raise ValueError("Modal control mode must be status, graceful, or terminate")
+    if not re.fullmatch(r"sb-[A-Za-z0-9]+", sandbox_id):
+        raise ValueError("Invalid Modal Sandbox id")
+    root = Path(__file__).resolve().parents[3]
+    controller = root / "scripts" / "cloud" / "modal_control.py"
+    environment = dict(os.environ)
+    environment["MODAL_PROFILE"] = _safe(profile_alias, "profile alias")
+    environment["MODAL_ENVIRONMENT"] = _safe(modal_environment, "environment")
+    completed = subprocess.run(
+        [
+            sys.executable,
+            str(controller),
+            "--sandbox-id",
+            sandbox_id,
+            "--mode",
+            mode,
+        ],
+        cwd=root,
+        env=environment,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if completed.returncode:
+        raise RuntimeError(f"Modal control failed: {completed.stderr.strip()[-4000:]}")
+    marker = "ASTER_MODAL_CONTROL_RESULT="
+    result_line = next(
+        (line[len(marker) :] for line in reversed(completed.stdout.splitlines()) if line.startswith(marker)),
+        None,
+    )
+    if result_line is None:
+        raise RuntimeError("Modal controller returned no structured result")
+    return json.loads(result_line)

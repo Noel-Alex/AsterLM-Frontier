@@ -236,6 +236,61 @@ def analyze_quality_campaign(campaign_path: str | Path) -> dict[str, Any]:
                 [float(item["peak_vram_gib"]) for item in complete if item.get("peak_vram_gib") is not None],
                 default=None,
             ),
+            "run_survival_rate": _mean(
+                [float(bool(item.get("run_survived"))) for item in items]
+            ),
+            "training_loss_nonfinite_count": sum(
+                int(item.get("training_loss_nonfinite_count") or 0) for item in items
+            ),
+            "gradient_nonfinite_count": sum(
+                int(item.get("gradient_nonfinite_count") or 0) for item in items
+            ),
+            "gradient_norm_p95_mean": _mean(
+                [
+                    float(item["gradient_norm_p95"])
+                    for item in complete
+                    if item.get("gradient_norm_p95") is not None
+                ]
+            ),
+            "gradient_norm_max": max(
+                [
+                    float(item["gradient_norm_max"])
+                    for item in complete
+                    if item.get("gradient_norm_max") is not None
+                ],
+                default=None,
+            ),
+            "gradient_clip_fraction_mean": _mean(
+                [
+                    float(item["gradient_clip_fraction"])
+                    for item in complete
+                    if item.get("gradient_clip_fraction") is not None
+                ]
+            ),
+            "loss_upward_jump_gt_0_5_count": sum(
+                int(item.get("loss_upward_jump_gt_0_5_count") or 0) for item in items
+            ),
+            "parameter_global_rms_relative_drift_mean": _mean(
+                [
+                    float(item["parameter_global_rms_relative_drift"])
+                    for item in complete
+                    if item.get("parameter_global_rms_relative_drift") is not None
+                ]
+            ),
+            "optimizer_wall_fraction_mean": _mean(
+                [
+                    float(item["optimizer_wall_fraction_mean"])
+                    for item in complete
+                    if item.get("optimizer_wall_fraction_mean") is not None
+                ]
+            ),
+            "muon_relative_update_rms_mean": _mean(
+                [
+                    float(item["muon_relative_update_rms_mean"])
+                    for item in complete
+                    if item.get("muon_relative_update_rms_mean") is not None
+                ]
+            ),
         }
     expected_runs = len(expected)
     complete_runs = sum(record.get("status") == "ok" for record in records)
@@ -255,7 +310,11 @@ def analyze_quality_campaign(campaign_path: str | Path) -> dict[str, Any]:
             "reason": (
                 "Campaign analysis is incomplete"
                 if complete_runs < expected_runs
-                else "Architecture mechanism still requires long-context and native-scale promotion gates"
+                else (
+                    "Optimizer choice still requires replicated longer-horizon time-to-quality and recovery gates"
+                    if campaign.get("campaign_type") == "optimizer_quality"
+                    else "Architecture mechanism still requires long-context and native-scale promotion gates"
+                )
             ),
         },
     }

@@ -574,6 +574,15 @@ async function loadResearchComparison() {
     ["tokens_to_common_loss","tokens to common quality (lower is better)",""],
     ["gpu_utilization","GPU utilization (higher is better)","%"],
     ["peak_allocated_gib","peak VRAM (lower is better)"," GiB"],
+    ["run_survival_percent","completed-run survival","%"],
+    ["gradient_nonfinite_count","non-finite gradient events (zero required)",""],
+    ["training_loss_nonfinite_count","non-finite loss events (zero required)",""],
+    ["gradient_norm_p95","pre-clip gradient norm p95 (diagnostic)",""],
+    ["gradient_clip_percent","logged updates clipped (diagnostic)","%"],
+    ["loss_upward_jump_gt_0_5_count","logged loss jumps above 0.5 (lower is better)",""],
+    ["parameter_rms_drift_percent","parameter RMS drift (diagnostic)","%"],
+    ["optimizer_wall_percent","optimizer share of training wall time (lower is better)","%"],
+    ["muon_relative_update_rms","Muon relative update RMS (diagnostic)",""],
   ];
   const charts=metrics.map(([key,label,unit])=>{
     const max=Math.max(0,...result.trials.map(x=>Number(x[key])||0));
@@ -845,8 +854,31 @@ function bind() {
       if(!S.providerContract)throw new Error("Create a contract first.");
       if(!confirm(`Dispatch ${S.providerContract.contract_id} to ${S.providerContract.provider}? This can consume paid credit.`))return;
       const result=await post("/api/provider/launch",{contract_id:S.providerContract.contract_id,execute:true});
+      S.providerRemoteJob=result;
+      $("#graceful-provider-stop").disabled=result.provider!=="modal"||!result.sandbox_id;
+      $("#terminate-provider-job").disabled=result.provider!=="modal"||!result.sandbox_id;
       $("#provider-contract-result").textContent=JSON.stringify(result,null,2);
       toast(`Remote contract ${result.status}.`);
+    }catch(e){showError(e);}
+  };
+  $("#graceful-provider-stop").onclick=async()=>{
+    try{
+      if(!S.providerRemoteJob?.sandbox_id)throw new Error("No Modal Sandbox is selected.");
+      if(!confirm("Request a safe optimizer-boundary stop, full checkpoint, and verified Hub upload?"))return;
+      const result=await post("/api/provider/control",{sandbox_id:S.providerRemoteJob.sandbox_id,mode:"graceful"});
+      $("#provider-contract-result").textContent=JSON.stringify(result,null,2);
+      $("#graceful-provider-stop").disabled=true;
+      toast("Graceful remote stop requested.");
+    }catch(e){showError(e);}
+  };
+  $("#terminate-provider-job").onclick=async()=>{
+    try{
+      if(!S.providerRemoteJob?.sandbox_id)throw new Error("No Modal Sandbox is selected.");
+      if(!confirm("Terminate this Sandbox immediately? Work since its last completed durable checkpoint can be lost."))return;
+      const result=await post("/api/provider/control",{sandbox_id:S.providerRemoteJob.sandbox_id,mode:"terminate"});
+      $("#provider-contract-result").textContent=JSON.stringify(result,null,2);
+      $("#graceful-provider-stop").disabled=true;$("#terminate-provider-job").disabled=true;
+      toast("Modal Sandbox terminated.");
     }catch(e){showError(e);}
   };
 }

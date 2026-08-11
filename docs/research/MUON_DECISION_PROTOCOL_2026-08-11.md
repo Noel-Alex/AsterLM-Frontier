@@ -53,6 +53,13 @@ Muon also exposes low-frequency diagnostics, collected only at the configured di
 These join the existing unclipped gradient norms, parameter RMS/max, QK clipping, max attention
 logit, routing balance, throughput, GPU utilization, VRAM, power, and wall-clock records.
 
+The campaign analysis and Studio comparison surface now retain these signals instead of reducing
+the decision to terminal loss and tokens/s. Per arm they report completed-run survival, non-finite
+loss/gradient counts, pre-clip gradient-norm p95/max, clipping frequency, logged upward loss jumps,
+parameter-RMS drift, optimizer share of wall time, and Muon's relative update RMS. These are
+diagnostics, not a scalar score: clipping and update magnitude have no universally monotonic
+"better" direction, while any non-finite event is a hard stability failure.
+
 ## Fair executable decision matrix
 
 `configs/experiments/optimizer_quality_campaign.yaml` and

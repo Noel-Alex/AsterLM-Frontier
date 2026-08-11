@@ -192,6 +192,11 @@ def test_archive_indexes_quality_runs_and_aggregate_metrics(tmp_path) -> None:
                 "median_training_tokens_per_second": 1200,
                 "mean_gpu_util_percent": 91,
                 "peak_vram_gib": 4.5,
+                "run_survival_rate": 1.0,
+                "gradient_nonfinite_count": 0,
+                "gradient_clip_fraction_mean": 0.125,
+                "optimizer_wall_fraction_mean": 0.08,
+                "muon_relative_update_rms_mean": 0.004,
                 "wall_clock_total_seconds": 10,
                 "learning_curve": [
                     {"step": 1, "tokens_seen": 2048, "eval_main_loss": 4.0},
@@ -234,6 +239,11 @@ def test_archive_indexes_quality_runs_and_aggregate_metrics(tmp_path) -> None:
                 "median_training_tokens_per_second": 1200,
                 "mean_gpu_util_percent": 91,
                 "peak_vram_gib": 4.5,
+                "run_survival_rate": 1.0,
+                "gradient_nonfinite_count": 0,
+                "gradient_clip_fraction_mean": 0.125,
+                "optimizer_wall_fraction_mean": 0.08,
+                "muon_relative_update_rms_mean": 0.004,
             },
             "k3:adamw": {
                 "candidate_id": "k3",
@@ -268,6 +278,11 @@ def test_archive_indexes_quality_runs_and_aggregate_metrics(tmp_path) -> None:
     assert aggregate["eval_loss"] == 3.5
     assert aggregate["token_curve_auc"] == 3.75
     assert aggregate["time_to_common_loss"] == 10
+    assert aggregate["run_survival_percent"] == 100
+    assert aggregate["gradient_nonfinite_count"] == 0
+    assert aggregate["gradient_clip_percent"] == 12.5
+    assert aggregate["optimizer_wall_percent"] == 8
+    assert aggregate["muon_relative_update_rms"] == 0.004
     assert individual["result_path"] == "runs/quality/seed-7/k3/muon/experiment.json"
     assert individual["total_parameters"] == 270
     assert individual["active_parameters"] == 188
