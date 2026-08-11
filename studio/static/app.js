@@ -8,6 +8,10 @@ const S = {
   selectedConfig: null,
   cleanPlanPath: null,
   trainingPlan: null,
+  researchRows: [],
+  researchTotal: 0,
+  researchOffset: 0,
+  researchSelected: new Set(),
   timer: null,
 };
 
@@ -95,7 +99,12 @@ function gotoPage(page) {
   $("#page-title").textContent=PAGE_TITLES[page]||page;
   history.replaceState(null,"",`#${page}`);
   if(page==="architecture") loadConfigs("model").catch(showError);
-  if(page==="experiments"){renderRuns();loadDiagnostics().catch(showError);}
+  if(page==="experiments"){
+    mountResearchArchive();
+    renderRuns();
+    loadDiagnostics().catch(showError);
+    loadResearchArchive(true).catch(showError);
+  }
   if(page==="logs") renderJobs();
 }
 
@@ -437,6 +446,127 @@ async function loadConfigs(kind="model") {
     $("#config-kind").value=kind;
     $("#config-editor").value=JSON.stringify(item.config,null,2);
   };
+}
+
+function mountResearchArchive() {
+  if($("#research-summary"))return;
+  const layout=$("#page-experiments .experiment-layout");if(!layout)return;
+  layout.insertAdjacentHTML("beforebegin",`<article class="paper-panel research-archive-panel">
+    <div class="panel-head"><div><div class="eyebrow">PERMANENT RESEARCH INDEX</div><h3>Every result, comparable and traceable</h3></div><button id="research-reindex" class="ghost small">Reindex now</button></div>
+    <p class="muted">The searchable index has unbounded retention. Pagination limits only this view; raw artifacts, revisions, protocols, failures and evidence paths remain preserved.</p>
+    <div id="research-summary" class="research-summary"><div class="empty-state">Loading archive summaryâ€¦</div></div>
+    <div class="research-toolbar">
+      <label>Search<input id="research-query" placeholder="candidate, campaign, config or path"/></label>
+      <label>Backend<select id="research-backend"><option value="">All backends</option></select></label>
+      <label>Status<select id="research-status"><option value="">All statuses</option></select></label>
+      <button id="research-filter" class="ink">Apply</button><button id="research-compare" class="ghost" disabled>Compare selected</button>
+    </div>
+    <div id="research-compatibility" class="research-compatibility"></div>
+    <div class="research-table-wrap"><table class="research-table"><thead><tr><th></th><th>Trial / provenance</th><th>Protocol</th><th>tokens/s</th><th>GPU</th><th>Peak VRAM</th><th>Parameters</th></tr></thead><tbody id="research-trial-rows"><tr><td colspan="7" class="empty-state">Loading indexed trialsâ€¦</td></tr></tbody></table></div>
+    <div class="research-pagination"><span id="research-range" class="muted"></span><button id="research-more" class="ghost small">Load more</button></div>
+  </article>
+  <div class="research-lower-grid">
+    <article class="paper-panel"><div class="panel-head"><div><div class="eyebrow">MATCHED COMPARISON</div><h3>Systems evidence without false equivalence</h3></div></div><div id="research-comparison" class="research-comparison empty-state">Select two or more indexed trials to compare throughput, utilization, VRAM and protocol compatibility.</div></article>
+    <article class="paper-panel"><div class="panel-head"><div><div class="eyebrow">FINDINGS LEDGER</div><h3>Decisions with evidence</h3></div></div><div id="research-findings" class="research-findings"><div class="empty-state">Loading findingsâ€¦</div></div></article>
+  </div>`);
+  $("#research-filter").onclick=()=>loadResearchArchive(true).catch(showError);
+  $("#research-query").onkeydown=e=>{if(e.key==="Enter")loadResearchArchive(true).catch(showError);};
+  $("#research-more").onclick=()=>loadResearchArchive(false).catch(showError);
+  $("#research-compare").onclick=()=>loadResearchComparison().catch(showError);
+  $("#research-reindex").onclick=async()=>{
+    const button=$("#research-reindex");button.disabled=true;button.textContent="Indexingâ€¦";
+    try{await post("/api/research/reindex",{});await loadResearchArchive(true);toast("Research archive reindexed.");}
+    finally{button.disabled=false;button.textContent="Reindex now";}
+  };
+  $("#research-trial-rows").onchange=e=>{
+    const box=e.target.closest(".research-select");if(!box)return;
+    if(box.checked)S.researchSelected.add(box.dataset.trialId);else S.researchSelected.delete(box.dataset.trialId);
+    $("#research-compare").disabled=S.researchSelected.size<2;
+    $("#research-compare").textContent=S.researchSelected.size?`Compare selected (${S.researchSelected.size})`:"Compare selected";
+  };
+}
+
+function renderResearchSummary(summary) {
+  const fastest=summary.fastest_observed;
+  const cards=[
+    [fmtTokens(summary.trials),"indexed trials"],
+    [fmtTokens(summary.artifact_revisions),"artifact revisions"],
+    [fmtTokens(summary.findings),"durable findings"],
+    [fastest?.tokens_per_second?fmtTokens(fastest.tokens_per_second):"â€”","fastest observed tok/s"],
+    [summary.last_indexed?ago(summary.last_indexed):"never",summary.refresh_in_progress?"refreshing in background":"index freshness"],
+  ];
+  $("#research-summary").innerHTML=cards.map(([value,label])=>`<div><strong>${esc(value)}</strong><span>${esc(label)}</span></div>`).join("");
+  const backend=$("#research-backend"),status=$("#research-status");
+  const selectedBackend=backend.value,selectedStatus=status.value;
+  backend.innerHTML='<option value="">All backends</option>'+(summary.backends||[]).map(x=>`<option value="${esc(x)}">${esc(x)}</option>`).join("");
+  status.innerHTML='<option value="">All statuses</option>'+(summary.statuses||[]).map(x=>`<option value="${esc(x)}">${esc(x)}</option>`).join("");
+  backend.value=selectedBackend;status.value=selectedStatus;
+}
+
+function researchTrialHtml(row) {
+  const checked=S.researchSelected.has(row.id)?"checked":"";
+  const protocol=[row.sequence_length?`${fmtTokens(row.sequence_length)} ctx`:null,row.micro_batch_size!=null?`mb${row.micro_batch_size}`:null,row.gradient_accumulation!=null?`acc${row.gradient_accumulation}`:null,row.optimizer].filter(Boolean).join(" Â· ");
+  const params=row.total_parameters?`${fmtTokens(row.total_parameters)} total / ${fmtTokens(row.active_parameters)} active`:"â€”";
+  return `<tr>
+    <td><input class="research-select" type="checkbox" data-trial-id="${esc(row.id)}" ${checked}/></td>
+    <td><strong>${esc(row.variant||row.name)}</strong><small>${esc(row.backend||row.status)} Â· ${esc((row.git_commit||"unbound").slice(0,8))}</small><code title="${esc(row.matrix_path)}">${esc(row.matrix_path)}</code></td>
+    <td><span>${esc(protocol||"â€”")}</span><small>${row.gradient_checkpointing?`checkpoint seg ${esc(row.checkpoint_segment_size)}`:"no activation checkpoint"}</small></td>
+    <td class="numeric">${row.tokens_per_second!=null?fmtTokens(row.tokens_per_second):"â€”"}</td>
+    <td class="numeric">${row.gpu_utilization!=null?`${Number(row.gpu_utilization).toFixed(1)}%`:"â€”"}</td>
+    <td class="numeric">${row.peak_allocated_gib!=null?`${Number(row.peak_allocated_gib).toFixed(2)} GiB`:"â€”"}</td>
+    <td><span>${esc(params)}</span><small>${esc(row.gpu_name||"hardware unrecorded")}</small></td>
+  </tr>`;
+}
+
+function renderResearchTrials(append=false) {
+  const body=$("#research-trial-rows");
+  if(!append)body.innerHTML="";
+  body.insertAdjacentHTML("beforeend",S.researchRows.slice(append?S.researchOffset:0).map(researchTrialHtml).join(""));
+  if(!S.researchRows.length)body.innerHTML='<tr><td colspan="7" class="empty-state">No indexed trials match these filters.</td></tr>';
+  $("#research-range").textContent=`Showing ${S.researchRows.length} of ${S.researchTotal} matching trials`;
+  $("#research-more").hidden=S.researchRows.length>=S.researchTotal;
+}
+
+function renderResearchFindings(payload) {
+  $("#research-findings").innerHTML=payload.rows.length?payload.rows.map(item=>`<div class="research-finding">
+    <div><span class="status-pill ${item.status==="confirmed"?"good":"warning"}">${esc(item.status)}</span><time>${esc(item.created_utc?.slice(0,10)||"")}</time></div>
+    <strong>${esc(item.title)}</strong><p>${esc(item.summary)}</p>
+    <div class="finding-tags">${item.tags.map(tag=>`<span>${esc(tag)}</span>`).join("")}</div>
+    ${item.evidence.map(path=>`<code title="${esc(path)}">${esc(path)}</code>`).join("")}
+  </div>`).join(""):'<div class="empty-state">No findings have been recorded yet.</div>';
+}
+
+async function loadResearchArchive(reset=true) {
+  mountResearchArchive();
+  if(reset){S.researchOffset=0;S.researchRows=[];}
+  const params=new URLSearchParams({limit:"100",offset:String(S.researchRows.length),query:$("#research-query").value.trim(),backend:$("#research-backend").value,status:$("#research-status").value});
+  const calls=[api(`/api/research/trials?${params}`)];
+  if(reset)calls.push(api("/api/research/summary"),api("/api/research/findings?limit=100"));
+  const [trials,summary,findings]=await Promise.all(calls);
+  const oldLength=S.researchRows.length;
+  S.researchRows.push(...trials.rows);S.researchTotal=trials.total;S.researchOffset=oldLength;
+  renderResearchTrials(oldLength>0);
+  if(summary)renderResearchSummary(summary);
+  if(findings)renderResearchFindings(findings);
+}
+
+function comparisonBar(row,key,max,label,unit) {
+  const value=Number(row[key]);const width=Number.isFinite(value)&&max>0?Math.max(1,value/max*100):0;
+  return `<div class="comparison-bar-row"><code>${esc(row.variant||row.name)}</code><div class="comparison-track"><span style="width:${width}%"></span></div><strong>${Number.isFinite(value)?`${value.toLocaleString(undefined,{maximumFractionDigits:2})}${unit}`:"â€”"}</strong><small>${esc(label)}</small></div>`;
+}
+
+async function loadResearchComparison() {
+  const ids=[...S.researchSelected];if(ids.length<2)return;
+  const result=await api(`/api/research/compare?ids=${encodeURIComponent(ids.join(","))}`);
+  const mismatches=result.dimensions.filter(x=>!x.match),holder=$("#research-comparison");
+  const metrics=[["tokens_per_second","tokens/s",""],["gpu_utilization","GPU utilization","%"],["peak_allocated_gib","peak VRAM"," GiB"]];
+  const charts=metrics.map(([key,label,unit])=>{
+    const max=Math.max(0,...result.trials.map(x=>Number(x[key])||0));
+    return `<section><h4>${esc(label)}</h4>${result.trials.map(row=>comparisonBar(row,key,max,label,unit)).join("")}</section>`;
+  }).join("");
+  holder.className="research-comparison";
+  holder.innerHTML=`<div class="comparison-verdict ${result.strictly_comparable?"matched":"mismatch"}"><strong>${result.strictly_comparable?"Matched systems protocol":"Protocol mismatch detected"}</strong><span>${result.same_model?"same model fingerprint":"different model fingerprints"}</span></div>
+    ${mismatches.length?`<div class="compatibility-chips">${mismatches.map(x=>`<span>${esc(x.label)} differs</span>`).join("")}</div>`:""}${charts}<p class="muted">${esc(result.note)}</p>`;
 }
 
 function renderRuns() {

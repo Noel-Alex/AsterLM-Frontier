@@ -26,6 +26,7 @@ import yaml
 
 from studio.providers import PROVIDER_CATALOG, provider_status
 from studio.remote_contracts import build_contract, list_contracts, persist_contract
+from studio.research_archive import ResearchArchive
 
 ROOT = Path(__file__).resolve().parents[1]
 STUDIO_ROOT = ROOT / "data" / "aster-studio"
@@ -38,6 +39,8 @@ STATIC_ROOT = ROOT / "studio" / "static"
 GIB = 2**30
 _EXECUTION_BACKEND_CACHE: dict[str, Any] = {"updated": 0.0, "rows": []}
 _EXECUTION_BACKEND_LOCK = threading.Lock()
+_RESEARCH_ARCHIVE: ResearchArchive | None = None
+_RESEARCH_ARCHIVE_LOCK = threading.Lock()
 
 DEFAULT_SETTINGS: dict[str, Any] = {
     "download": {
@@ -114,6 +117,45 @@ def validate_settings(value: dict[str, Any]) -> None:
     max_spend = float(providers.get("max_spend_usd_per_job", 0.0))
     if not math.isfinite(max_spend) or max_spend < 0:
         raise ValueError("Provider max_spend_usd_per_job must be a finite non-negative number")
+
+
+def research_archive() -> ResearchArchive:
+    global _RESEARCH_ARCHIVE
+    expected_database = ROOT / "data" / "aster-studio" / "research.sqlite3"
+    if _RESEARCH_ARCHIVE is None or _RESEARCH_ARCHIVE.root != ROOT.resolve():
+        _RESEARCH_ARCHIVE = ResearchArchive(ROOT, expected_database)
+    return _RESEARCH_ARCHIVE
+
+
+def _background_research_reindex(archive: ResearchArchive) -> None:
+    try:
+        archive.reindex()
+    finally:
+        _RESEARCH_ARCHIVE_LOCK.release()
+
+
+def refresh_research_archive(*, force: bool = False, max_age_seconds: float = 300.0) -> dict[str, Any]:
+    archive = research_archive()
+    summary = archive.summary()
+    last_indexed = summary.get("last_indexed")
+    if not force and last_indexed and time.time() - float(last_indexed) < max_age_seconds:
+        summary["refresh_in_progress"] = _RESEARCH_ARCHIVE_LOCK.locked()
+        return summary
+    if force or not last_indexed:
+        with _RESEARCH_ARCHIVE_LOCK:
+            archive.reindex()
+        summary = archive.summary()
+        summary["refresh_in_progress"] = False
+        return summary
+    if _RESEARCH_ARCHIVE_LOCK.acquire(blocking=False):
+        threading.Thread(
+            target=_background_research_reindex,
+            args=(archive,),
+            name="aster-research-index",
+            daemon=True,
+        ).start()
+    summary["refresh_in_progress"] = True
+    return summary
 
 
 def repo_path(value: str | Path, *, must_be_inside: bool = True) -> Path:
@@ -1304,6 +1346,31 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/api/diagnostics":
                 limit = int(query.get("limit", ["100"])[0])
                 return self.send_json(diagnostic_matrices(limit))
+            if path == "/api/research/summary":
+                return self.send_json(refresh_research_archive())
+            if path == "/api/research/trials":
+                refresh_research_archive()
+                return self.send_json(
+                    research_archive().trials(
+                        limit=int(query.get("limit", ["100"])[0]),
+                        offset=int(query.get("offset", ["0"])[0]),
+                        query=query.get("query", [""])[0],
+                        backend=query.get("backend", [""])[0],
+                        status=query.get("status", [""])[0],
+                    )
+                )
+            if path == "/api/research/compare":
+                refresh_research_archive()
+                ids = [item for value in query.get("ids", []) for item in value.split(",") if item]
+                return self.send_json(research_archive().compare(ids))
+            if path == "/api/research/findings":
+                refresh_research_archive()
+                return self.send_json(
+                    research_archive().findings(
+                        limit=int(query.get("limit", ["100"])[0]),
+                        offset=int(query.get("offset", ["0"])[0]),
+                    )
+                )
             if path == "/api/metrics":
                 run = repo_path(query["run"][0])
                 limit = int(query.get("limit", ["500"])[0])
@@ -1331,6 +1398,10 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json(provider_status(settings().get("providers")))
             if path == "/api/provider/contracts":
                 return self.send_json(list_contracts(REMOTE_CONTRACT_ROOT))
+            if path == "/favicon.ico":
+                self.send_response(204)
+                self.end_headers()
+                return None
             return self.serve_static(path)
         except KeyError as exc:
             self.send_json({"error": f"Missing/not found: {exc}"}, 404)
@@ -1353,6 +1424,8 @@ class Handler(BaseHTTPRequestHandler):
                 validate_settings(merged)
                 atomic_json(SETTINGS_PATH, merged)
                 return self.send_json(merged)
+            if path == "/api/research/reindex":
+                return self.send_json(refresh_research_archive(force=True))
             if path == "/api/provider/contract":
                 current = settings()
                 contract = build_contract(
