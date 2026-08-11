@@ -2,8 +2,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+import torch
 import yaml
 
+from asterlm import AsterConfig, AsterLM
 from scripts.run_optimizer_quality_campaign import (
     _arm_train_payload,
     _validate_resume_manifest,
@@ -24,6 +27,11 @@ def test_optimizer_campaign_has_independent_family_searches():
         "apollo-wsd",
     } <= families
     assert sum(arm["family"] == "muon-cosine-perhead" for arm in campaign["arms"].values()) >= 3
+    config = AsterConfig.from_yaml(campaign["model"])
+    with torch.device("meta"):
+        model = AsterLM(config)
+    assert model.effective_parameter_count() == pytest.approx(269_677_164, rel=5e-5)
+    assert model.active_parameter_count() == pytest.approx(188_272_620, rel=5e-5)
 
 
 def test_arm_payload_uses_fractional_warmup_and_metrics_only(tmp_path):
@@ -65,8 +73,6 @@ def test_optimizer_resume_contract_rejects_changed_arm_definition():
         "tokens_per_candidate": 4096,
         "checkpoint_policy": "none",
     }
-    import pytest
-
     with pytest.raises(ValueError, match="arms"):
         _validate_resume_manifest(
             existing,

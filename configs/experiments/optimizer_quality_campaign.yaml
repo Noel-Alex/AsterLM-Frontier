@@ -1,5 +1,5 @@
 schema_version: 1
-model: configs/model/aster_k3_stable_latentmoe_220m.yaml
+model: configs/model/aster_k3_latentmoe_270m_a188m.yaml
 train: configs/train/campaign_quality_2k_adamw.yaml
 data: runs/architecture-campaign/quality-data-100m-stackfree/data-proxy.yaml
 tokenizer: artifacts/tokenizer_quality_stackfree.json
