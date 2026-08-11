@@ -132,3 +132,37 @@ def test_per_head_muon_partitions_attention_projections_and_steps():
     assert diagnostics["muon_update_global_rms"] > 0
     assert diagnostics["muon_momentum_global_rms"] > 0
     assert diagnostics["muon_relative_update_rms_mean"] > 0
+
+
+def test_per_head_muon_partitions_mla_qkv_up_projections():
+    config = AsterConfig(
+        vocab_size=64,
+        d_model=32,
+        n_layers=2,
+        n_heads=2,
+        head_dim=16,
+        ffn_hidden=96,
+        max_seq_len=16,
+        kda_ratio=0,
+        latent_rank=8,
+        rope_dim=8,
+        attention_window=None,
+        sink_tokens=0,
+        mtp_depth=0,
+        gradient_checkpointing=False,
+    )
+    model = AsterLM(config)
+    optimizer = build_hybrid_optimizer(
+        model,
+        TrainConfig(
+            device="cpu", max_steps=2, optimizer="muon_adamw", muon_per_head=True
+        ),
+    )
+    names = optimizer.partition.per_head_muon_names
+    for projection in ("q_up.weight", "k_up.weight", "v_up.weight"):
+        assert any(name.endswith(projection) for name in names)
+    assert all(
+        group["split_count"] == config.n_heads
+        for group in optimizer.muon.param_groups
+        if group["split_count"] > 1
+    )

@@ -10,7 +10,8 @@ $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
 
 $repoWindows = (Resolve-Path -LiteralPath $PSScriptRoot).Path
-$repoWsl = (wsl.exe -d $Distro -- wslpath -a $repoWindows).Trim()
+$repoWslInput = $repoWindows.Replace("\", "/")
+$repoWsl = (wsl.exe -d $Distro -- wslpath -a -u $repoWslInput).Trim()
 if (-not $repoWsl) {
     throw "Could not map the AsterLM checkout into WSL."
 }
@@ -27,7 +28,8 @@ $modalConfigWindows = if ($env:MODAL_CONFIG_PATH -and (Test-Path -LiteralPath $e
     Join-Path $HOME ".modal.toml"
 }
 $modalConfigWsl = if (Test-Path -LiteralPath $modalConfigWindows) {
-    (wsl.exe -d $Distro -- wslpath -a $modalConfigWindows).Trim()
+    $modalConfigWslInput = $modalConfigWindows.Replace("\", "/")
+    (wsl.exe -d $Distro -- wslpath -a -u $modalConfigWslInput).Trim()
 } else {
     $null
 }
