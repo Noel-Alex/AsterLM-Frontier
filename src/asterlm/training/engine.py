@@ -6,6 +6,7 @@ import os
 import random
 import sys
 import time
+import uuid
 from pathlib import Path
 from typing import Any, Literal
 
@@ -27,6 +28,7 @@ from .checkpoint import (
     load_data_state,
     load_model_weights,
     pin_kda_backend_from_checkpoint,
+    prune_rolling_checkpoints,
     save_checkpoint,
 )
 from .execution import probe_execution_backends, resolve_execution_engine
@@ -222,22 +224,25 @@ class Trainer:
             except ImportError as exc:
                 raise ImportError("tensorboard=true but tensorboard is not installed") from exc
         self.wandb = None
+        wandb_resume = False
         if train_config.wandb_project:
-            try:
-                import wandb
-
-                self.wandb = wandb
-                wandb.init(
-                    project=train_config.wandb_project,
-                    name=train_config.wandb_run_name,
-                    config={
-                        "model": model_config.to_dict(),
-                        "train": train_config.to_dict(),
-                        "data": data_config.to_dict(),
-                    },
+            stored_wandb_id = self._stored_wandb_run_id(
+                self.output,
+                checkpoint_source=checkpoint_source,
+            )
+            if (
+                train_config.wandb_run_id
+                and stored_wandb_id
+                and train_config.wandb_run_id != stored_wandb_id
+            ):
+                raise RuntimeError(
+                    "Configured W&B run ID does not match the existing experiment identity"
                 )
-            except ImportError as exc:
-                raise ImportError("wandb_project is set, but wandb is not installed") from exc
+            wandb_resume = stored_wandb_id is not None
+            train_config.wandb_run_id = (
+                train_config.wandb_run_id or stored_wandb_id or uuid.uuid4().hex
+            )
+            train_config.wandb_entity = train_config.wandb_entity or os.environ.get("WANDB_ENTITY")
 
         manifest: dict[str, Any] = {
             "model": model_config.to_dict(),
@@ -272,6 +277,32 @@ class Trainer:
         manifest["run_id"] = self.registry.record["run_id"]
         atomic_write_json(self.output / "run_manifest.json", manifest)
 
+        if train_config.wandb_project:
+            try:
+                import wandb
+
+                self.wandb = wandb
+                run = wandb.init(
+                    project=train_config.wandb_project,
+                    entity=train_config.wandb_entity,
+                    id=train_config.wandb_run_id,
+                    resume="must" if wandb_resume else "allow",
+                    name=train_config.wandb_run_name,
+                    config={
+                        "model": model_config.to_dict(),
+                        "train": train_config.to_dict(),
+                        "data": data_config.to_dict(),
+                    },
+                )
+                self.registry.set_wandb_identity(
+                    entity=train_config.wandb_entity,
+                    project=train_config.wandb_project,
+                    run_id=str(train_config.wandb_run_id),
+                    url=getattr(run, "url", None),
+                )
+            except ImportError as exc:
+                raise ImportError("wandb_project is set, but wandb is not installed") from exc
+
         self.hub: HubRunSync | None = None
         hub_repo_id = os.environ.get("ASTERLM_HUB_REPO_ID") or train_config.hub_repo_id
         if hub_repo_id:
@@ -288,9 +319,42 @@ class Trainer:
                     raise
                 print(f"WARNING: Hugging Face backup initialization failed: {exc}")
 
-        if self.wandb is not None:
-            run = getattr(self.wandb, "run", None)
-            self.registry.set_wandb_url(getattr(run, "url", None))
+    @staticmethod
+    def _stored_wandb_run_id(
+        output: Path,
+        *,
+        checkpoint_source: str | None = None,
+    ) -> str | None:
+        candidates = [output / ExperimentRegistry.filename]
+        resolved: Path | None = None
+        if checkpoint_source:
+            from .checkpoint import resolve_checkpoint
+
+            resolved = resolve_checkpoint(checkpoint_source)
+            candidates.extend(
+                [
+                    resolved / ExperimentRegistry.filename,
+                    resolved.parent / ExperimentRegistry.filename,
+                ]
+            )
+        for path in candidates:
+            if not path.is_file():
+                continue
+            try:
+                record = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                continue
+            value = (record.get("metrics") or {}).get("wandb_run_id")
+            if value:
+                return str(value)
+        if resolved is not None:
+            config_path = resolved / "train_config.yaml"
+            if config_path.is_file():
+                try:
+                    return TrainConfig.from_yaml(config_path).wandb_run_id
+                except (OSError, TypeError, ValueError):
+                    return None
+        return None
 
     @staticmethod
     def _parent_run_id(checkpoint_source: str | None) -> str | None:
@@ -510,6 +574,11 @@ class Trainer:
         permanent: bool = False,
         tag: str | None = None,
     ) -> Path:
+        should_upload = self.hub is not None and (
+            self.train_config.hub_upload_every_save
+            or (reason.startswith("milestone-") and self.train_config.hub_upload_milestones)
+            or (reason == "complete" and self.train_config.hub_upload_final)
+        )
         path = save_checkpoint(
             self.train_config.output_dir,
             self.step,
@@ -523,6 +592,7 @@ class Trainer:
             permanent=permanent,
             reason=reason,
             data_state=self._training_data_state(),
+            prune=False,
         )
         self.registry.add_checkpoint(path, reason=reason)
         if self.train_config.save_diagnostic_bundle:
@@ -532,11 +602,7 @@ class Trainer:
                 extra={"step": self.step, "tokens_seen": self.tokens_seen, "checkpoint": str(path)},
             )
 
-        should_upload = self.hub is not None and (
-            self.train_config.hub_upload_every_save
-            or (reason.startswith("milestone-") and self.train_config.hub_upload_milestones)
-            or (reason == "complete" and self.train_config.hub_upload_final)
-        )
+        upload_verified = False
         if should_upload and self.hub is not None:
             try:
                 result = self.hub.sync(
@@ -547,11 +613,20 @@ class Trainer:
                     tokens_seen=self.tokens_seen,
                 )
                 self._log({"hub_sync_seconds": result["seconds"], "hub_sync_ok": 1})
+                upload_verified = result.get("status") == "verified"
             except Exception as exc:
                 self._log({"hub_sync_ok": 0, "hub_sync_error": str(exc)})
                 if self.train_config.hub_fail_on_error:
                     raise
                 print(f"WARNING: Hugging Face checkpoint sync failed: {exc}")
+        # Never allow a promised remote checkpoint to trigger local deletion until
+        # the Hub copy has passed exact size/hash verification. Ordinary local-only
+        # rolling saves still use the configured recent-checkpoint ring.
+        if not should_upload or upload_verified:
+            prune_rolling_checkpoints(
+                self.train_config.output_dir,
+                keep_last=self.train_config.keep_last_checkpoints,
+            )
         return path
 
     def _clear_optimizer_state_for(self, parameters: list[torch.nn.Parameter]) -> None:

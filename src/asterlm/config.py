@@ -368,7 +368,11 @@ class TrainConfig:
     ignore_index: int = -100
 
     wandb_project: str | None = None
+    wandb_entity: str | None = None
     wandb_run_name: str | None = None
+    # Stable physical-job identity. The trainer creates and persists this before
+    # first contact with W&B, then requires the same run on exact resume.
+    wandb_run_id: str | None = None
     tensorboard: bool = False
     jsonl_metrics: bool = True
     system_metrics_interval: float = 5.0

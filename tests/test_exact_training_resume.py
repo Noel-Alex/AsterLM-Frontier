@@ -11,7 +11,7 @@ from tokenizers import Tokenizer, models, pre_tokenizers
 from asterlm import AsterConfig, AsterLM, DataConfig, TrainConfig
 from asterlm.config import SourceConfig
 from asterlm.data.tokenizer import SPECIAL_TOKENS
-from asterlm.training.checkpoint import load_data_state, load_model_weights
+from asterlm.training.checkpoint import load_data_state, load_model_weights, resolve_checkpoint
 from asterlm.training.engine import Trainer
 
 
@@ -103,18 +103,18 @@ def test_uninterrupted_and_reconstructed_training_are_exact(tmp_path: Path):
 
     continuous_dir = tmp_path / "continuous"
     Trainer(model_config, _train(continuous_dir, tokenizer_path, 2), data_config).train()
-    continuous_checkpoint = Path((continuous_dir / "latest.txt").read_text().strip())
+    continuous_checkpoint = resolve_checkpoint(continuous_dir)
 
     resumed_dir = tmp_path / "resumed"
     Trainer(model_config, _train(resumed_dir, tokenizer_path, 1), data_config).train()
-    first_checkpoint = Path((resumed_dir / "latest.txt").read_text().strip())
+    first_checkpoint = resolve_checkpoint(resumed_dir)
     assert load_data_state(first_checkpoint) is not None
     Trainer(
         model_config,
         _train(resumed_dir, tokenizer_path, 2, resume=first_checkpoint),
         data_config,
     ).train()
-    resumed_checkpoint = Path((resumed_dir / "latest.txt").read_text().strip())
+    resumed_checkpoint = resolve_checkpoint(resumed_dir)
 
     continuous_state = _state(continuous_checkpoint, model_config)
     resumed_state = _state(resumed_checkpoint, model_config)

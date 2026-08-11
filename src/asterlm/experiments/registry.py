@@ -80,7 +80,7 @@ class ExperimentRegistry:
         hypothesis: str | None = None,
         stage: str = "pretrain",
         resume_existing: bool = False,
-    ) -> "ExperimentRegistry":
+    ) -> ExperimentRegistry:
         output_path = Path(output)
         output_path.mkdir(parents=True, exist_ok=True)
         existing_path = output_path / cls.filename
@@ -143,6 +143,9 @@ class ExperimentRegistry:
             "metrics": {
                 "metrics_jsonl_uri": "metrics.jsonl",
                 "gpu_telemetry_uri": "metrics.jsonl",
+                "wandb_entity": None,
+                "wandb_project": None,
+                "wandb_run_id": None,
                 "wandb_url": None,
             },
             "resume_state": {},
@@ -205,6 +208,26 @@ class ExperimentRegistry:
         self.record["resume_state"] = manifest.get("resume_state", {})
         self.flush()
 
+    def set_wandb_identity(
+        self,
+        *,
+        entity: str | None,
+        project: str,
+        run_id: str,
+        url: str | None = None,
+    ) -> None:
+        self.record["metrics"].update(
+            {
+                "wandb_entity": entity,
+                "wandb_project": project,
+                "wandb_run_id": run_id,
+                "wandb_url": url,
+            }
+        )
+        self.flush()
+
     def set_wandb_url(self, url: str | None) -> None:
+        """Backward-compatible URL-only update for older callers."""
+
         self.record["metrics"]["wandb_url"] = url
         self.flush()

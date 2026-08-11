@@ -191,6 +191,7 @@ class StudioTrainer(Trainer):
             permanent=permanent,
             reason=reason,
             data_state=self._studio_data_state(),
+            prune=False,
         )
         self.registry.add_checkpoint(path, reason=reason)
 
@@ -217,6 +218,7 @@ class StudioTrainer(Trainer):
                 and self.train_config.hub_upload_final
             )
         )
+        upload_verified = False
         if should_upload and self.hub is not None:
             try:
                 result = self.hub.sync(
@@ -226,6 +228,7 @@ class StudioTrainer(Trainer):
                     step=self.step,
                     tokens_seen=self.tokens_seen,
                 )
+                upload_verified = result.get("status") == "verified"
                 self._log(
                     {
                         "hub_sync_seconds": result["seconds"],
@@ -245,6 +248,13 @@ class StudioTrainer(Trainer):
                     f"WARNING: Hugging Face checkpoint sync failed: {exc}",
                     flush=True,
                 )
+        if not should_upload or upload_verified:
+            from asterlm.training.checkpoint import prune_rolling_checkpoints
+
+            prune_rolling_checkpoints(
+                self.train_config.output_dir,
+                keep_last=self.train_config.keep_last_checkpoints,
+            )
         return path
 
 

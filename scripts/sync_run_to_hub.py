@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
+from asterlm.training.checkpoint import resolve_checkpoint
 from asterlm.training.hub import HubRunSync
 
 
@@ -19,9 +20,7 @@ def main() -> None:
     args = parser.parse_args()
 
     root = Path(args.run)
-    checkpoint = Path(args.checkpoint) if args.checkpoint else Path(
-        (root / "latest.txt").read_text(encoding="utf-8").strip()
-    )
+    checkpoint = Path(args.checkpoint) if args.checkpoint else resolve_checkpoint(root)
     manifest_path = checkpoint / "checkpoint_manifest.json"
     manifest = {}
     if manifest_path.exists():

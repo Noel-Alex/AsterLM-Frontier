@@ -169,6 +169,8 @@ def latest_complete_checkpoint(run_dir: str | Path) -> Path | None:
     pointer = root / "latest.txt"
     if pointer.is_file():
         target = Path(pointer.read_text(encoding="utf-8").strip())
+        if not target.is_absolute():
+            target = root / target
         if (target / "checkpoint_manifest.json").is_file():
             return target
     candidates = sorted(root.glob("checkpoint-*"), reverse=True)

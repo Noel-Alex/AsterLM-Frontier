@@ -57,6 +57,7 @@ def save_checkpoint(
     permanent: bool = False,
     reason: str = "periodic",
     data_state: dict[str, Any] | None = None,
+    prune: bool = True,
 ) -> Path:
     root = Path(output_dir)
     root.mkdir(parents=True, exist_ok=True)
@@ -163,12 +164,38 @@ def save_checkpoint(
         fsync_directory(staging)
         os.replace(staging, checkpoint_dir)
         fsync_directory(root)
-        atomic_write_text(root / "latest.txt", str(checkpoint_dir.resolve()) + "\n")
+        # Keep the pointer portable across Windows, WSL, Modal, GCP, and Hub
+        # round-trips.  `resolve_checkpoint` interprets relative pointers against
+        # the run directory; absolute pointers from older checkpoints remain
+        # supported for backwards compatibility.
+        atomic_write_text(root / "latest.txt", checkpoint_dir.name + "\n")
     except BaseException:
         # Leave the hidden partial directory for power-loss/failure forensics. It is
         # never considered loadable because it has no complete published manifest.
         raise
 
+    if prune:
+        prune_rolling_checkpoints(root, keep_last=keep_last)
+    return checkpoint_dir
+
+
+def prune_rolling_checkpoints(
+    output_dir: str | Path,
+    *,
+    keep_last: int,
+    protected: set[Path] | None = None,
+) -> list[Path]:
+    """Prune transient checkpoints only after their durability policy is satisfied.
+
+    Checkpoint creation and retention are deliberately separate operations.  A
+    caller that promises remote durability can save with ``prune=False``, upload
+    and hash-verify the checkpoint, and only then invoke this function.
+    """
+
+    if keep_last < 0:
+        raise ValueError("keep_last must be non-negative")
+    root = Path(output_dir)
+    protected_resolved = {path.resolve() for path in (protected or set())}
     # Permanent token milestones and final checkpoints are never removed by rolling
     # retention. Only ordinary periodic checkpoints count toward keep_last.
     rolling = [
@@ -176,9 +203,14 @@ def save_checkpoint(
         for checkpoint in sorted(root.glob("checkpoint-*"))
         if not (checkpoint / "KEEP").exists()
     ]
-    for old in rolling[:-keep_last] if keep_last > 0 else []:
-        shutil.rmtree(old, ignore_errors=True)
-    return checkpoint_dir
+    candidates = rolling[:-keep_last] if keep_last > 0 else []
+    removed: list[Path] = []
+    for old in candidates:
+        if old.resolve() in protected_resolved:
+            continue
+        shutil.rmtree(old)
+        removed.append(old)
+    return removed
 
 
 def verify_checkpoint(checkpoint: str | Path) -> dict[str, Any]:
@@ -206,6 +238,8 @@ def resolve_checkpoint(path: str | Path) -> Path:
     path = Path(path)
     if path.is_dir() and (path / "latest.txt").exists():
         target = Path((path / "latest.txt").read_text(encoding="utf-8").strip())
+        if not target.is_absolute():
+            target = path / target
         if target.exists():
             return target
     return path

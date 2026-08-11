@@ -9,6 +9,8 @@ from asterlm.training.checkpoint import (
     load_checkpoint,
     load_data_state,
     pin_kda_backend_from_checkpoint,
+    prune_rolling_checkpoints,
+    resolve_checkpoint,
     save_checkpoint,
     verify_checkpoint,
 )
@@ -76,6 +78,8 @@ def test_checkpoint_round_trip(tmp_path):
         "train_config.yaml",
     }
     assert not list(tmp_path.glob(".*.partial-*"))
+    assert (tmp_path / "latest.txt").read_text(encoding="utf-8").strip() == checkpoint.name
+    assert resolve_checkpoint(tmp_path) == checkpoint
 
     auto_config = tiny_config()
     auto_config.kda_backend = "auto"
@@ -126,3 +130,36 @@ def test_checkpoint_hash_detects_corruption(tmp_path):
         handle.write(b"corrupt")
     with pytest.raises(RuntimeError, match="size mismatch|hash mismatch"):
         verify_checkpoint(checkpoint)
+
+
+def test_deferred_pruning_preserves_checkpoints_until_explicit_commit(tmp_path):
+    model_config = tiny_config()
+    train_config = TrainConfig(device="cpu", max_steps=2, warmup_steps=0)
+    model = AsterLM(model_config)
+    optimizer = build_hybrid_optimizer(model, train_config)
+    first = save_checkpoint(
+        tmp_path,
+        1,
+        model,
+        optimizer,
+        model_config,
+        train_config,
+        tokens_seen=8,
+        keep_last=1,
+        prune=False,
+    )
+    second = save_checkpoint(
+        tmp_path,
+        2,
+        model,
+        optimizer,
+        model_config,
+        train_config,
+        tokens_seen=16,
+        keep_last=1,
+        prune=False,
+    )
+    assert first.exists() and second.exists()
+    removed = prune_rolling_checkpoints(tmp_path, keep_last=1)
+    assert removed == [first]
+    assert not first.exists() and second.exists()
