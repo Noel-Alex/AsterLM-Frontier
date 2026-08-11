@@ -511,10 +511,15 @@ class AsterLM(nn.Module):
         return sum(p.numel() for p in params)
 
     def effective_parameter_count(self) -> int:
-        """Count full logical matrices even when LoQT stores them packed in buffers."""
+        """Count production logical parameters independent of control backends."""
         from .quantization.loqt import effective_parameter_count
 
-        return effective_parameter_count(self)
+        total = effective_parameter_count(self)
+        for block in self.blocks:
+            if isinstance(block.mixer, KDA):
+                total -= effective_parameter_count(block.mixer)
+                total += block.mixer.logical_parameter_count()
+        return total
 
     @torch.no_grad()
     def folded_embedding_weights(self) -> tuple[torch.Tensor, torch.Tensor]:
@@ -972,7 +977,7 @@ class AsterLM(nn.Module):
         """Logical parameters used for one token, accounting for sparse MoE routing."""
         from .quantization.loqt import effective_parameter_count
 
-        total = effective_parameter_count(self)
+        total = self.effective_parameter_count()
         for block in self.blocks:
             if isinstance(block.ffn, (DeepSeekStyleMoE, LatentMoE)):
                 total -= effective_parameter_count(block.ffn)

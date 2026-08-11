@@ -221,7 +221,11 @@ def _distribution_version(distribution: str | None) -> str | None:
 
 
 def _git_commit(path: Path) -> str | None:
-    if not (path / ".git").exists():
+    try:
+        is_checkout = (path / ".git").exists()
+    except OSError:
+        return None
+    if not is_checkout:
         return None
     try:
         result = subprocess.run(

@@ -17,7 +17,7 @@ def fla_is_available() -> bool:
         from fla.layers.kda import KimiDeltaAttention  # noqa: F401
 
         return True
-    except Exception:
+    except (ImportError, ModuleNotFoundError):
         return False
 
 
@@ -103,6 +103,12 @@ class KDA(nn.Module):
     def __init__(self, config: AsterConfig, kda_idx: int) -> None:
         super().__init__()
         self.kda_idx = kda_idx
+        self._d_model = config.d_model
+        self._n_heads = config.kda_num_heads or config.n_heads
+        self._head_dim = config.kda_head_dim or config.head_dim
+        self._value_head_dim = int(self._head_dim * config.kda_expand_v)
+        self._short_conv = config.kda_short_conv
+        self._conv_size = config.kda_conv_size
         requested = config.kda_backend
         available = fla_is_available()
         self.uses_fla = requested == "fla" or (requested == "auto" and available)
@@ -135,6 +141,33 @@ class KDA(nn.Module):
                     stacklevel=2,
                 )
             self.impl = TorchGatedDeltaNet(config)
+
+    def logical_parameter_count(self) -> int:
+        """Return the production KDA geometry independent of the execution backend.
+
+        The readable Torch recurrence intentionally uses larger dense decay and gate
+        projections than FLA's KimiDeltaAttention.  It is a numerical-control backend,
+        not a different model candidate, so architecture/FLOP accounting must describe
+        the production KDA parameterization even when FLA is unavailable in CPU CI.
+        """
+
+        d = self._d_model
+        h = self._n_heads
+        k = self._head_dim
+        v = self._value_head_dim
+        key_width = h * k
+        value_width = h * v
+
+        total = h + key_width  # A_log and dt_bias
+        total += (2 * key_width + value_width) * d  # q, k, v projections
+        if self._short_conv:
+            total += (2 * key_width + value_width) * self._conv_size
+        total += k * d + key_width * k  # low-rank f projection
+        total += h * d  # beta projection
+        total += k * d + value_width * k + value_width  # low-rank output gate
+        total += v  # per-head output norm
+        total += d * value_width  # output projection
+        return total
 
     def forward(
         self,

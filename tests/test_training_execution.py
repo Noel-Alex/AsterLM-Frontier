@@ -137,6 +137,19 @@ def test_backend_probe_separates_source_package_adapter_and_promotion(
     assert "Aster adapter is not implemented" in megatron.blockers
 
 
+def test_git_commit_treats_unreadable_checkout_as_absent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    checkout = tmp_path / "Megatron-LM"
+    monkeypatch.setattr(
+        Path,
+        "exists",
+        lambda self: (_ for _ in ()).throw(PermissionError("denied")),
+    )
+
+    assert execution_module._git_commit(checkout) is None
+
+
 def test_backend_probe_marks_local_engine_unsupported_for_distributed_topology(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
