@@ -91,7 +91,13 @@ python scripts/train_pretrain.py \
   --hub-repo YOUR_HF_USERNAME/AsterLM-Frontier-100B
 ```
 
-Permanent checkpoints are created at 18.4B, 50B and 92B stage-1 tokens. They are protected from rolling local retention. The learning-rate decay occurs only near the end of the 92B stage, so the 18.4B and 50B checkpoints remain useful continuation points rather than prematurely cooled models.
+Stage 1 creates 13 permanent checkpoints at 0.5B, 1B, 2B, 4B, 8B, 12B,
+18.4B, 25B, 35B, 50B, 65B, 80B and 92B tokens. Stages 2 and 3 add six and
+five context-continuation milestones respectively, for 24 permanent research
+checkpoints across the campaign. They are protected from rolling local retention
+and uploaded to Hugging Face. The learning-rate decay occurs only near the end of
+the 92B stage, so intermediate checkpoints remain useful continuation points rather
+than prematurely cooled models.
 
 ### Stage 2
 
@@ -146,7 +152,14 @@ python scripts/experiment_status.py runs/aster-frontier-100b-stage1-8k
 
 ## Checkpoint and Hugging Face policy
 
-Local periodic checkpoints retain model, optimizer, RNG, step and token state. The latest rolling checkpoints are kept locally; permanent token milestones and final checkpoints are never deleted automatically.
+Local periodic checkpoints retain model, optimizer, RNG, step and token state. Each
+stage keeps the six newest recovery points plus up to eight exponentially widening
+historical bands. This is dense near the live training head and increasingly sparse
+farther back, so interruption loss stays bounded without retaining every periodic
+checkpoint. Permanent token milestones and final checkpoints are never deleted
+automatically. The final-run contract requires `checkpoint_policy: full`; the
+metrics-only policy used by disposable architecture tests cannot be used for a final
+run.
 
 When `--hub-repo` is supplied, the trainer creates/uses a **private model repository** and uploads:
 

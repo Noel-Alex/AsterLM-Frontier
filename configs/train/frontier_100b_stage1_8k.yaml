@@ -34,7 +34,9 @@ train:
   eval_batches: 32
   save_interval: 2000
   keep_last_checkpoints: 6
-  milestone_tokens: [18400000000, 50000000000, 92000000000]
+  checkpoint_policy: full
+  checkpoint_pyramid_levels: 8
+  milestone_tokens: [500000000, 1000000000, 2000000000, 4000000000, 8000000000, 12000000000, 18400000000, 25000000000, 35000000000, 50000000000, 65000000000, 80000000000, 92000000000]
   milestone_eval: true
   num_workers: 0
   pin_memory: true

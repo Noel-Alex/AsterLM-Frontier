@@ -39,7 +39,11 @@ def test_100b_train_configs_sum_to_campaign_budget() -> None:
         TrainConfig.from_yaml(ROOT / "configs/train/frontier_100b_stage3_32k.yaml"),
     ]
     assert sum(config.max_tokens or 0 for config in configs) == 100_000_000_000
-    assert configs[0].milestone_tokens == [18_400_000_000, 50_000_000_000, 92_000_000_000]
+    assert len(configs[0].milestone_tokens) == 13
+    assert configs[0].milestone_tokens[-3:] == [65_000_000_000, 80_000_000_000, 92_000_000_000]
+    assert sum(len(config.milestone_tokens) for config in configs) == 24
+    assert all(config.checkpoint_policy == "full" for config in configs)
+    assert all(config.checkpoint_pyramid_levels == 8 for config in configs)
     assert all(config.hub_upload_milestones for config in configs)
 
 
