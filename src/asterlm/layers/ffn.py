@@ -4,20 +4,9 @@ import torch
 from torch import nn
 from torch.nn import functional as F
 
+from asterlm.kernels.situ_glu import situ_glu
+
 from .linear import build_linear, mark_residual
-
-
-def situ_glu(
-    gate: torch.Tensor,
-    up: torch.Tensor,
-    beta_gate: float = 4.0,
-    beta_up: float = 25.0,
-) -> torch.Tensor:
-    """Kimi K3 Sigmoid Tanh Unit GLU with independently bounded branches."""
-
-    bounded_gate = beta_gate * torch.tanh(gate / beta_gate)
-    bounded_up = beta_up * torch.tanh(up / beta_up)
-    return bounded_gate * torch.sigmoid(gate) * bounded_up
 
 
 class SwiGLU(nn.Module):
