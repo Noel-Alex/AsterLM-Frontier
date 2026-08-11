@@ -449,7 +449,9 @@
               <label>Train config<input id="contract-train" value="configs/train/frontier_100b_stage1_8k.yaml"/></label>
               <label>Data config<input id="contract-data" value="configs/data/pretrain_frontier_local_18p4b.yaml"/></label>
               <label>Checkpoint repository<input id="contract-hub-repo" placeholder="namespace/private-checkpoints"/></label>
-              <label>Exact GPU<input id="contract-gpu" placeholder="Modal: L40S, A100-80GB, H100!, H200, or B300"/></label>
+              <label>Exact GPU / machine<input id="contract-gpu" placeholder="Modal: H100!; GCP: a3-highgpu-1g"/></label>
+              <label>Provider zone<input id="contract-zone" placeholder="GCP only, e.g. us-central1-a"/></label>
+              <label>Provisioning model<select id="contract-provisioning"><option value="">Provider default / not applicable</option><option value="STANDARD">GCP Standard</option><option value="SPOT">GCP Spot</option></select></label>
               <label>Resume checkpoint folder<input id="contract-resume-hub-path" placeholder="optional runs/name/checkpoints/tokens-N"/></label>
               <label>Resume repository<input id="contract-resume-hub-repo" placeholder="optional; defaults to checkpoint repository"/></label>
               <label>Resume revision<input id="contract-resume-hub-revision" value="main"/></label>

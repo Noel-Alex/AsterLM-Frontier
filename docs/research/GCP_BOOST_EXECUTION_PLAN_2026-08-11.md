@@ -12,6 +12,8 @@ as every other training environment.
 The initial provider implementation is deliberately non-spending. It can build and
 validate launch plans, but the checked-in `google-credit` profile stays blocked until
 the user supplies provider-native credentials and replaces every placeholder.
+No `gcloud` command is run by plan creation, and no credentialed Google Cloud action
+was taken while implementing or testing this path.
 
 ## Billing and quota gate
 
@@ -25,6 +27,13 @@ expiry. Because usage beyond the credit can then be billed, Aster requires all o
 3. a per-job spend ceiling no larger than the Studio policy ceiling;
 4. explicit cost confirmation in the immutable contract;
 5. `dispatch_enabled: true` only after the preceding facts are verified.
+6. one exact machine, zone and provisioning model in the contract, with no silent
+   capacity fallback;
+7. a declared job spend no lower than the machine's timeout cost guard plus the
+   configured contingency;
+8. Compute Engine `max-run-duration` with termination action `DELETE`, boot-disk
+   auto-delete, no restart on failure, process-exit self-deletion and an emergency
+   exact-instance delete control.
 
 Source: <https://cloud.google.com/free/docs/free-cloud-features>
 
@@ -72,6 +81,16 @@ redownloading the whole corpus on each job without pretending object storage has
 POSIX rename semantics. Cloud Storage FUSE file caching/parallel downloads are used
 for repeated large reads where measurements show a benefit.
 
+The distinction is deliberate: the sealed corpus has one durable copy in Cloud
+Storage and is not copied wholesale at container or VM startup. The FUSE file cache
+is local to a VM and therefore does not survive that VM's deletion. This path does
+not claim otherwise. Profile-scoped compiler artifacts are durable under the bucket
+cache prefix, while the pinned training image should contain every compiler output
+that can be safely produced ahead of allocation. `scripts/gcp_stage_cache.py` is
+incremental: it hashes the already-cleaned local artifacts, reuses objects whose
+size and custom SHA-256 match, uploads only stale/missing objects, and publishes the
+clean manifest last as the commit marker. Raw acquisition trees are excluded.
+
 Sources:
 <https://cloud.google.com/storage/docs/cloud-storage-fuse/overview>,
 <https://cloud.google.com/storage/docs/cloud-storage-fuse/file-caching>
@@ -85,7 +104,16 @@ Sources:
   never values.
 - Container images must be Artifact Registry digests built from the recorded Git
   commit. A dirty worktree blocks dispatch.
+- The VM host must be one exact custom Compute Engine image, not a moving image
+  family. Before allocation, dispatch resolves its numeric image ID and rejects any
+  mismatch. The qualified image must already contain working NVIDIA drivers, Docker,
+  `gcloud`, and Cloud Storage FUSE; startup rechecks all of them and self-deletes on
+  failure.
 - The remote bootstrap re-hashes model/train/data configs before execution.
+
+Host-image sources:
+<https://docs.cloud.google.com/compute/docs/instances/create-vm-from-custom-image>,
+<https://docs.cloud.google.com/container-optimized-os/docs/how-to/run-gpus>
 
 ## Recovery contract
 
@@ -106,18 +134,25 @@ quota-dependent drills remain blocked until the account is activated.
 
 - `configs/providers/gcp_boost.yaml`: non-secret profile and candidate matrix;
 - `src/asterlm/cloud/gcp.py`: validation, blocker evaluation, dry-run plan and explicit
-  capacity-attempt dispatcher;
+  exact-target dispatcher, immutable host-image gate, cost/lifetime guards and
+  exact-instance status/graceful/emergency control;
+- `src/asterlm/cloud/gcp_cache.py` and `scripts/gcp_stage_cache.py`: dry-run-default,
+  sealed-artifact-only incremental dataset staging with the manifest written last;
 - `scripts/gcp_boost.py`: plan-by-default CLI, with a separate `--execute` mutation;
-- `scripts/cloud/gcp_startup.sh`: contract fetch, Secret Manager lookup, GCS mount and
-  pinned-container execution;
+- `scripts/cloud/gcp_startup.sh`: fail-fast host qualification, contract fetch,
+  Secret Manager lookup, cached GCS mount, pinned-container execution, graceful-stop
+  metadata watcher, durable exit upload and process-exit self-delete;
 - `scripts/cloud/gcp_shutdown.sh`: bounded container stop and mount cleanup;
-- `scripts/cloud/run_contract.py`: provider and input-hash verification before train;
+- `scripts/cloud/run_contract.py`: provider/input-hash verification and signal
+  forwarding to the training process group;
 - Studio provider readiness and immutable run-contract support;
 - unit tests proving placeholder profiles cannot spend and secrets never enter plans.
 
 ## Remaining credential-dependent work
 
 After login/activation: create the project, bucket, Artifact Registry repository and
-least-privilege service account; enable APIs; request regional quotas; build the pinned
-image; query live prices/quotas; execute a zero/low-cost CPU preflight; then run the
-smallest GPU correctness smoke. No architecture-scale spend occurs before those pass.
+least-privilege service account; condition self-delete permission to the exact Aster
+instance naming scope; enable APIs; request regional quotas; build and qualify the
+exact custom host image; record its numeric ID; query live prices/quotas; stage the
+sealed clean corpus; execute a zero/low-cost CPU preflight; then run the smallest GPU
+correctness smoke. No architecture-scale spend occurs before those pass.

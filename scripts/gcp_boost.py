@@ -25,7 +25,7 @@ def main() -> None:
     root = Path(__file__).resolve().parents[1]
     contract = json.loads(args.contract.read_text(encoding="utf-8"))
     profile = load_gcp_profile(args.provider_config, args.profile)
-    plan = build_gcp_launch_plan(contract, profile, root=root)
+    plan = build_gcp_launch_plan(contract, profile, root=root, contract_path=args.contract)
     if args.output:
         args.output.parent.mkdir(parents=True, exist_ok=True)
         args.output.write_text(

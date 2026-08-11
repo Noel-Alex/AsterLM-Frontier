@@ -17,6 +17,8 @@ SAFE_ALIAS = re.compile(r"^[A-Za-z0-9_.-]+$")
 SAFE_HUB_REPO = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 SAFE_HUB_REVISION = re.compile(r"^[A-Za-z0-9._/-]+$")
 SAFE_ACCELERATOR = re.compile(r"^[A-Za-z0-9._:+!-]+$")
+SAFE_LOCATION = re.compile(r"^[a-z0-9-]+$")
+SAFE_PROVISIONING = {"STANDARD", "SPOT"}
 REMOTE_PROVIDERS = {"modal", "gcp", "lightning", "huggingface_jobs", "skypilot"}
 DECISION_DATA_FLAGS = {
     "cleaned",
@@ -171,6 +173,12 @@ def build_contract(
     gpu = str(payload.get("gpu") or "").strip()
     if gpu and not SAFE_ACCELERATOR.fullmatch(gpu):
         raise ValueError("gpu contains unsafe characters")
+    zone = str(payload.get("zone") or "").strip()
+    if zone and not SAFE_LOCATION.fullmatch(zone):
+        raise ValueError("zone contains unsafe characters")
+    provisioning_model = str(payload.get("provisioning_model") or "").strip().upper()
+    if provisioning_model and provisioning_model not in SAFE_PROVISIONING:
+        raise ValueError("provisioning_model must be STANDARD or SPOT")
 
     inputs: dict[str, dict[str, str]] = {}
     command = ["python", "scripts/studio_train.py", "--mode", "pretrain"]
@@ -226,6 +234,8 @@ def build_contract(
         "max_spend_usd": policy_ceiling,
         "hub_repo": hub_repo,
         "gpu": gpu or None,
+        "zone": zone or None,
+        "provisioning_model": provisioning_model or None,
         "dataset_manifest_decision_grade": dataset_manifest_decision_grade,
         "resume_hub": hub_checkpoint,
         "parent_run_id": payload.get("parent_run_id"),

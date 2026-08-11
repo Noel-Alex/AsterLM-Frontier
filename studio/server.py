@@ -27,6 +27,7 @@ import yaml
 from asterlm.cloud import (
     build_gcp_launch_plan,
     build_modal_launch_plan,
+    control_gcp_instance,
     control_modal_sandbox,
     dispatch_gcp_launch_plan,
     dispatch_modal_launch_plan,
@@ -111,16 +112,22 @@ def provider_launch(contract_id: str, *, execute: bool) -> dict[str, Any]:
         result = dispatch_modal_launch_plan(plan, execute=execute)
     elif provider == "gcp":
         profile = load_gcp_profile(ROOT / "configs/providers/gcp_boost.yaml", profile_alias)
-        plan = build_gcp_launch_plan(contract, profile, root=ROOT)
+        plan = build_gcp_launch_plan(
+            contract, profile, root=ROOT, contract_path=contract_path
+        )
         result = dispatch_gcp_launch_plan(plan, execute=execute)
     else:
         raise ValueError(f"Provider {provider!r} does not have a dispatch adapter")
     atomic_json(REMOTE_PLAN_ROOT / f"{contract_id}-{provider}.json", plan)
     if execute and result.get("status") == "dispatched":
+        remote_id = result.get("sandbox_id") or result.get("instance_name")
+        if not isinstance(remote_id, str) or not SAFE_ID.fullmatch(remote_id):
+            raise RuntimeError("Provider returned no safe remote job identity")
         atomic_json(
-            REMOTE_JOB_ROOT / f"{result['sandbox_id']}.json",
+            REMOTE_JOB_ROOT / f"{remote_id}.json",
             {
                 **result,
+                "remote_id": remote_id,
                 "contract_id": contract_id,
                 "modal_environment": plan.get("modal_environment"),
                 "created_at": time.time(),
@@ -129,17 +136,32 @@ def provider_launch(contract_id: str, *, execute: bool) -> dict[str, Any]:
     return result
 
 
-def provider_control(sandbox_id: str, *, mode: str) -> dict[str, Any]:
-    if not re.fullmatch(r"sb-[A-Za-z0-9]+", sandbox_id):
-        raise ValueError("Invalid Modal Sandbox id")
-    job_path = REMOTE_JOB_ROOT / f"{sandbox_id}.json"
+def provider_control(remote_id: str, *, mode: str) -> dict[str, Any]:
+    if not SAFE_ID.fullmatch(remote_id):
+        raise ValueError("Invalid remote job id")
+    job_path = REMOTE_JOB_ROOT / f"{remote_id}.json"
     job = json.loads(job_path.read_text(encoding="utf-8"))
-    result = control_modal_sandbox(
-        profile_alias=str(job["profile_alias"]),
-        modal_environment=str(job["modal_environment"]),
-        sandbox_id=sandbox_id,
-        mode=mode,
-    )
+    provider = str(job.get("provider") or "")
+    if provider == "modal":
+        result = control_modal_sandbox(
+            profile_alias=str(job["profile_alias"]),
+            modal_environment=str(job["modal_environment"]),
+            sandbox_id=str(job["sandbox_id"]),
+            mode=mode,
+        )
+    elif provider == "gcp":
+        profile = load_gcp_profile(
+            ROOT / "configs/providers/gcp_boost.yaml", str(job["profile_alias"])
+        )
+        selected = job.get("selected") or {}
+        result = control_gcp_instance(
+            profile=profile,
+            instance_name=str(job["instance_name"]),
+            zone=str(selected["zone"]),
+            mode=mode,
+        )
+    else:
+        raise ValueError(f"Provider {provider!r} does not have a control adapter")
     atomic_json(job_path, {**job, "last_control": result, "updated_at": time.time()})
     return result
 
@@ -1499,7 +1521,8 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/api/provider/control":
                 return self.send_json(
                     provider_control(
-                        str(payload["sandbox_id"]), mode=str(payload["mode"])
+                        str(payload.get("remote_id") or payload.get("sandbox_id")),
+                        mode=str(payload["mode"]),
                     )
                 )
             if path == "/api/clean/plan":

@@ -828,6 +828,8 @@ function bind() {
         data:$("#contract-data").value.trim(),
         hub_repo:$("#contract-hub-repo").value.trim(),
         gpu:$("#contract-gpu").value.trim(),
+        zone:$("#contract-zone").value.trim(),
+        provisioning_model:$("#contract-provisioning").value,
         resume_hub_path:$("#contract-resume-hub-path").value.trim(),
         resume_hub_repo:$("#contract-resume-hub-repo").value.trim(),
         resume_hub_revision:$("#contract-resume-hub-revision").value.trim(),
@@ -856,17 +858,19 @@ function bind() {
       if(!confirm(`Dispatch ${S.providerContract.contract_id} to ${S.providerContract.provider}? This can consume paid credit.`))return;
       const result=await post("/api/provider/launch",{contract_id:S.providerContract.contract_id,execute:true});
       S.providerRemoteJob=result;
-      $("#graceful-provider-stop").disabled=result.provider!=="modal"||!result.sandbox_id;
-      $("#terminate-provider-job").disabled=result.provider!=="modal"||!result.sandbox_id;
+      const remoteId=result.sandbox_id||result.instance_name;
+      $("#graceful-provider-stop").disabled=!remoteId;
+      $("#terminate-provider-job").disabled=!remoteId;
       $("#provider-contract-result").textContent=JSON.stringify(result,null,2);
       toast(`Remote contract ${result.status}.`);
     }catch(e){showError(e);}
   };
   $("#graceful-provider-stop").onclick=async()=>{
     try{
-      if(!S.providerRemoteJob?.sandbox_id)throw new Error("No Modal Sandbox is selected.");
+      const remoteId=S.providerRemoteJob?.sandbox_id||S.providerRemoteJob?.instance_name;
+      if(!remoteId)throw new Error("No remote training job is selected.");
       if(!confirm("Request a safe optimizer-boundary stop, full checkpoint, and verified Hub upload?"))return;
-      const result=await post("/api/provider/control",{sandbox_id:S.providerRemoteJob.sandbox_id,mode:"graceful"});
+      const result=await post("/api/provider/control",{remote_id:remoteId,mode:"graceful"});
       $("#provider-contract-result").textContent=JSON.stringify(result,null,2);
       $("#graceful-provider-stop").disabled=true;
       toast("Graceful remote stop requested.");
@@ -874,12 +878,13 @@ function bind() {
   };
   $("#terminate-provider-job").onclick=async()=>{
     try{
-      if(!S.providerRemoteJob?.sandbox_id)throw new Error("No Modal Sandbox is selected.");
-      if(!confirm("Terminate this Sandbox immediately? Work since its last completed durable checkpoint can be lost."))return;
-      const result=await post("/api/provider/control",{sandbox_id:S.providerRemoteJob.sandbox_id,mode:"terminate"});
+      const remoteId=S.providerRemoteJob?.sandbox_id||S.providerRemoteJob?.instance_name;
+      if(!remoteId)throw new Error("No remote training job is selected.");
+      if(!confirm("Terminate this remote job immediately? Work since its last completed durable checkpoint can be lost."))return;
+      const result=await post("/api/provider/control",{remote_id:remoteId,mode:"terminate"});
       $("#provider-contract-result").textContent=JSON.stringify(result,null,2);
       $("#graceful-provider-stop").disabled=true;$("#terminate-provider-job").disabled=true;
-      toast("Modal Sandbox terminated.");
+      toast("Remote job terminated.");
     }catch(e){showError(e);}
   };
 }

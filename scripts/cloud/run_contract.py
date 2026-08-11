@@ -5,6 +5,7 @@ import argparse
 import hashlib
 import json
 import os
+import signal
 import subprocess
 from pathlib import Path
 
@@ -37,6 +38,24 @@ def _replace_pair(command: list[str], option: str, value: str) -> None:
     if index + 1 >= len(command):
         raise RuntimeError(f"Remote contract has no value for {option}")
     command[index + 1] = value
+
+
+def _run_training(command: list[str]) -> int:
+    """Run one trainer process group and forward container stop signals to it."""
+
+    child = subprocess.Popen(command, start_new_session=True)
+
+    def forward_stop(signum: int, _frame: object) -> None:
+        if child.poll() is None:
+            os.killpg(child.pid, signum)
+
+    old_int = signal.signal(signal.SIGINT, forward_stop)
+    old_term = signal.signal(signal.SIGTERM, forward_stop)
+    try:
+        return child.wait()
+    finally:
+        signal.signal(signal.SIGINT, old_int)
+        signal.signal(signal.SIGTERM, old_term)
 
 
 def _materialize_hub_resume(contract: dict, destination: Path) -> Path:
@@ -88,8 +107,7 @@ def main() -> None:
         resume_root = Path(os.environ.get("ASTERLM_HUB_RESUME_ROOT", "/var/cache/aster/hub-resume"))
         checkpoint = _materialize_hub_resume(contract, resume_root / contract["contract_id"])
         _replace_pair(command, "--resume", str(checkpoint))
-    completed = subprocess.run(command, check=False)
-    raise SystemExit(completed.returncode)
+    raise SystemExit(_run_training(command))
 
 
 if __name__ == "__main__":
