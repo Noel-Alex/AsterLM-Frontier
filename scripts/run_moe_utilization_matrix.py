@@ -160,6 +160,17 @@ def main() -> None:
         default=None,
         help="Override the train-config precision backend for every trial.",
     )
+    parser.add_argument(
+        "--checkpoint-segment-size",
+        type=int,
+        default=None,
+        help="Override activation-checkpoint segment size for every trial.",
+    )
+    parser.add_argument(
+        "--disable-gradient-checkpointing",
+        action="store_true",
+        help="Disable activation recomputation for every trial.",
+    )
     parser.add_argument("--cooldown-temperature", type=float, default=72.0)
     parser.add_argument("--idle-utilization", type=float, default=12.0)
     parser.add_argument("--trial-timeout", type=float, default=1800.0)
@@ -222,6 +233,8 @@ def main() -> None:
             "gpu_sample_interval": args.gpu_sample_interval,
             "optimizer_override": args.optimizer,
             "precision_override": args.precision,
+            "checkpoint_segment_size_override": args.checkpoint_segment_size,
+            "gradient_checkpointing_disabled": args.disable_gradient_checkpointing,
             "idle_utilization_ceiling": args.idle_utilization,
             "order": orders,
         },
@@ -284,6 +297,12 @@ def main() -> None:
                 command.extend(["--optimizer", args.optimizer])
             if args.precision is not None:
                 command.extend(["--precision", args.precision])
+            if args.checkpoint_segment_size is not None:
+                command.extend(
+                    ["--checkpoint-segment-size", str(args.checkpoint_segment_size)]
+                )
+            if args.disable_gradient_checkpointing:
+                command.append("--disable-gradient-checkpointing")
             environment = dict(os.environ)
             environment["ASTER_MOE_IMPL"] = implementation
             started = time.monotonic()

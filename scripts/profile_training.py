@@ -231,6 +231,17 @@ def main() -> None:
     parser.add_argument("--activation-offload", action="store_true")
     parser.add_argument("--compile", action="store_true")
     parser.add_argument(
+        "--checkpoint-segment-size",
+        type=int,
+        default=None,
+        help="Override the number of consecutive blocks inside each activation-checkpoint segment.",
+    )
+    parser.add_argument(
+        "--disable-gradient-checkpointing",
+        action="store_true",
+        help="Execution-only control that preserves model math but retains all forward activations.",
+    )
+    parser.add_argument(
         "--allow-compile-transformer-engine-experimental",
         action="store_true",
         help=(
@@ -267,6 +278,12 @@ def main() -> None:
         train.activation_offload = True
     if args.compile:
         train.compile = True
+    if args.checkpoint_segment_size is not None:
+        if args.checkpoint_segment_size <= 0:
+            raise ValueError("checkpoint segment size must be positive")
+        config.checkpoint_segment_size = args.checkpoint_segment_size
+    if args.disable_gradient_checkpointing:
+        config.gradient_checkpointing = False
     config.max_seq_len = max(config.max_seq_len, train.sequence_length)
 
     result: dict[str, Any] = {
