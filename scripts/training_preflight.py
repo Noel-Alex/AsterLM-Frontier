@@ -8,14 +8,15 @@ import shutil
 import sys
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any
 
 import torch
 
 from asterlm.config import AsterConfig, DataConfig, TrainConfig
 from asterlm.data.mixture import _looks_like_local_path, iter_source, local_data_paths
 from asterlm.data.tokenizer import AsterTokenizer
+from asterlm.source_provenance import assert_current_checkout_source
 from asterlm.training.checkpoint import resolve_checkpoint
+from asterlm.training.contracts import TrainingContractError, validate_training_contract
 
 
 @dataclass
@@ -123,6 +124,11 @@ def main() -> None:
     parser.add_argument("--check-first-record", action="store_true")
     parser.add_argument("--json", dest="json_path", default=None, help="Optional JSON report path")
     parser.add_argument("--allow-warnings", action="store_true", help="Return success when only warnings remain")
+    parser.add_argument(
+        "--verify-manifest-hashes",
+        action="store_true",
+        help="Rehash every sealed clean-corpus shard instead of checking presence and size only",
+    )
     args = parser.parse_args()
 
     checks: list[Check] = []
@@ -164,6 +170,7 @@ def main() -> None:
             else:
                 add(checks, "OK", "tokenizer vocabulary", f"Tokenizer and model both use {model.vocab_size:,} tokens")
 
+    data = None
     if args.data:
         try:
             data = DataConfig.from_yaml(args.data)
@@ -174,6 +181,32 @@ def main() -> None:
             if not data.sources:
                 add(checks, "ERROR", "training sources", "Data config has no training sources")
             inspect_data(data, checks, args.check_first_record)
+
+    if train.run_class != "exploratory":
+        if data is None:
+            add(
+                checks,
+                "ERROR",
+                "training contract",
+                f"{train.run_class} preflight requires --data",
+            )
+        else:
+            try:
+                contract = validate_training_contract(
+                    train,
+                    data,
+                    source_provenance=assert_current_checkout_source(),
+                    verify_artifact_hashes=args.verify_manifest_hashes,
+                )
+            except (TrainingContractError, ValueError, OSError) as exc:
+                add(checks, "ERROR", "training contract", str(exc))
+            else:
+                add(
+                    checks,
+                    "OK",
+                    "training contract",
+                    f"{contract.run_class} contract passed; manifest={contract.clean_manifest_sha256}",
+                )
 
     inspect_checkpoint(args.checkpoint or train.resume, checks)
     inspect_dependencies(model, train, checks)

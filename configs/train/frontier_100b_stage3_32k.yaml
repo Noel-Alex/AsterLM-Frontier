@@ -1,6 +1,7 @@
 train:
   output_dir: runs/aster-frontier-100b-stage3-32k
   seed: 1339
+  run_class: final
   device: cuda
   dtype: bfloat16
   matmul_precision: high
@@ -30,9 +31,9 @@ train:
   keep_last_checkpoints: 6
   milestone_tokens: [1000000000, 2000000000]
   milestone_eval: true
-  num_workers: 2
+  num_workers: 0
   pin_memory: true
-  prefetch_factor: 2
+  prefetch_factor: null
   tokenizer_path: artifacts/tokenizer.json
   wandb_project: asterlm-frontier
   wandb_run_name: frontier-100b-stage3-32k

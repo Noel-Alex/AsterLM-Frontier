@@ -284,6 +284,10 @@ class AsterConfig:
 class TrainConfig:
     output_dir: str = "runs/aster"
     seed: int = 1337
+    # Exploratory runs remain easy to launch. Decision-grade and final runs are
+    # fail-closed by the executable training contract in training/contracts.py.
+    run_class: str = "exploratory"  # exploratory | decision_grade | final
+    promotion_gates_path: str = "configs/experiments/promotion_gates.yaml"
     # Architecture campaigns can initialize each ordinary projection from its
     # qualified module name. This prevents a changed KDA/MoE tensor shape from
     # shifting the RNG stream used by otherwise-identical later layers.
@@ -394,6 +398,8 @@ class TrainConfig:
     hub_fail_on_error: bool = False
 
     def __post_init__(self) -> None:
+        if self.run_class not in {"exploratory", "decision_grade", "final"}:
+            raise ValueError("run_class must be exploratory, decision_grade, or final")
         if self.execution_backend not in {
             "auto",
             "aster_local",
@@ -513,6 +519,17 @@ class DataConfig:
     mask_cross_document_loss: bool = True
     # Optional provenance sidecar for exact corpus quotas, hashes, and split rules.
     manifest_path: str | None = None
+    validation_role: str = "pipeline_smoke"
+
+    def __post_init__(self) -> None:
+        if self.validation_role not in {
+            "pipeline_smoke",
+            "optimization_validation",
+            "architecture_holdout",
+            "benchmark_holdout",
+            "long_context_holdout",
+        }:
+            raise ValueError("unsupported validation_role")
 
     @classmethod
     def from_yaml(cls, path: str | Path) -> DataConfig:

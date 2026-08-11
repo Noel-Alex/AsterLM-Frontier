@@ -31,6 +31,7 @@ from .checkpoint import (
     prune_rolling_checkpoints,
     save_checkpoint,
 )
+from .contracts import validate_training_contract
 from .execution import probe_execution_backends, resolve_execution_engine
 from .hub import HubRunSync
 from .metrics import JsonlLogger
@@ -74,6 +75,11 @@ class Trainer:
         initial_checkpoint: str | None = None,
     ) -> None:
         self.source_provenance = assert_current_checkout_source()
+        self.training_contract = validate_training_contract(
+            train_config,
+            data_config,
+            source_provenance=self.source_provenance,
+        )
         checkpoint_source = train_config.resume or initial_checkpoint
         if checkpoint_source:
             pin_kda_backend_from_checkpoint(model_config, checkpoint_source)
@@ -254,6 +260,7 @@ class Trainer:
             "parameter_storage": self._parameter_storage_summary(),
             "loqt_modules": sum(1 for _ in iter_loqt_modules(self.model)),
             "execution_plan": self.execution.plan.to_dict(),
+            "training_contract": self.training_contract.to_dict(),
             "execution_backends": {
                 name: capability.to_dict()
                 for name, capability in probe_execution_backends(self.device).items()
@@ -527,7 +534,7 @@ class Trainer:
                 )
 
     @torch.no_grad()
-    def evaluate(self) -> dict[str, float]:
+    def evaluate(self) -> dict[str, Any]:
         if self.validation_iterator is None:
             return {}
         self.model.eval()
@@ -550,6 +557,7 @@ class Trainer:
             "eval_loss": mean_loss,
             "eval_main_loss": mean_main,
             "eval_perplexity": math.exp(min(mean_main, 20.0)),
+            "eval_role": self.data_config.validation_role,
         }
 
     def _log(self, values: dict[str, Any]) -> None:

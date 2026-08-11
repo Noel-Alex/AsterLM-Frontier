@@ -13,6 +13,8 @@ The active 16B frontier tranche remains the first major checkpoint. The eventual
 
 The campaign uses mostly unique, deduplicated data. It does **not** manufacture 100B tokens by blindly repeating a small corpus. Exact repetition and source-level effective epochs must remain visible in the corpus audit.
 
+The three `frontier_100b_*` train configs are mechanically `run_class: final`. Directly invoking the trainer cannot bypass the clean-corpus manifest or promotion gate: it will refuse to allocate the model until the corpus is sealed, every required gate has durable passed evidence, the Git checkout is clean, and full private Hugging Face plus W&B continuity is configured.
+
 ## Progressive data tiers
 
 Every tier expands the same source directories and cursor checkpoints. No completed pilot/frontier shard is downloaded twice.
@@ -78,14 +80,14 @@ This puts most compute into efficient base pretraining while still genuinely tra
 python scripts/training_preflight.py \
   --model configs/model/aster_moe_frontier_893m_a484m.yaml \
   --train configs/train/frontier_100b_stage1_8k.yaml \
-  --data configs/data/pretrain_frontier_clean.yaml \
+  --data data/clean-frontier/pretrain_data.yaml \
   --check-first-record \
   --json runs/preflight-100b-stage1.json
 
 python scripts/train_pretrain.py \
   --model configs/model/aster_moe_frontier_893m_a484m.yaml \
   --train configs/train/frontier_100b_stage1_8k.yaml \
-  --data configs/data/pretrain_frontier_clean.yaml \
+  --data data/clean-frontier/pretrain_data.yaml \
   --hub-repo YOUR_HF_USERNAME/AsterLM-Frontier-100B
 ```
 
@@ -97,7 +99,7 @@ Permanent checkpoints are created at 18.4B, 50B and 92B stage-1 tokens. They are
 python scripts/train_pretrain.py \
   --model configs/model/aster_moe_frontier_893m_a484m.yaml \
   --train configs/train/frontier_100b_stage2_16k.yaml \
-  --data configs/data/pretrain_frontier_clean.yaml \
+  --data data/clean-frontier/pretrain_data.yaml \
   --init-checkpoint runs/aster-frontier-100b-stage1-8k \
   --hub-repo YOUR_HF_USERNAME/AsterLM-Frontier-100B
 ```
@@ -108,7 +110,7 @@ python scripts/train_pretrain.py \
 python scripts/train_pretrain.py \
   --model configs/model/aster_moe_frontier_893m_a484m.yaml \
   --train configs/train/frontier_100b_stage3_32k.yaml \
-  --data configs/data/pretrain_frontier_clean.yaml \
+  --data data/clean-frontier/pretrain_data.yaml \
   --init-checkpoint runs/aster-frontier-100b-stage2-16k \
   --hub-repo YOUR_HF_USERNAME/AsterLM-Frontier-100B
 ```

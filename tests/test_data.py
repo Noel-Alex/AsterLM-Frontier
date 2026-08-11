@@ -125,6 +125,15 @@ def test_local_reader_ignores_control_and_cursor_files(tmp_path: Path):
     (root / "part-00000.jsonl").write_text(json.dumps({"text": "usable"}) + "\n", encoding="utf-8")
     (root / "state.json").write_text(json.dumps({"text": "must not train"}), encoding="utf-8")
     (root / "manifest.json").write_text(json.dumps({"text": "must not train"}), encoding="utf-8")
+    (root / "cleaning_report.json").write_text(
+        json.dumps({"text": "must not train"}), encoding="utf-8"
+    )
+    (root / "prepare_summary.json").write_text(
+        json.dumps({"text": "must not train"}), encoding="utf-8"
+    )
+    (root / "clean_manifest.json").write_text(
+        json.dumps({"text": "must not train"}), encoding="utf-8"
+    )
     (root / "cursor-00000001.pkl").write_bytes(pickle.dumps({"text": "binary state"}))
 
     source = SourceConfig(path=str(root), weight=1.0)

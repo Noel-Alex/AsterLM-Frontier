@@ -10,6 +10,7 @@ from pathlib import Path
 
 import yaml
 
+from asterlm.data.clean_manifest import build_clean_corpus_manifest
 
 SOURCES = ["fineweb_edu", "dclm", "cosmopedia_v2", "finemath_4plus"]
 
@@ -56,6 +57,7 @@ def main() -> None:
     if args.reset_existing and output.exists():
         shutil.rmtree(output)
     output.mkdir(parents=True, exist_ok=True)
+    shared_dedup_db = output / "_dedup" / "global.sqlite"
     benchmark_arg = ["--benchmark", args.benchmarks] if Path(args.benchmarks).exists() else []
     if not benchmark_arg:
         print("WARNING: benchmark directory is missing; cleaning will run without decontamination")
@@ -85,6 +87,8 @@ def main() -> None:
                 str(source),
                 "--output",
                 str(destination),
+                "--dedup-db",
+                str(shared_dedup_db),
                 "--validation-output",
                 str(validation_destination),
                 "--validation-fraction",
@@ -120,6 +124,8 @@ def main() -> None:
             "quality_filters": True,
             "add_eos_between_documents": True,
             "mask_cross_document_loss": True,
+            "manifest_path": str(output / "clean_manifest.json"),
+            "validation_role": "architecture_holdout",
             "sources": [
                 {"path": str(output / "fineweb_edu"), "text_field": "text", "weight": 0.53},
                 {"path": str(output / "dclm"), "text_field": "text", "weight": 0.11},
@@ -155,17 +161,27 @@ def main() -> None:
         total = sum(source["weight"] for source in config["data"][key])
         for source in config["data"][key]:
             source["weight"] /= total
-    config_path = Path("configs/data/pretrain_frontier_clean.yaml")
+    config_path = output / "pretrain_data.yaml"
     config_path.write_text(yaml.safe_dump(config, sort_keys=False), encoding="utf-8")
     summary = {
-        "format_version": 2,
+        "format_version": 3,
         "clean_root": str(output),
         "generated_config": str(config_path),
         "decontaminated": bool(benchmark_arg),
         "validation_fraction": args.validation_fraction,
         "validation_root": str(output / "validation"),
         "sources": [name for name, _, _ in jobs],
+        "shared_dedup_db": str(shared_dedup_db),
     }
+    (output / "prepare_summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
+    manifest = build_clean_corpus_manifest(
+        data_config_path=config_path,
+        output_path=output / "clean_manifest.json",
+        benchmark_decontaminated=bool(benchmark_arg),
+        pii_handled=args.pii_mode != "keep",
+    )
+    summary["clean_manifest"] = str(output / "clean_manifest.json")
+    summary["manifest_artifacts"] = len(manifest["artifacts"])
     (output / "prepare_summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
     print(json.dumps(summary, indent=2))
 

@@ -109,8 +109,11 @@ python scripts/prepare_frontier_data.py \
 The cleaner writes deterministic, disjoint local validation holdouts under `data/clean-frontier/validation/` and generates:
 
 ```text
-configs/data/pretrain_frontier_clean.yaml
+data/clean-frontier/pretrain_data.yaml
+data/clean-frontier/clean_manifest.json
 ```
+
+The cleaner uses one shared deduplication database across all active sources, then hashes every completed shard before publishing the manifest. Do not edit the generated data config after sealing it. Use `training_preflight.py --verify-manifest-hashes` once before a costly decision/final run; ordinary startups verify manifest identity, paths, presence, and sizes without repeatedly hashing hundreds of GiB.
 
 If `data/clean-frontier` was created by an older repository version that did not make local holdouts, rebuild it deliberately:
 
@@ -130,7 +133,7 @@ Train once after the clean mixture exists. This version includes all ordinary, F
 
 ```bash
 python scripts/train_tokenizer.py \
-  --data configs/data/pretrain_frontier_clean.yaml \
+  --data data/clean-frontier/pretrain_data.yaml \
   --output artifacts/tokenizer.json \
   --vocab-size 32768 \
   --documents 1000000
@@ -142,7 +145,7 @@ python scripts/train_tokenizer.py \
 python scripts/training_preflight.py \
   --model configs/model/aster_moe_frontier_893m_a484m.yaml \
   --train configs/train/frontier_stage1_8k.yaml \
-  --data configs/data/pretrain_frontier_clean.yaml \
+  --data data/clean-frontier/pretrain_data.yaml \
   --check-first-record \
   --json runs/preflight-frontier-stage1.json
 
@@ -180,22 +183,22 @@ python scripts/profile_training.py \
 python scripts/training_preflight.py \
   --model configs/model/aster_220m.yaml \
   --train configs/train/pretrain_laptop.yaml \
-  --data configs/data/pretrain_frontier_clean.yaml \
+  --data data/clean-frontier/pretrain_data.yaml \
   --check-first-record
 
 python scripts/train_pretrain.py \
   --model configs/model/aster_220m.yaml \
   --train configs/train/pretrain_laptop.yaml \
-  --data configs/data/pretrain_frontier_clean.yaml
+  --data data/clean-frontier/pretrain_data.yaml
 ```
 
-Resume the same run, including optimizer, RNG, counters, and deterministic packed-data replay:
+Resume the same run, including optimizer, RNG, counters, source-mixture state, source cursors, FIM RNG, and the partially filled packing buffer without replaying earlier batches:
 
 ```bash
 python scripts/train_pretrain.py \
   --model configs/model/aster_220m.yaml \
   --train configs/train/pretrain_laptop.yaml \
-  --data configs/data/pretrain_frontier_clean.yaml \
+  --data data/clean-frontier/pretrain_data.yaml \
   --resume runs/aster-220m-pretrain
 ```
 
@@ -205,7 +208,7 @@ Continue it at 8K with a fresh optimizer/schedule but loaded weights:
 python scripts/train_pretrain.py \
   --model configs/model/aster_220m.yaml \
   --train configs/train/pretrain_8k_laptop.yaml \
-  --data configs/data/pretrain_frontier_clean.yaml \
+  --data data/clean-frontier/pretrain_data.yaml \
   --init-checkpoint runs/aster-220m-pretrain
 ```
 
@@ -218,27 +221,27 @@ Stage transitions use `--init-checkpoint` because they intentionally start a new
 python scripts/train_pretrain.py \
   --model configs/model/aster_moe_frontier_893m_a484m.yaml \
   --train configs/train/frontier_stage1_8k.yaml \
-  --data configs/data/pretrain_frontier_clean.yaml
+  --data data/clean-frontier/pretrain_data.yaml
 
 # Exact same-stage resume
 python scripts/train_pretrain.py \
   --model configs/model/aster_moe_frontier_893m_a484m.yaml \
   --train configs/train/frontier_stage1_8k.yaml \
-  --data configs/data/pretrain_frontier_clean.yaml \
+  --data data/clean-frontier/pretrain_data.yaml \
   --resume runs/aster-frontier-stage1-8k
 
 # Stage 2: 16K
 python scripts/train_pretrain.py \
   --model configs/model/aster_moe_frontier_893m_a484m.yaml \
   --train configs/train/frontier_stage2_16k.yaml \
-  --data configs/data/pretrain_frontier_clean.yaml \
+  --data data/clean-frontier/pretrain_data.yaml \
   --init-checkpoint runs/aster-frontier-stage1-8k
 
 # Stage 3: genuinely trained 32K
 python scripts/train_pretrain.py \
   --model configs/model/aster_moe_frontier_893m_a484m.yaml \
   --train configs/train/frontier_stage3_32k.yaml \
-  --data configs/data/pretrain_frontier_clean.yaml \
+  --data data/clean-frontier/pretrain_data.yaml \
   --init-checkpoint runs/aster-frontier-stage2-16k
 ```
 
@@ -250,7 +253,7 @@ Do not mix this checkpoint with the ordinary BF16 model config.
 python scripts/train_pretrain.py \
   --model configs/model/aster_moe_frontier_893m_loqt.yaml \
   --train configs/train/frontier_stage1_8k_loqt.yaml \
-  --data configs/data/pretrain_frontier_clean.yaml
+  --data data/clean-frontier/pretrain_data.yaml
 ```
 
 ### 6.4 Larger 1.5B target experiment
@@ -261,12 +264,12 @@ Only proceed after a real VRAM profile passes.
 python scripts/train_pretrain.py \
   --model configs/model/aster_moe_target_1p51b_a623m.yaml \
   --train configs/train/frontier_target_stage1_4k.yaml \
-  --data configs/data/pretrain_frontier_clean.yaml
+  --data data/clean-frontier/pretrain_data.yaml
 
 python scripts/train_pretrain.py \
   --model configs/model/aster_moe_target_1p51b_a623m.yaml \
   --train configs/train/frontier_target_stage2_8k.yaml \
-  --data configs/data/pretrain_frontier_clean.yaml \
+  --data data/clean-frontier/pretrain_data.yaml \
   --init-checkpoint runs/aster-target-stage1-4k
 ```
 
@@ -274,7 +277,7 @@ python scripts/train_pretrain.py \
 
 ```bash
 python scripts/run_quality_ablations.py \
-  --data configs/data/pretrain_frontier_clean.yaml \
+  --data data/clean-frontier/pretrain_data.yaml \
   --tokens 100000000 \
   --continue-on-error
 ```
@@ -407,7 +410,7 @@ python scripts/train_sft.py \
 ```bash
 python scripts/evaluate_perplexity.py \
   --checkpoint runs/aster-frontier-stage3-32k \
-  --data configs/data/pretrain_frontier_clean.yaml \
+  --data data/clean-frontier/pretrain_data.yaml \
   --sequence 8192 \
   --batches 32
 

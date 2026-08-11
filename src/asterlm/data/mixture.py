@@ -108,6 +108,9 @@ def _is_local_data_file(path: Path) -> bool:
         "download_manifest.json",
         "shard_verification.json",
         "data_preflight.json",
+        "cleaning_report.json",
+        "prepare_summary.json",
+        "clean_manifest.json",
     }:
         return False
     ignored_suffixes = (".partial", ".tmp", ".pkl", ".lock", ".log", ".sqlite", ".db")
@@ -142,6 +145,14 @@ def _is_local_data_file(path: Path) -> bool:
             ".tex",
         )
     )
+
+
+def local_data_paths(path: str | Path) -> list[Path]:
+    """Return only record-bearing local files, excluding pipeline control metadata."""
+
+    root = Path(path)
+    candidates = sorted(root.rglob("*")) if root.is_dir() else [root]
+    return [item for item in candidates if item.is_file() and _is_local_data_file(item)]
 
 
 def _iter_local_file(item: Path, source: SourceConfig) -> Iterator[dict[str, Any]]:
@@ -184,14 +195,12 @@ def _iter_local_file(item: Path, source: SourceConfig) -> Iterator[dict[str, Any
 
 def _iter_local(source: SourceConfig) -> Iterator[dict[str, Any]]:
     path = Path(source.path)
-    paths = sorted(path.rglob("*")) if path.is_dir() else [path]
+    paths = local_data_paths(path)
     worker = get_worker_info()
     worker_id = 0 if worker is None else worker.id
     num_workers = 1 if worker is None else worker.num_workers
     record_index = 0
     for item in paths:
-        if not item.is_file() or not _is_local_data_file(item):
-            continue
         for record in _iter_local_file(item, source):
             if record_index % num_workers == worker_id:
                 yield record
@@ -265,11 +274,7 @@ class StatefulSourceIterator:
         self.kind = "local" if self.path.exists() else "huggingface"
         if self.kind == "huggingface" and _looks_like_local_path(source.path):
             raise FileNotFoundError(f"Configured local data source does not exist: {source.path}")
-        self.paths = (
-            [item for item in sorted(self.path.rglob("*")) if item.is_file() and _is_local_data_file(item)]
-            if self.kind == "local" and self.path.is_dir()
-            else ([self.path] if self.kind == "local" else [])
-        )
+        self.paths = local_data_paths(self.path) if self.kind == "local" else []
         self.file_index = 0
         self.record_index = 0
         self._local_iterator: Iterator[dict[str, Any]] | None = None

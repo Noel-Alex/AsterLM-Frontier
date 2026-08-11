@@ -60,7 +60,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
         "checkpoint_tokens": 25000000,
         "keep_last_checkpoints": 6,
         "model": "configs/model/aster_moe_frontier_893m_a484m.yaml",
-        "data": "configs/data/pretrain_frontier_clean.yaml",
+        "data": "data/clean-frontier/pretrain_data.yaml",
     },
     "ui": {
         "refresh_seconds": 2,

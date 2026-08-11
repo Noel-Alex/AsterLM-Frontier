@@ -76,6 +76,8 @@ Use `python scripts/download_status.py` for progress and `python scripts/verify_
 
 `clean_corpus.py` and `prepare_frontier_data.py` implement:
 
+All source families share one exact/near-duplicate index during preparation, so duplication is removed across sources rather than only within each source. The completed derivative is sealed by `data/clean-frontier/clean_manifest.json`, which records the canonical data config, cleaning guarantees, source reports, every shard size, and every shard SHA-256. Decision-grade/final training refuses an unsealed corpus or a config whose source paths no longer match that manifest.
+
 ### Normalization
 
 - Unicode normalization
@@ -140,7 +142,7 @@ Train it on a balanced sample from every major domain, not only web prose:
 
 ```bash
 python scripts/train_tokenizer.py \
-  --data configs/data/pretrain_frontier_clean.yaml \
+  --data data/clean-frontier/pretrain_data.yaml \
   --documents 2000000 \
   --vocab-size 32768 \
   --output artifacts/tokenizer.json
