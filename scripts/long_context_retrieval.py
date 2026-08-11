@@ -2,11 +2,12 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 from pathlib import Path
 
-from asterlm.artifacts import atomic_write_json, atomic_write_text
+from asterlm.artifacts import atomic_write_json, atomic_write_text, sha256_file
 from asterlm.experiments.long_context import (
     LONG_CONTEXT_CASE_SCHEMA_VERSION,
     build_retrieval_case,
@@ -52,6 +53,12 @@ def main() -> None:
     parser.add_argument("--model", default=None)
     parser.add_argument("--tokenizer", default="artifacts/tokenizer.json")
     parser.add_argument("--device", default="cuda")
+    parser.add_argument(
+        "--moe-implementation",
+        choices=("reference", "grouped", "cutlass", "torch_grouped"),
+        default="reference",
+        help="Physical MoE path, recorded separately from architecture semantics.",
+    )
     parser.add_argument("--lengths", default="4096,8192,16384,32768,65536,131072")
     parser.add_argument("--depths", default="0.1,0.5,0.9")
     parser.add_argument("--tasks", default="exact_key,repeated_key,two_hop")
@@ -91,20 +98,44 @@ def main() -> None:
     existing = _load_results(results_path)
     completed_ids = {str(row["case_id"]) for row in existing if row.get("status") == "ok"}
 
-    model, tokenizer = load_runtime(
-        args.checkpoint,
-        args.tokenizer,
-        args.model,
-        args.device,
+    tokenizer_path = Path(args.tokenizer).resolve()
+    tokenizer_sha256 = sha256_file(tokenizer_path)
+    model_artifact = next(
+        artifact
+        for artifact in checkpoint_manifest["artifacts"]
+        if artifact["path"] == checkpoint_manifest["model_file"]
     )
+    plan_identity = {
+        "checkpoint_model_sha256": model_artifact["sha256"],
+        "model": str(Path(args.model).resolve()) if args.model else None,
+        "tokenizer_sha256": tokenizer_sha256,
+        "device": args.device,
+        "moe_implementation": args.moe_implementation,
+        "lengths": lengths,
+        "depths": depths,
+        "tasks": tasks,
+        "repeats": args.repeats,
+        "seed": args.seed,
+        "prefill_chunk_size": args.prefill_chunk_size,
+        "source_commit": None if source is None else source.get("git_commit"),
+        "source_tree_manifest_sha256": (
+            None if source is None else source.get("tree_manifest_sha256")
+        ),
+    }
+    plan_id = hashlib.sha256(
+        json.dumps(plan_identity, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
     plan = {
         "schema_version": LONG_CONTEXT_CASE_SCHEMA_VERSION,
+        "plan_id": plan_id,
         "status": "running",
         "checkpoint": str(resolved_checkpoint.resolve()),
         "checkpoint_manifest": checkpoint_manifest,
         "model": str(Path(args.model).resolve()) if args.model else None,
-        "tokenizer": str(Path(args.tokenizer).resolve()),
+        "tokenizer": str(tokenizer_path),
+        "tokenizer_sha256": tokenizer_sha256,
         "device": args.device,
+        "moe_implementation": args.moe_implementation,
         "lengths": lengths,
         "depths": depths,
         "tasks": tasks,
@@ -119,7 +150,23 @@ def main() -> None:
             "depth": "token offset, not character offset",
         },
     }
+    existing_plan_path = output / "plan.json"
+    if existing and existing_plan_path.is_file():
+        existing_plan = json.loads(existing_plan_path.read_text(encoding="utf-8"))
+        if existing_plan.get("plan_id") != plan_id:
+            raise RuntimeError(
+                "Existing long-context cases belong to a different immutable plan; "
+                "preserve the output and choose a new --output directory."
+            )
     atomic_write_json(output / "plan.json", plan)
+
+    model, tokenizer = load_runtime(
+        args.checkpoint,
+        args.tokenizer,
+        args.model,
+        args.device,
+        moe_implementation=args.moe_implementation,
+    )
 
     results = list(existing)
     for task_index, task in enumerate(tasks):
