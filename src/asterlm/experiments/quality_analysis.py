@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import statistics
 from collections import defaultdict
+from itertools import pairwise
 from pathlib import Path
 from typing import Any
 
@@ -37,7 +38,7 @@ def normalized_curve_auc(curve: list[dict[str, Any]], x_key: str) -> float | Non
         return None
     area = sum(
         0.5 * (left[1] + right[1]) * (right[0] - left[0])
-        for left, right in zip(deduped, deduped[1:], strict=False)
+        for left, right in pairwise(deduped)
     )
     return area / (deduped[-1][0] - deduped[0][0])
 
@@ -54,13 +55,49 @@ def interpolate_loss(curve: list[dict[str, Any]], x_key: str, budget: float) -> 
     )
     if not points or budget < points[0][0] or budget > points[-1][0]:
         return None
-    for left, right in zip(points, points[1:], strict=False):
+    for left, right in pairwise(points):
         if left[0] <= budget <= right[0]:
             if right[0] == left[0]:
                 return right[1]
             fraction = (budget - left[0]) / (right[0] - left[0])
             return left[1] + fraction * (right[1] - left[1])
     return points[-1][1]
+
+
+def first_budget_at_or_below(
+    curve: list[dict[str, Any]],
+    x_key: str,
+    target_loss: float,
+) -> float | None:
+    """Interpolate the first budget where a learning curve reaches a loss target."""
+
+    points = sorted(
+        (
+            (float(row[x_key]), float(row["eval_main_loss"]))
+            for row in curve
+            if isinstance(row.get(x_key), (int, float))
+            and isinstance(row.get("eval_main_loss"), (int, float))
+        ),
+        key=lambda item: item[0],
+    )
+    deduped: list[tuple[float, float]] = []
+    for point in points:
+        if deduped and point[0] == deduped[-1][0]:
+            deduped[-1] = point
+        else:
+            deduped.append(point)
+    if not deduped:
+        return None
+    if deduped[0][1] <= target_loss:
+        return deduped[0][0]
+    for left, right in pairwise(deduped):
+        if right[1] > target_loss:
+            continue
+        if right[1] == left[1]:
+            return right[0]
+        fraction = (left[1] - target_loss) / (left[1] - right[1])
+        return left[0] + fraction * (right[0] - left[0])
+    return None
 
 
 def analyze_quality_campaign(campaign_path: str | Path) -> dict[str, Any]:
@@ -88,6 +125,7 @@ def analyze_quality_campaign(campaign_path: str | Path) -> dict[str, Any]:
         grouped[f"{candidate}:{variant}"].append(record)
 
     common_budgets: dict[int, dict[str, float]] = {}
+    common_target_losses: dict[int, float] = {}
     for seed in campaign.get("seeds", []):
         seed_records = [row for row in records if row["seed"] == int(seed)]
         if len(seed_records) != len(campaign.get("execution_matrix", [])):
@@ -106,6 +144,16 @@ def analyze_quality_campaign(campaign_path: str | Path) -> dict[str, Any]:
             if len(maxima) == len(seed_records):
                 budget[key] = min(maxima)
         common_budgets[int(seed)] = budget
+        final_losses = [
+            float(row["eval_main_loss"])
+            for row in seed_records
+            if row.get("status") == "ok"
+            and isinstance(row.get("eval_main_loss"), (int, float))
+        ]
+        if len(final_losses) == len(seed_records):
+            # The weakest terminal result is the strongest target every completed
+            # arm is proven to reach. This is a non-extrapolated time-to-loss gate.
+            common_target_losses[int(seed)] = max(final_losses)
 
     candidates: dict[str, Any] = {}
     for identity, items in grouped.items():
@@ -133,6 +181,9 @@ def analyze_quality_campaign(campaign_path: str | Path) -> dict[str, Any]:
         ]
         equal_wall = []
         equal_flops = []
+        time_to_common_loss = []
+        tokens_to_common_loss = []
+        flops_to_common_loss = []
         for item in complete:
             budgets = common_budgets.get(int(item["seed"]), {})
             if "wall_clock_total_seconds" in budgets:
@@ -151,6 +202,18 @@ def analyze_quality_campaign(campaign_path: str | Path) -> dict[str, Any]:
                 )
                 if value is not None:
                     equal_flops.append(value)
+            target = common_target_losses.get(int(item["seed"]))
+            if target is not None:
+                for x_key, destination in (
+                    ("wall_clock_total_seconds", time_to_common_loss),
+                    ("tokens_seen", tokens_to_common_loss),
+                    ("estimated_cumulative_flops", flops_to_common_loss),
+                ):
+                    value = first_budget_at_or_below(
+                        item["learning_curve"], x_key, target
+                    )
+                    if value is not None:
+                        destination.append(value)
         candidates[identity] = {
             "candidate_id": items[0]["candidate_id"],
             "execution_variant": items[0]["execution_variant"],
@@ -162,6 +225,9 @@ def analyze_quality_campaign(campaign_path: str | Path) -> dict[str, Any]:
             "wall_curve_auc_mean": _mean(wall_auc),
             "equal_wall_loss_mean": _mean(equal_wall),
             "equal_active_flops_loss_mean": _mean(equal_flops),
+            "time_to_common_loss_seconds_mean": _mean(time_to_common_loss),
+            "tokens_to_common_loss_mean": _mean(tokens_to_common_loss),
+            "active_flops_to_common_loss_mean": _mean(flops_to_common_loss),
             "median_training_tokens_per_second": statistics.median(throughput) if throughput else None,
             "mean_gpu_util_percent": _mean(
                 [float(item["mean_gpu_util_percent"]) for item in complete if item.get("mean_gpu_util_percent") is not None]
@@ -181,6 +247,7 @@ def analyze_quality_campaign(campaign_path: str | Path) -> dict[str, Any]:
         "expected_runs": expected_runs,
         "complete_runs": complete_runs,
         "common_budgets_by_seed": common_budgets,
+        "common_target_loss_by_seed": common_target_losses,
         "candidates": candidates,
         "runs": records,
         "selection": {
