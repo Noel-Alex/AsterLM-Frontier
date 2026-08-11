@@ -36,6 +36,41 @@ def zeropower_via_newton_schulz5(matrix: torch.Tensor, steps: int = 5, eps: floa
     return x.to(original_dtype)
 
 
+def zeropower_via_newton_schulz5_batched(
+    matrices: torch.Tensor,
+    steps: int = 5,
+    eps: float = 1e-7,
+) -> torch.Tensor:
+    """Batched polar-factor approximation for equal-shaped per-head matrices.
+
+    Kimi K3 partitions Q/K/V momentum by head. Launching every Newton--Schulz
+    multiply in a Python head loop fragments the optimizer into many tiny kernels;
+    a leading batch dimension preserves the independent per-head mathematics while
+    allowing PyTorch/CUDA to issue batched matrix multiplies.
+    """
+
+    if matrices.ndim != 3:
+        raise ValueError("Batched Muon orthogonalization expects [blocks, rows, cols]")
+    original_dtype = matrices.dtype
+    x = matrices
+    transposed = x.shape[-2] > x.shape[-1]
+    if transposed:
+        x = x.transpose(-2, -1)
+    working_dtype = torch.bfloat16 if x.device.type == "cuda" else torch.float32
+    x = x.to(working_dtype)
+    norms = torch.linalg.vector_norm(x.float(), dim=(-2, -1), keepdim=True)
+    x = x / (norms + eps).to(x.dtype)
+
+    a, b, c = 3.4445, -4.7750, 2.0315
+    for _ in range(steps):
+        gram = x @ x.transpose(-2, -1)
+        correction = b * gram + c * (gram @ gram)
+        x = a * x + correction @ x
+    if transposed:
+        x = x.transpose(-2, -1)
+    return x.to(original_dtype)
+
+
 class Muon(Optimizer):
     """Single-device Muon optimizer for hidden 2-D parameter matrices.
 
@@ -64,6 +99,17 @@ class Muon(Optimizer):
             "split_axis": 0,
         }
         super().__init__(params, defaults)
+        self._diagnostics_enabled = False
+        self._latest_diagnostics: dict[str, torch.Tensor | float] = {}
+
+    def set_diagnostics_enabled(self, enabled: bool) -> None:
+        self._diagnostics_enabled = bool(enabled)
+
+    def diagnostics(self) -> dict[str, float]:
+        return {
+            name: float(value.detach()) if isinstance(value, torch.Tensor) else float(value)
+            for name, value in self._latest_diagnostics.items()
+        }
 
     @torch.no_grad()
     def step(self, closure=None):
@@ -71,6 +117,16 @@ class Muon(Optimizer):
         if closure is not None:
             with torch.enable_grad():
                 loss = closure()
+        diagnostic_sums: dict[str, torch.Tensor] = {}
+        diagnostic_counts: dict[str, int] = {}
+
+        def accumulate(name: str, value: torch.Tensor) -> None:
+            squared = value.float().square().sum()
+            diagnostic_sums[name] = diagnostic_sums.get(name, torch.zeros_like(squared)) + squared
+            diagnostic_counts[name] = diagnostic_counts.get(name, 0) + value.numel()
+
+        relative_update_sum: torch.Tensor | None = None
+        relative_update_count = 0
         for group in self.param_groups:
             lr = group["lr"]
             momentum = group["momentum"]
@@ -96,25 +152,58 @@ class Muon(Optimizer):
                 buffer.mul_(momentum).add_(grad.float())
                 update = grad.float().add(buffer, alpha=momentum) if nesterov else buffer
                 if split_count > 1:
+                    if split_axis != 0:
+                        raise RuntimeError(
+                            "Batched per-head Muon currently requires split_axis=0"
+                        )
                     if param.shape[split_axis] % split_count:
                         raise RuntimeError(
                             f"Per-head Muon cannot split shape {tuple(param.shape)} "
                             f"into {split_count} blocks on axis {split_axis}"
                         )
-                    blocks = []
-                    for block in update.chunk(split_count, dim=split_axis):
-                        orthogonal = zeropower_via_newton_schulz5(
-                            block, steps=ns_steps
-                        )
-                        block_scale = target_rms * math.sqrt(max(block.shape))
-                        blocks.append(orthogonal.mul(block_scale))
-                    update = torch.cat(blocks, dim=split_axis)
+                    block_shape = (
+                        split_count,
+                        param.shape[0] // split_count,
+                        param.shape[1],
+                    )
+                    blocks = update.reshape(block_shape)
+                    update = zeropower_via_newton_schulz5_batched(
+                        blocks, steps=ns_steps
+                    )
+                    block_scale = target_rms * math.sqrt(max(block_shape[1:]))
+                    update = update.mul(block_scale).reshape_as(param)
                 else:
                     update = zeropower_via_newton_schulz5(update, steps=ns_steps)
                     # Match the update RMS convention used in Kimi K2's Muon recipe.
                     scale = target_rms * math.sqrt(max(param.shape))
                     update = update.mul(scale)
+                if self._diagnostics_enabled:
+                    accumulate("muon_momentum", buffer)
+                    accumulate("muon_update", update)
+                    parameter_rms = param.float().square().mean().sqrt()
+                    applied_rms = update.float().square().mean().sqrt() * lr
+                    relative = applied_rms / parameter_rms.clamp_min(1e-12)
+                    relative_update_sum = (
+                        relative
+                        if relative_update_sum is None
+                        else relative_update_sum + relative
+                    )
+                    relative_update_count += 1
                 if wd:
                     param.mul_(1.0 - lr * wd)
                 param.add_(update.to(param.dtype), alpha=-lr)
+        if self._diagnostics_enabled:
+            self._latest_diagnostics = {
+                f"{name}_global_rms": (
+                    total / max(diagnostic_counts[name], 1)
+                ).sqrt()
+                for name, total in diagnostic_sums.items()
+            }
+            if relative_update_sum is not None:
+                self._latest_diagnostics["muon_relative_update_rms_mean"] = (
+                    relative_update_sum / max(relative_update_count, 1)
+                )
+            self._latest_diagnostics["muon_matrix_count"] = float(relative_update_count)
+        else:
+            self._latest_diagnostics = {}
         return loss

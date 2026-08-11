@@ -1,0 +1,85 @@
+schema_version: 1
+model: configs/model/aster_k3_stable_latentmoe_220m.yaml
+train: configs/train/campaign_quality_2k_adamw.yaml
+data: runs/architecture-campaign/quality-data-100m-stackfree/data-proxy.yaml
+tokenizer: artifacts/tokenizer_quality_stackfree.json
+candidate_id: tier2-k3-stable-latentmoe-220m
+
+# This is a tuning matrix, not a declaration that one optimizer is already best.
+# Every family receives its own learning-rate/schedule search. The confirmation
+# campaign promotes family winners over multiple seeds and compares token-, FLOP-
+# and wall-time learning curves rather than optimizer-step latency alone.
+arms:
+  adamw-wsd-2e4:
+    family: adamw-wsd
+    warmup_fraction: 0.05
+    train_overrides: {optimizer: adamw, adam_lr: 0.0002, schedule_type: wsd}
+  adamw-wsd-3e4:
+    family: adamw-wsd
+    warmup_fraction: 0.05
+    train_overrides: {optimizer: adamw, adam_lr: 0.0003, schedule_type: wsd}
+  adamw-wsd-5e4:
+    family: adamw-wsd
+    warmup_fraction: 0.05
+    train_overrides: {optimizer: adamw, adam_lr: 0.0005, schedule_type: wsd}
+
+  adamw-cosine-2e4:
+    family: adamw-cosine
+    warmup_fraction: 0.01
+    train_overrides: {optimizer: adamw, adam_lr: 0.0002, schedule_type: cosine}
+  adamw-cosine-3e4:
+    family: adamw-cosine
+    warmup_fraction: 0.01
+    train_overrides: {optimizer: adamw, adam_lr: 0.0003, schedule_type: cosine}
+  adamw-cosine-5e4:
+    family: adamw-cosine
+    warmup_fraction: 0.01
+    train_overrides: {optimizer: adamw, adam_lr: 0.0005, schedule_type: cosine}
+
+  muon-cosine-full-5e3:
+    family: muon-cosine-full
+    warmup_fraction: 0.01
+    train_overrides: {optimizer: muon_adamw, muon_per_head: false, muon_lr: 0.005, adam_lr: 0.0003, schedule_type: cosine}
+  muon-cosine-full-1e2:
+    family: muon-cosine-full
+    warmup_fraction: 0.01
+    train_overrides: {optimizer: muon_adamw, muon_per_head: false, muon_lr: 0.01, adam_lr: 0.0003, schedule_type: cosine}
+  muon-cosine-full-2e2:
+    family: muon-cosine-full
+    warmup_fraction: 0.01
+    train_overrides: {optimizer: muon_adamw, muon_per_head: false, muon_lr: 0.02, adam_lr: 0.0003, schedule_type: cosine}
+
+  muon-cosine-perhead-5e3:
+    family: muon-cosine-perhead
+    warmup_fraction: 0.01
+    train_overrides: {optimizer: muon_adamw, muon_per_head: true, muon_lr: 0.005, adam_lr: 0.0003, schedule_type: cosine}
+  muon-cosine-perhead-1e2:
+    family: muon-cosine-perhead
+    warmup_fraction: 0.01
+    train_overrides: {optimizer: muon_adamw, muon_per_head: true, muon_lr: 0.01, adam_lr: 0.0003, schedule_type: cosine}
+  muon-cosine-perhead-2e2:
+    family: muon-cosine-perhead
+    warmup_fraction: 0.01
+    train_overrides: {optimizer: muon_adamw, muon_per_head: true, muon_lr: 0.02, adam_lr: 0.0003, schedule_type: cosine}
+
+  apollo-wsd-2e4:
+    family: apollo-wsd
+    warmup_fraction: 0.05
+    train_overrides: {optimizer: apollo_mini, adam_lr: 0.0002, schedule_type: wsd}
+  apollo-wsd-3e4:
+    family: apollo-wsd
+    warmup_fraction: 0.05
+    train_overrides: {optimizer: apollo_mini, adam_lr: 0.0003, schedule_type: wsd}
+  apollo-wsd-5e4:
+    family: apollo-wsd
+    warmup_fraction: 0.05
+    train_overrides: {optimizer: apollo_mini, adam_lr: 0.0005, schedule_type: wsd}
+
+common_train_overrides:
+  compile: false
+  precision_backend: amp
+  moe_implementation: cutlass
+  weight_decay: 0.1
+  qk_clip_interval: 100
+  diagnostic_interval: 100
+  checkpoint_policy: none

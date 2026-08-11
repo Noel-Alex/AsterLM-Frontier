@@ -52,6 +52,13 @@ class HybridOptimizer:
         if self.adamw is not None:
             self.adamw.step()
 
+    def set_diagnostics_enabled(self, enabled: bool) -> None:
+        if self.muon is not None:
+            self.muon.set_diagnostics_enabled(enabled)
+
+    def diagnostics(self) -> dict[str, float]:
+        return {} if self.muon is None else self.muon.diagnostics()
+
     def set_lr_multiplier(self, multiplier: float) -> None:
         if self.muon is not None and self._base_lrs["muon"] is not None:
             for group, base in zip(self.muon.param_groups, self._base_lrs["muon"], strict=True):
@@ -207,6 +214,12 @@ class SingleOptimizerAdapter:
 
     def step(self) -> None:
         self.optimizer.step()
+
+    def set_diagnostics_enabled(self, enabled: bool) -> None:
+        del enabled
+
+    def diagnostics(self) -> dict[str, float]:
+        return {}
 
     def set_lr_multiplier(self, multiplier: float) -> None:
         for group, base in zip(self.optimizer.param_groups, self._base_lrs, strict=True):

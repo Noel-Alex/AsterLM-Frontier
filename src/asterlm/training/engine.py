@@ -772,8 +772,14 @@ class Trainer:
                         f"grad_norm={float(grad_norm)}; first_bad_grad_tensors={bad_grads}"
                     )
                 started = time.perf_counter()
+                collect_optimizer_diagnostics = (
+                    (self.step + 1) % cfg.diagnostic_interval == 0
+                )
+                self.optimizer.set_diagnostics_enabled(collect_optimizer_diagnostics)
                 self.execution.optimizer_step(self.optimizer)
                 window_optimizer_s += time.perf_counter() - started
+                if collect_optimizer_diagnostics:
+                    diagnostics.update(self.optimizer.diagnostics())
                 # Bias updates stay on-device every step. Converting their summary
                 # tensors to Python scalars would otherwise synchronize the GPU four
                 # times per optimizer step, so collect them only when we will log.

@@ -2,7 +2,10 @@ import torch
 
 from asterlm import AsterConfig, AsterLM, TrainConfig
 from asterlm.optim import build_hybrid_optimizer, build_optimizer
-from asterlm.optim.muon import zeropower_via_newton_schulz5
+from asterlm.optim.muon import (
+    zeropower_via_newton_schulz5,
+    zeropower_via_newton_schulz5_batched,
+)
 
 
 def test_newton_schulz_shape_and_finiteness():
@@ -10,6 +13,15 @@ def test_newton_schulz_shape_and_finiteness():
     result = zeropower_via_newton_schulz5(matrix)
     assert result.shape == matrix.shape
     assert torch.isfinite(result).all()
+
+
+def test_batched_newton_schulz_matches_independent_blocks():
+    matrices = torch.randn(4, 8, 16)
+    expected = torch.stack(
+        [zeropower_via_newton_schulz5(matrix) for matrix in matrices]
+    )
+    actual = zeropower_via_newton_schulz5_batched(matrices)
+    torch.testing.assert_close(actual, expected, rtol=1e-5, atol=1e-6)
 
 
 def test_hybrid_optimizer_step():
@@ -113,4 +125,10 @@ def test_per_head_muon_partitions_attention_projections_and_steps():
     ids = torch.randint(0, 64, (2, 8))
     loss = model(ids, labels=ids).loss
     loss.backward()
+    optimizer.set_diagnostics_enabled(True)
     optimizer.step()
+    diagnostics = optimizer.diagnostics()
+    assert diagnostics["muon_matrix_count"] > 0
+    assert diagnostics["muon_update_global_rms"] > 0
+    assert diagnostics["muon_momentum_global_rms"] > 0
+    assert diagnostics["muon_relative_update_rms_mean"] > 0
