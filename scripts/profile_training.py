@@ -15,6 +15,7 @@ from typing import Any
 import torch
 
 from asterlm import AsterConfig, AsterLM, TrainConfig
+from asterlm.kernels.situ_glu import configured_situ_glu_backend
 from asterlm.optim import build_optimizer
 from asterlm.source_provenance import assert_expected_checkout_source
 from asterlm.training.precision import PrecisionManager
@@ -302,6 +303,7 @@ def main() -> None:
         "moe_implementation": args.moe_implementation or os.environ.get(
             "ASTER_MOE_IMPL", "reference"
         ),
+        "situ_glu_backend": configured_situ_glu_backend(),
         "source_provenance": source,
         "steps": [],
     }

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+
 import torch
 
 try:  # Triton is unavailable in native Windows PyTorch environments.
@@ -10,6 +12,19 @@ except ImportError:  # pragma: no cover - platform/package dependent
     triton = None
     tl = None
     libdevice = None
+
+
+_SITU_GLU_BACKEND = os.environ.get("ASTER_SITU_GLU_BACKEND", "auto").strip().lower()
+if _SITU_GLU_BACKEND not in {"auto", "reference", "triton"}:
+    raise ValueError(
+        "ASTER_SITU_GLU_BACKEND must be one of: auto, reference, triton"
+    )
+
+
+def configured_situ_glu_backend() -> str:
+    """Return the process-pinned SiTU execution treatment for manifests."""
+
+    return _SITU_GLU_BACKEND
 
 
 def situ_glu_reference(
@@ -155,12 +170,20 @@ def situ_glu(
         raise ValueError("SiTU-GLU gate and up tensors must have matching shapes")
     if beta_gate <= 0 or beta_up <= 0:
         raise ValueError("SiTU-GLU beta values must be positive")
-    if (
+    if _SITU_GLU_BACKEND == "reference":
+        return situ_glu_reference(gate, up, beta_gate, beta_up)
+    can_use_triton = (
         triton is not None
         and gate.is_cuda
         and up.is_cuda
         and gate.dtype in {torch.float16, torch.bfloat16, torch.float32}
         and up.dtype == gate.dtype
-    ):
+    )
+    if _SITU_GLU_BACKEND == "triton" and not can_use_triton:
+        raise RuntimeError(
+            "ASTER_SITU_GLU_BACKEND=triton requires matching FP16/BF16/FP32 CUDA tensors "
+            "and the triton package"
+        )
+    if can_use_triton:
         return _TritonSiTUGLU.apply(gate, up, float(beta_gate), float(beta_up))
     return situ_glu_reference(gate, up, beta_gate, beta_up)
