@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import statistics
 from collections.abc import Iterable
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -186,3 +188,33 @@ def latest_complete_checkpoint(run_dir: str | Path) -> Path | None:
         (path for path in candidates if (path / "checkpoint_manifest.json").is_file()),
         None,
     )
+
+
+def archive_incomplete_quality_run(
+    run_dir: str | Path,
+    archive_parent: str | Path,
+) -> Path:
+    """Atomically preserve an interrupted metrics-only attempt before a clean retry.
+
+    A metrics-only architecture campaign intentionally has no optimizer checkpoint to
+    resume.  Power loss must not make the whole campaign unusable or silently append a
+    second initialization to the first attempt's metric stream.  Moving the complete
+    attempt directory keeps its configuration, metrics and experiment record together,
+    while allowing the deterministic candidate to restart at the canonical run path.
+    """
+
+    source = Path(run_dir)
+    if not source.is_dir():
+        raise FileNotFoundError(f"Incomplete quality run does not exist: {source}")
+    destination_root = Path(archive_parent)
+    destination_root.mkdir(parents=True, exist_ok=True)
+    timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S%fZ")
+    destination = destination_root / f"{source.name}--interrupted-{timestamp}"
+    counter = 1
+    while destination.exists():
+        destination = destination_root / (
+            f"{source.name}--interrupted-{timestamp}-{counter}"
+        )
+        counter += 1
+    os.replace(source, destination)
+    return destination

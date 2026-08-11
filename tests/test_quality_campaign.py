@@ -4,6 +4,7 @@ import json
 
 from asterlm import AsterConfig
 from asterlm.experiments.quality import (
+    archive_incomplete_quality_run,
     audit_named_initialization,
     latest_complete_checkpoint,
     summarize_quality_run,
@@ -87,6 +88,25 @@ def test_quality_summary_and_latest_checkpoint(tmp_path):
     assert latest_complete_checkpoint(run) == checkpoint
 
 
+def test_interrupted_metrics_only_attempt_is_archived_atomically(tmp_path):
+    run = tmp_path / "seed-7" / "candidate" / "bf16"
+    run.mkdir(parents=True)
+    (run / "experiment.json").write_text(
+        json.dumps({"status": "running", "completed_tokens": 2048}),
+        encoding="utf-8",
+    )
+    (run / "metrics.jsonl").write_text('{"tokens_seen": 2048}\n', encoding="utf-8")
+
+    archive = archive_incomplete_quality_run(run, tmp_path / "interrupted")
+
+    assert not run.exists()
+    assert archive.parent == tmp_path / "interrupted"
+    assert json.loads((archive / "experiment.json").read_text(encoding="utf-8"))[
+        "completed_tokens"
+    ] == 2048
+    assert (archive / "metrics.jsonl").is_file()
+
+
 def test_explicit_execution_matrix_accepts_heterogeneous_matched_pairs():
     runner = load_runner_module()
     materialized = {
@@ -101,3 +121,28 @@ def test_explicit_execution_matrix_accepts_heterogeneous_matched_pairs():
     )
     assert candidates == ("dense", "sparse")
     assert matrix == [("dense", "bf16"), ("sparse", "reference"), ("sparse", "fp8")]
+
+
+def test_resume_contract_rejects_changed_token_budget():
+    runner = load_runner_module()
+    existing = {
+        "source_provenance": {"git_commit": "a" * 40},
+        "candidates": ["dense"],
+        "execution_matrix": [
+            {"candidate_id": "dense", "execution_variant": "bf16"}
+        ],
+        "seeds": [7],
+        "tokens_per_candidate": 4096,
+        "smoke": False,
+    }
+    import pytest
+
+    with pytest.raises(ValueError, match="tokens_per_candidate"):
+        runner._validate_resume_contract(
+            existing,
+            candidates=("dense",),
+            execution_matrix=[("dense", "bf16")],
+            seeds=(7,),
+            tokens=8192,
+            smoke=False,
+        )

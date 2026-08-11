@@ -19,6 +19,7 @@ from asterlm.config import AsterConfig, DataConfig, TrainConfig
 from asterlm.cuda_toolchain import require_compatible_cuda_toolchain
 from asterlm.experiments import load_architecture_campaign, materialize_architecture_campaign
 from asterlm.experiments.quality import (
+    archive_incomplete_quality_run,
     audit_named_initialization,
     latest_complete_checkpoint,
     summarize_quality_run,
@@ -201,6 +202,43 @@ def _explicit_execution_matrix(
     return tuple(candidates), matrix
 
 
+def _validate_resume_contract(
+    existing: dict[str, Any],
+    *,
+    candidates: tuple[str, ...],
+    execution_matrix: list[tuple[str, str]],
+    seeds: tuple[int, ...],
+    tokens: int,
+    smoke: bool,
+) -> None:
+    """Refuse to blend results from different campaign contracts."""
+
+    expected_matrix = [
+        {"candidate_id": candidate, "execution_variant": variant}
+        for candidate, variant in execution_matrix
+    ]
+    checks = {
+        "candidates": (existing.get("candidates"), list(candidates)),
+        "execution_matrix": (existing.get("execution_matrix"), expected_matrix),
+        "seeds": (existing.get("seeds"), list(seeds)),
+        "tokens_per_candidate": (existing.get("tokens_per_candidate"), tokens),
+        "smoke": (bool(existing.get("smoke", False)), smoke),
+    }
+    mismatches = {
+        name: {"existing": observed, "requested": requested}
+        for name, (observed, requested) in checks.items()
+        if observed != requested
+    }
+    if mismatches:
+        raise ValueError(
+            "--resume-existing must use the original campaign contract; "
+            f"mismatches={mismatches}"
+        )
+    original_commit = (existing.get("source_provenance") or {}).get("git_commit")
+    if not original_commit:
+        raise ValueError("Existing campaign has no source-pinned git commit")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Run source-pinned, shared-initialization architecture quality comparisons"
@@ -263,6 +301,15 @@ def main() -> None:
     )
     parser.add_argument("--continue-on-error", action="store_true")
     parser.add_argument("--no-compile", action="store_true")
+    parser.add_argument(
+        "--resume-existing",
+        action="store_true",
+        help=(
+            "Resume this exact output contract. Completed runs are retained, an "
+            "interrupted metrics-only attempt is archived, and new work executes "
+            "from the campaign's original source commit."
+        ),
+    )
     args = parser.parse_args()
 
     root = Path(__file__).resolve().parents[1]
@@ -291,8 +338,24 @@ def main() -> None:
     _validate_data(data_path, root)
 
     seeds = tuple(args.seed or [1337])
-    campaign = load_architecture_campaign(campaign_path, repo_root=root)
-    materialized = materialize_architecture_campaign(campaign, output / "configs")
+    existing_manifest_path = output / "quality-campaign.json"
+    existing_manifest: dict[str, Any] | None = None
+    if args.resume_existing:
+        if not existing_manifest_path.is_file():
+            raise FileNotFoundError(
+                f"--resume-existing requires {existing_manifest_path}"
+            )
+        existing_manifest = json.loads(existing_manifest_path.read_text(encoding="utf-8"))
+        materialized_path = output / "configs" / "campaign-manifest.json"
+        if not materialized_path.is_file():
+            raise FileNotFoundError(
+                "--resume-existing requires the source-pinned materialized campaign "
+                f"manifest: {materialized_path}"
+            )
+        materialized = json.loads(materialized_path.read_text(encoding="utf-8"))
+    else:
+        campaign = load_architecture_campaign(campaign_path, repo_root=root)
+        materialized = materialize_architecture_campaign(campaign, output / "configs")
     if args.run:
         if args.candidate or args.execution_variant:
             raise ValueError("--run cannot be combined with --candidate or --execution-variant")
@@ -324,40 +387,59 @@ def main() -> None:
         for _, config in configs
     ):
         cuda_toolchain = require_compatible_cuda_toolchain()
-    initialization_audits = (
-        {str(seed): audit_named_initialization(configs, seed) for seed in seeds}
-        if len(configs) > 1
-        else {
-            str(seed): {
-                "seed": seed,
-                "reference": configs[0][0],
-                "status": "single_candidate_not_applicable",
-                "candidates": {},
+    if existing_manifest is not None:
+        _validate_resume_contract(
+            existing_manifest,
+            candidates=candidates,
+            execution_matrix=execution_matrix,
+            seeds=seeds,
+            tokens=args.tokens,
+            smoke=args.smoke,
+        )
+        manifest = copy.deepcopy(existing_manifest)
+        manifest["status"] = "preflight_ok"
+        manifest["resume_orchestrator_provenance"] = source
+        manifest["cuda_toolchain_resume_check"] = cuda_toolchain
+        manifest.setdefault("interrupted_attempts", [])
+        manifest.setdefault("runs", {})
+        execution_commit = str(manifest["source_provenance"]["git_commit"])
+    else:
+        initialization_audits = (
+            {str(seed): audit_named_initialization(configs, seed) for seed in seeds}
+            if len(configs) > 1
+            else {
+                str(seed): {
+                    "seed": seed,
+                    "reference": configs[0][0],
+                    "status": "single_candidate_not_applicable",
+                    "candidates": {},
+                }
+                for seed in seeds
             }
-            for seed in seeds
+        )
+        manifest = {
+            "schema_version": 2,
+            "status": "preflight_ok",
+            "source_provenance": source,
+            "campaign": _portable(campaign_path, root),
+            "train_template": _portable(train_path, root),
+            "data": _portable(data_path, root),
+            "tokenizer": _portable(tokenizer, root),
+            "candidates": list(candidates),
+            "execution_variants": sorted({variant for _, variant in execution_matrix}),
+            "execution_matrix": [
+                {"candidate_id": candidate, "execution_variant": variant}
+                for candidate, variant in execution_matrix
+            ],
+            "seeds": list(seeds),
+            "tokens_per_candidate": args.tokens,
+            "smoke": args.smoke,
+            "initialization_audits": initialization_audits,
+            "cuda_toolchain": cuda_toolchain,
+            "interrupted_attempts": [],
+            "runs": {},
         }
-    )
-    manifest: dict[str, Any] = {
-        "schema_version": 2,
-        "status": "preflight_ok",
-        "source_provenance": source,
-        "campaign": _portable(campaign_path, root),
-        "train_template": _portable(train_path, root),
-        "data": _portable(data_path, root),
-        "tokenizer": _portable(tokenizer, root),
-        "candidates": list(candidates),
-        "execution_variants": sorted({variant for _, variant in execution_matrix}),
-        "execution_matrix": [
-            {"candidate_id": candidate, "execution_variant": variant}
-            for candidate, variant in execution_matrix
-        ],
-        "seeds": list(seeds),
-        "tokens_per_candidate": args.tokens,
-        "smoke": args.smoke,
-        "initialization_audits": initialization_audits,
-        "cuda_toolchain": cuda_toolchain,
-        "runs": {},
-    }
+        execution_commit = str(source["git_commit"])
     output.mkdir(parents=True, exist_ok=True)
     execution_data_path = _absolute_data_config(
         data_path, root, output / "execution-data-absolute.yaml"
@@ -369,9 +451,9 @@ def main() -> None:
         return
 
     base_train = yaml.safe_load(train_path.read_text(encoding="utf-8")) or {}
-    base_train_section = base_train["train"] if "train" in base_train else base_train
+    base_train_section = base_train.get("train", base_train)
     base_train_section["checkpoint_policy"] = args.checkpoint_policy
-    pinned = create_pinned_source_checkout(root, str(source["git_commit"]))
+    pinned = create_pinned_source_checkout(root, execution_commit)
     atexit.register(pinned.close)
     manifest["execution_checkout"] = pinned.manifest()
     manifest["execution_data"] = str(execution_data_path)
@@ -383,16 +465,37 @@ def main() -> None:
             run_dir = output / f"seed-{seed}" / candidate_id / variant_id
             existing = summarize_quality_run(run_dir)
             if existing["status"] == "ok" and existing["tokens_seen"] >= args.tokens:
-                manifest["runs"][f"{seed}:{candidate_id}:{variant_id}"] = existing
+                key = f"{seed}:{candidate_id}:{variant_id}"
+                previous = manifest["runs"].get(key, {})
+                manifest["runs"][key] = {**previous, **existing}
                 atomic_write_json(output / "quality-campaign.json", manifest)
                 _refresh_analysis(output / "quality-campaign.json")
                 continue
             resume = latest_complete_checkpoint(run_dir)
             if (run_dir / "experiment.json").exists() and resume is None:
-                raise RuntimeError(
-                    f"Existing incomplete run has no resumable checkpoint: {run_dir}. "
-                    "Preserve it for forensics and choose a new --output."
+                if args.checkpoint_policy != "none":
+                    raise RuntimeError(
+                        f"Existing incomplete run has no resumable checkpoint: {run_dir}. "
+                        "A checkpoint-retaining campaign must fail closed rather than "
+                        "discard recoverability evidence."
+                    )
+                interrupted_summary = summarize_quality_run(run_dir)
+                archive = archive_incomplete_quality_run(
+                    run_dir,
+                    output / "interrupted-attempts" / f"seed-{seed}" / candidate_id,
                 )
+                manifest["interrupted_attempts"].append(
+                    {
+                        "seed": seed,
+                        "candidate_id": candidate_id,
+                        "execution_variant": variant_id,
+                        "reason": "interrupted_metrics_only_run_without_checkpoint",
+                        "archive": _portable(archive, root),
+                        "summary": interrupted_summary,
+                    }
+                )
+                atomic_write_json(output / "quality-campaign.json", manifest)
+                _refresh_analysis(output / "quality-campaign.json")
             train_payload = _train_payload(
                 base_train,
                 run_dir=run_dir,
