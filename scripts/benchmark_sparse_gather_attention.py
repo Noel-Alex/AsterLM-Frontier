@@ -108,15 +108,20 @@ def _case(
     selected_count = indices.shape[-1]
     # PyTorch materializes selected KV and per-head scores/probabilities. Skip it
     # before OOM rather than turning a reference limitation into a failed result.
-    estimated_reference_bytes = (
+    materialized_reference_bytes = (
         batch * sequence * selected_count * head_dim * 2
         + 2 * batch * sequence * heads * selected_count * 4
     )
+    # Autograd retains the gathered values, scores, probabilities, and their
+    # gradients; measured 512/2K cases use about 4.1-4.7x the forward-only tensor
+    # estimate.  Use 5x as a fail-safe guard and still catch allocator OOM below.
+    estimated_reference_bytes = materialized_reference_bytes * 5
     if backend == "torch" and estimated_reference_bytes / 2**30 > reference_memory_limit_gib:
         return {
             "sequence": sequence,
             "backend": backend,
             "status": "skipped_reference_memory_guard",
+            "materialized_reference_gib": materialized_reference_bytes / 2**30,
             "estimated_reference_gib": estimated_reference_bytes / 2**30,
         }
 
@@ -128,27 +133,38 @@ def _case(
         with torch.no_grad():
             sparse_gather_attention(query, kv, indices, sink, backend=backend)
 
-    forward_ms, forward_peak_gib = _measure(
-        inference, warmup=warmup, iterations=iterations
-    )
-
-    train_query = query.detach().requires_grad_(True)
-    train_kv = kv.detach().requires_grad_(True)
-    train_sink = sink.detach().requires_grad_(True)
-
-    def train_step() -> None:
-        for tensor in (train_query, train_kv, train_sink):
-            tensor.grad = None
-        output = sparse_gather_attention(
-            train_query, train_kv, indices, train_sink, backend=backend
+    try:
+        forward_ms, forward_peak_gib = _measure(
+            inference, warmup=warmup, iterations=iterations
         )
-        output.float().square().mean().backward()
+        train_query = query.detach().requires_grad_(True)
+        train_kv = kv.detach().requires_grad_(True)
+        train_sink = sink.detach().requires_grad_(True)
 
-    train_ms, train_peak_gib = _measure(
-        train_step,
-        warmup=max(1, warmup // 2),
-        iterations=max(1, iterations // 2),
-    )
+        def train_step() -> None:
+            for tensor in (train_query, train_kv, train_sink):
+                tensor.grad = None
+            output = sparse_gather_attention(
+                train_query, train_kv, indices, train_sink, backend=backend
+            )
+            output.float().square().mean().backward()
+
+        train_ms, train_peak_gib = _measure(
+            train_step,
+            warmup=max(1, warmup // 2),
+            iterations=max(1, iterations // 2),
+        )
+    except torch.OutOfMemoryError:
+        torch.cuda.empty_cache()
+        if backend != "torch":
+            raise
+        return {
+            "sequence": sequence,
+            "backend": backend,
+            "status": "skipped_reference_allocator_oom",
+            "materialized_reference_gib": materialized_reference_bytes / 2**30,
+            "estimated_reference_gib": estimated_reference_bytes / 2**30,
+        }
     return {
         "sequence": sequence,
         "backend": backend,
@@ -164,6 +180,7 @@ def _case(
         "forward_backward_ms": train_ms,
         "train_tokens_per_second": batch * sequence / (train_ms / 1000),
         "train_peak_allocated_gib": train_peak_gib,
+        "materialized_reference_gib": materialized_reference_bytes / 2**30,
         "estimated_reference_gib": estimated_reference_bytes / 2**30,
     }
 
@@ -281,4 +298,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
