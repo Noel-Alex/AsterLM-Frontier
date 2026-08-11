@@ -1,4 +1,6 @@
 data:
+  # Legacy filename retained for compatibility. No code source is active until
+  # a replacement passes the candidate-data promotion gate.
   seed: 1337
   shuffle_buffer: 10000
   min_chars: 128
@@ -10,24 +12,17 @@ data:
       name: fineweb-edu-dedup
       split: train
       text_field: text
-      weight: 0.58
+      weight: 0.707317
     - path: HuggingFaceTB/smollm-corpus
       name: cosmopedia-v2
       split: train
       text_field: text
-      weight: 0.10
+      weight: 0.121951
     - path: HuggingFaceTB/finemath
       name: finemath-4plus
       split: train
       text_field: text
-      weight: 0.14
-    # Create this first with scripts/prepare_stack_edu.py. The materializer
-    # keeps only rows marked permissive by the source dataset.
-    - path: data/stack_edu_python.jsonl
-      split: train
-      text_field: text
-      fim_rate: 0.5
-      weight: 0.18
+      weight: 0.170732
   validation_sources:
     - path: HuggingFaceTB/smollm-corpus
       name: cosmopedia-v2

@@ -106,9 +106,9 @@ The original frontier plan targeted roughly 18.4B raw tokens. A progressive 50B/
 | DCLM baseline | 2.4B | distribution diversity and web coverage |
 | Cosmopedia-v2 | 1.4B | synthetic textbook/expository material |
 | FineMath-4+ | 1.8B | mathematical language and problem solving |
-| Stack-Edu permissive code | 2.4B | Python/C++/JS/TS/Java/SQL/Rust/Go/Shell/C# |
+| Audited replacement code tranche | not promoted | code capability and FIM; candidate pool is isolated |
 
-As of 2026-08-10, about 84.032B raw pretraining tokens are materialized: 54B FineWeb-Edu, 16B DCLM, 6B Cosmopedia-v2, 8.032B FineMath-4+, and 0.054B Stack-Edu Python. FineMath exhausted its pinned source 2.968B short of its 11B target, and most of the planned 13B code allocation has not been downloaded. This is not yet a final cleaned 100B mixture.
+As of 2026-08-11, about 84.032B active raw pretraining tokens are materialized: 54B FineWeb-Edu, 16B DCLM, 6B Cosmopedia-v2, and 8.032B FineMath-4+. FineMath exhausted its pinned source 2.968B short of its 11B target. Stack-Edu is permanently retired from active plans; its small historical local shard is provenance only. A replacement math/code tranche must be licensed, audited and promoted before this can honestly be called a final 100B mixture.
 
 The repository also downloads SmolTalk, selected SmolTalk2 splits, OpenThoughts and UltraFeedback for post-training. Data is validated before materialization, then normalized, filtered, secret/PII checked, deduplicated, benchmark-decontaminated, split into disjoint local train/validation holdouts, provenance-preserved and audited.
 

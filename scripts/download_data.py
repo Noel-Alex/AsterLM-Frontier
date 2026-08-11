@@ -23,9 +23,9 @@ class Stage:
 
 VALIDATION_CONFIGS: dict[str, list[str]] = {
     "pilot": ["configs/corpus/corpus_pilot_500m.yaml"],
-    "frontier": ["configs/corpus/corpus_frontier_16b.yaml", "configs/corpus/stack_edu_2p4b.yaml"],
-    "overtrain50": ["configs/corpus/corpus_overtrain_50b.yaml", "configs/corpus/stack_edu_6p5b.yaml"],
-    "overtrain100": ["configs/corpus/corpus_overtrain_100b.yaml", "configs/corpus/stack_edu_13b.yaml"],
+    "frontier": ["configs/corpus/corpus_frontier_16b.yaml"],
+    "overtrain50": ["configs/corpus/corpus_overtrain_50b.yaml"],
+    "overtrain100": ["configs/corpus/corpus_overtrain_100b.yaml"],
     "nemotron-candidates": ["configs/corpus/corpus_nemotron_candidates_16b.yaml"],
     "posttrain": ["configs/corpus/posttrain_frontier.yaml"],
     "posttrain-modern": ["configs/corpus/posttrain_modern_candidates.yaml"],
@@ -73,48 +73,18 @@ PROFILES: dict[str, list[Stage]] = {
         corpus_stage("frontier", "configs/corpus/corpus_frontier_16b.yaml", "dclm"),
         corpus_stage("frontier", "configs/corpus/corpus_frontier_16b.yaml", "cosmopedia_v2"),
         corpus_stage("frontier", "configs/corpus/corpus_frontier_16b.yaml", "finemath_4plus"),
-        Stage(
-            id="frontier-stack-edu",
-            profile="frontier",
-            command=[
-                sys.executable,
-                "scripts/prepare_stack_edu_multilang.py",
-                "--config",
-                "configs/corpus/stack_edu_2p4b.yaml",
-            ],
-        ),
     ],
     "overtrain50": [
         corpus_stage("overtrain50", "configs/corpus/corpus_overtrain_50b.yaml", "fineweb_edu"),
         corpus_stage("overtrain50", "configs/corpus/corpus_overtrain_50b.yaml", "dclm"),
         corpus_stage("overtrain50", "configs/corpus/corpus_overtrain_50b.yaml", "cosmopedia_v2"),
         corpus_stage("overtrain50", "configs/corpus/corpus_overtrain_50b.yaml", "finemath_4plus"),
-        Stage(
-            id="overtrain50-stack-edu",
-            profile="overtrain50",
-            command=[
-                sys.executable,
-                "scripts/prepare_stack_edu_multilang.py",
-                "--config",
-                "configs/corpus/stack_edu_6p5b.yaml",
-            ],
-        ),
     ],
     "overtrain100": [
         corpus_stage("overtrain100", "configs/corpus/corpus_overtrain_100b.yaml", "fineweb_edu"),
         corpus_stage("overtrain100", "configs/corpus/corpus_overtrain_100b.yaml", "dclm"),
         corpus_stage("overtrain100", "configs/corpus/corpus_overtrain_100b.yaml", "cosmopedia_v2"),
         corpus_stage("overtrain100", "configs/corpus/corpus_overtrain_100b.yaml", "finemath_4plus"),
-        Stage(
-            id="overtrain100-stack-edu",
-            profile="overtrain100",
-            command=[
-                sys.executable,
-                "scripts/prepare_stack_edu_multilang.py",
-                "--config",
-                "configs/corpus/stack_edu_13b.yaml",
-            ],
-        ),
     ],
     "nemotron-candidates": [
         corpus_stage(
@@ -497,7 +467,7 @@ def main() -> None:
         configs: list[str] = []
         for profile in selected_profiles:
             # Frontier validation supersedes pilot because it has the same web sources
-            # plus the full Stack-Edu configuration.
+            # The retired Stack-Edu source is deliberately absent.
             if profile == "pilot" and "frontier" in selected_profiles:
                 continue
             configs.extend(VALIDATION_CONFIGS[profile])

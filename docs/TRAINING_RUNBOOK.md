@@ -65,7 +65,7 @@ python scripts/download_data.py --profile posttrain --validate-first --require-a
 # Reasoning SFT/RLVR sources
 python scripts/download_data.py --profile reasoning --validate-first --require-auth --network-mode low --max-retries 0
 
-# Expand the retained pilot checkpoints to the full web/math corpus and add Stack-Edu
+# Expand the retained pilot checkpoints to the active web/math corpus
 python scripts/download_data.py --profile frontier --validate-first --require-auth --network-mode low --max-retries 0
 
 # Everything, in a safe progressive order
@@ -85,7 +85,7 @@ The benchmark materializer now treats `target_records: null` as “download the 
 
 ## 3. Clean, deduplicate, decontaminate, and create local holdouts
 
-For the current 500M pilot, omit code until Stack-Edu is downloaded:
+Clean the active web/math tranche without any retired source:
 
 ```bash
 python scripts/prepare_frontier_data.py \
@@ -95,12 +95,13 @@ python scripts/prepare_frontier_data.py \
   --skip-code
 ```
 
-For the complete frontier corpus:
+After a replacement code corpus is independently audited and promoted, pass it explicitly:
 
 ```bash
 python scripts/prepare_frontier_data.py \
   --raw-corpus data/corpus-frontier-16b \
-  --raw-code data/stack-edu-frontier-2p4b \
+  --raw-code data/promoted-code-corpus \
+  --code-id promoted_code \
   --benchmarks data/decontamination-benchmarks \
   --output data/clean-frontier
 ```
@@ -116,7 +117,6 @@ If `data/clean-frontier` was created by an older repository version that did not
 ```bash
 python scripts/prepare_frontier_data.py \
   --raw-corpus data/corpus-frontier-16b \
-  --raw-code data/stack-edu-frontier-2p4b \
   --benchmarks data/decontamination-benchmarks \
   --output data/clean-frontier \
   --reset-existing

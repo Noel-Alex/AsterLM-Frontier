@@ -1,7 +1,8 @@
 corpus:
-  # Progressive expansion of the exact same raw corpus used by the pilot, 18.4B,
-  # and 50B tiers. This is a mostly-unique 87B-token prose/math tranche; the
-  # remaining 13B tokens are supplied by Stack-Edu.
+  # Progressive expansion of the exact same raw corpus used by the pilot and
+  # earlier tiers. This is an 87B-token prose/math tranche. Stack-Edu is retired;
+  # this file must not be described as a complete 100B mixture until a separately
+  # audited replacement tranche is promoted.
   output_dir: data/corpus-frontier-16b
   shard_size_mb: 1024
   state_flush_documents: 2000

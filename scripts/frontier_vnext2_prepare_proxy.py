@@ -24,14 +24,12 @@ SOURCE_ALIASES = {
     "fineweb_edu": ("fineweb_edu", "fineweb-edu", "fineweb"),
     "dclm": ("dclm",),
     "finemath_4plus": ("finemath_4plus", "finemath-4plus", "finemath"),
-    "stack_edu": ("stack_edu", "stack-edu", "stack", "code"),
     "cosmopedia_v2": ("cosmopedia_v2", "cosmopedia-v2", "cosmopedia"),
 }
 DEFAULT_SOURCE_WEIGHTS = {
     "fineweb_edu": 35,
     "dclm": 15,
     "finemath_4plus": 20,
-    "stack_edu": 20,
     "cosmopedia_v2": 10,
 }
 RECORD_SUFFIXES = (
@@ -442,7 +440,7 @@ def main() -> None:
     parser.add_argument(
         "--exclude-source",
         action="append",
-        default=["stack_edu"],
+        default=[],
         choices=sorted(SOURCE_ALIASES),
         help="Exclude a corpus family from tokenizer and proxy materialization; repeatable.",
     )

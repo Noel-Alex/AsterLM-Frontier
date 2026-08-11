@@ -37,10 +37,10 @@ The old 500M note is obsolete. The on-disk 100B-tier state currently records:
 | DCLM | 16.000B | 16B | complete |
 | Cosmopedia-v2 | 6.000B | 6B | complete |
 | FineMath-4+ | 8.032B | 11B | source exhausted |
-| Stack-Edu Python | 0.054B | 4B | in progress |
-| Other Stack-Edu languages | 0 | 9B | not started |
+| Stack-Edu historical shard | excluded | 0 | retired; provenance only |
+| Replacement math/code tranche | 0 | at least 15.968B | candidate audit required |
 
-That is about **84.032B materialized pretraining tokens**, not yet a complete or cleaned 100B training mixture. FineMath cannot supply its remaining 2.968B target from the pinned source, and most code data is still missing. Do not launch the final campaign until replacement/additional math and code sources have been selected, licensed, downloaded, cleaned, deduplicated, decontaminated, and mixed deliberately.
+That is about **84.032B active materialized pretraining tokens**, not yet a complete or cleaned 100B training mixture. FineMath cannot supply its remaining 2.968B target from the pinned source, and the code replacement is not promoted. Do not launch the final campaign until replacement/additional math and code sources have been selected, licensed, downloaded, cleaned, deduplicated, decontaminated, and mixed deliberately.
 
 Inspect the live state instead of relying on this snapshot:
 

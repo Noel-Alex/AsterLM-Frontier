@@ -250,7 +250,7 @@ function renderPresets() {
   const presets=S.catalog?.presets||{};
   $("#preset-grid").innerHTML=Object.entries(presets).map(([id,p])=>{
     const total=p.sources?Object.values(p.sources).reduce((a,b)=>a+Number(b),0):null;
-    return `<div class="preset"><strong>${esc(p.label)}</strong><p>${esc(p.description)}</p><small>${total?fmtTokens(total):"dynamic"}</small><button class="text-button apply-preset" data-preset="${esc(id)}">Apply →</button></div>`;
+    return `<div class="preset"><strong>${esc(p.label)}</strong><p>${esc(p.description)}</p><small>${total?fmtTokens(total):"dynamic"}</small><button class="text-button apply-preset" data-preset="${esc(id)}" ${p.retired?"disabled":""}>${p.retired?"Retired":"Apply →"}</button></div>`;
   }).join("");
 }
 
@@ -259,15 +259,15 @@ function renderDatasetCatalog() {
   const datasets=S.catalog?.datasets||{};
   $("#dataset-catalog").innerHTML=Object.entries(datasets).map(([id,d])=>{
     const current=dataStatusById(id), currentTokens=current?.tokens||0;
-    const status=d.ready?`<span class="status-pill good">wired</span>`:d.gated?`<span class="status-pill warning">gated / validate</span>`:`<span class="status-pill ref">advanced</span>`;
+    const status=d.retired?`<span class="status-pill ref">retired</span>`:d.ready?`<span class="status-pill good">wired</span>`:d.gated?`<span class="status-pill warning">gated / validate</span>`:`<span class="status-pill ref">advanced</span>`;
     let suggested=current?.target||d.known_tokens||1_000_000_000;
     return `<article class="dataset-card" data-dataset-card="${esc(id)}">
       <div class="dataset-top"><div><div class="category">${esc(d.category)}</div><h3>${esc(d.label)}</h3></div>${status}</div>
       <p>${esc(d.notes||"")}</p>
       <div class="dataset-current">local: ${fmtTokens(currentTokens)} ${current?`· planned ${fmtTokens(current.target)}`:"· not materialized"}</div>
       <div class="dataset-controls">
-        <input class="dataset-target" data-dataset-target="${esc(id)}" type="number" value="${Math.round(suggested)}" step="100000000"/>
-        <button class="ink small dataset-download" data-source-id="${esc(id)}">Download / resume</button>
+        <input class="dataset-target" data-dataset-target="${esc(id)}" type="number" value="${Math.round(suggested)}" step="100000000" ${d.retired?"disabled":""}/>
+        <button class="ink small dataset-download" data-source-id="${esc(id)}" ${d.retired?"disabled":""}>${d.retired?"Excluded":"Download / resume"}</button>
       </div>
     </article>`;
   }).join("");
@@ -275,12 +275,12 @@ function renderDatasetCatalog() {
 
 function renderVerifyAndClean() {
   const rows=S.overview?.datasets||[];
-  $("#verify-source-list").innerHTML=rows.map(item=>`<div class="check-item"><label><input type="checkbox" class="verify-check" data-path="${esc(item.path)}" checked/><span><strong>${esc(item.label||item.id)}</strong><br/><small>${fmtTokens(item.tokens)} on disk</small></span></label></div>`).join("");
+  $("#verify-source-list").innerHTML=rows.map(item=>`<div class="check-item"><label><input type="checkbox" class="verify-check" data-path="${esc(item.path)}" ${item.retired?"":"checked"}/><span><strong>${esc(item.label||item.id)}</strong><br/><small>${fmtTokens(item.tokens)} on disk${item.retired?" · retired":""}</small></span></label></div>`).join("");
   $("#clean-source-grid").innerHTML=rows.map(item=>{
-    const defaultChecked=item.tokens>0 && item.id!=="stack_edu";
+    const defaultChecked=item.tokens>0 && !item.retired && item.id!=="stack_edu";
     const fim=item.id==="stack_edu"?0.5:0;
     return `<div class="clean-item" data-clean-id="${esc(item.id)}">
-      <label><input class="clean-check" type="checkbox" ${defaultChecked?"checked":""}/><span><strong>${esc(item.label||item.id)}</strong> · ${fmtTokens(item.tokens)}</span></label>
+      <label><input class="clean-check" type="checkbox" ${defaultChecked?"checked":""} ${item.retired?"disabled":""}/><span><strong>${esc(item.label||item.id)}</strong> · ${fmtTokens(item.tokens)}${item.retired?" · retired":""}</span></label>
       <div class="mini-fields">
         <label>Weight<input class="clean-weight" type="number" value="${Math.max(1,Number(item.tokens||1))}" step="1000000"/></label>
         <label>FIM rate<input class="clean-fim" type="number" value="${fim}" step="0.1" min="0" max="1"/></label>
@@ -393,6 +393,7 @@ async function stopJob(id) {
 
 function presetApply(id) {
   const p=S.catalog?.presets?.[id];if(!p)return;
+  if(p.retired){toast("That historical preset is retired and cannot be applied.");return;}
   if(p.dynamic){
     (S.overview?.datasets||[]).forEach(item=>{
       const input=$(`[data-dataset-target="${CSS.escape(item.id)}"]`);

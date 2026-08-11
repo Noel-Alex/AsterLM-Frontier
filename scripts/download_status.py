@@ -11,9 +11,9 @@ import yaml
 
 TIER_CONFIGS = {
     "pilot": ("configs/corpus/corpus_pilot_500m.yaml", None),
-    "18b": ("configs/corpus/corpus_frontier_16b.yaml", "configs/corpus/stack_edu_2p4b.yaml"),
-    "50b": ("configs/corpus/corpus_overtrain_50b.yaml", "configs/corpus/stack_edu_6p5b.yaml"),
-    "100b": ("configs/corpus/corpus_overtrain_100b.yaml", "configs/corpus/stack_edu_13b.yaml"),
+    "18b": ("configs/corpus/corpus_frontier_16b.yaml", None),
+    "50b": ("configs/corpus/corpus_overtrain_50b.yaml", None),
+    "100b": ("configs/corpus/corpus_overtrain_100b.yaml", None),
 }
 
 

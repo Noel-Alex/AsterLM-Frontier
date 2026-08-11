@@ -24,7 +24,13 @@ def main() -> None:
         description="Clean, deduplicate, redact, and decontaminate the materialized frontier corpus"
     )
     parser.add_argument("--raw-corpus", "--corpus-dir", dest="raw_corpus", default="data/corpus-frontier-16b")
-    parser.add_argument("--raw-code", "--stack-dir", dest="raw_code", default="data/stack-edu-frontier-2p4b")
+    parser.add_argument(
+        "--raw-code",
+        dest="raw_code",
+        default=None,
+        help="Optional separately audited code-corpus directory; Stack-Edu is retired",
+    )
+    parser.add_argument("--code-id", default="code", help="Source id for --raw-code")
     parser.add_argument("--benchmarks", "--benchmark-dir", dest="benchmarks", default="data/decontamination-benchmarks")
     parser.add_argument("--output", "--output-dir", dest="output", default="data/clean-frontier")
     parser.add_argument("--pii-mode", choices=["redact", "drop", "keep"], default="redact")
@@ -55,8 +61,8 @@ def main() -> None:
         print("WARNING: benchmark directory is missing; cleaning will run without decontamination")
 
     jobs = [(name, Path(args.raw_corpus) / name, "text") for name in SOURCES]
-    if not args.skip_code:
-        jobs.append(("stack_edu", Path(args.raw_code), "text"))
+    if args.raw_code and not args.skip_code:
+        jobs.append((args.code_id, Path(args.raw_code), "text"))
     for name, source, field in jobs:
         if not source.exists():
             raise FileNotFoundError(f"Missing {source}; run scripts/download_data.py first")
@@ -119,40 +125,36 @@ def main() -> None:
                 {"path": str(output / "dclm"), "text_field": "text", "weight": 0.11},
                 {"path": str(output / "cosmopedia_v2"), "text_field": "text", "weight": 0.09},
                 {"path": str(output / "finemath_4plus"), "text_field": "text", "weight": 0.13},
-                {
-                    "path": str(output / "stack_edu"),
-                    "text_field": "text",
-                    "weight": 0.14,
-                    "fim_rate": 0.5,
-                },
             ],
             "validation_sources": [
                 {"path": str(output / "validation" / "fineweb_edu"), "text_field": "text", "weight": 0.53},
                 {"path": str(output / "validation" / "dclm"), "text_field": "text", "weight": 0.11},
                 {"path": str(output / "validation" / "cosmopedia_v2"), "text_field": "text", "weight": 0.09},
                 {"path": str(output / "validation" / "finemath_4plus"), "text_field": "text", "weight": 0.13},
-                {
-                    "path": str(output / "validation" / "stack_edu"),
-                    "text_field": "text",
-                    "weight": 0.14,
-                    "fim_rate": 0.0,
-                },
             ],
         }
     }
-    if args.skip_code:
-        config["data"]["sources"] = [
-            source for source in config["data"]["sources"] if "stack_edu" not in source["path"]
-        ]
-        config["data"]["validation_sources"] = [
-            source
-            for source in config["data"]["validation_sources"]
-            if "stack_edu" not in source["path"]
-        ]
-        for key in ("sources", "validation_sources"):
-            total = sum(source["weight"] for source in config["data"][key])
-            for source in config["data"][key]:
-                source["weight"] /= total
+    if args.raw_code and not args.skip_code:
+        config["data"]["sources"].append(
+            {
+                "path": str(output / args.code_id),
+                "text_field": "text",
+                "weight": 0.14,
+                "fim_rate": 0.5,
+            }
+        )
+        config["data"]["validation_sources"].append(
+            {
+                "path": str(output / "validation" / args.code_id),
+                "text_field": "text",
+                "weight": 0.14,
+                "fim_rate": 0.0,
+            }
+        )
+    for key in ("sources", "validation_sources"):
+        total = sum(source["weight"] for source in config["data"][key])
+        for source in config["data"][key]:
+            source["weight"] /= total
     config_path = Path("configs/data/pretrain_frontier_clean.yaml")
     config_path.write_text(yaml.safe_dump(config, sort_keys=False), encoding="utf-8")
     summary = {

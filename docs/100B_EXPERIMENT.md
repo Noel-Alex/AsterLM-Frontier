@@ -1,10 +1,10 @@
 # AsterLM 100B-token research campaign
 
-This is the authoritative plan for deliberately overtraining the 890M-logical / 482M-active AsterLM MoE candidate on up to **100B training tokens**.
+This is the authoritative research plan for deliberately overtraining an AsterLM MoE candidate on up to **100B training tokens**. Model size and architecture remain promotion-gated; the historical 890M-logical / 482M-active label is not the final selection.
 
 ## Scientific position
 
-The 18.4B corpus remains the first compute-optimal checkpoint. The 50B and 100B tiers are not claimed to be compute-optimal; they are controlled overtraining experiments intended to test:
+The active 16B frontier tranche remains the first major checkpoint. The eventual 50B and 100B runs are not claimed to be compute-optimal; they are controlled overtraining experiments intended to test:
 
 - whether validation loss and downstream quality continue improving after the classic compute-optimal point;
 - whether MoE expert pathways become more structured and transferable after training loss begins to flatten;
@@ -17,13 +17,13 @@ The campaign uses mostly unique, deduplicated data. It does **not** manufacture 
 
 Every tier expands the same source directories and cursor checkpoints. No completed pilot/frontier shard is downloaded twice.
 
-| Tier | FineWeb-Edu | DCLM | Cosmopedia | FineMath | Stack-Edu | Total |
+| Tier name | FineWeb-Edu | DCLM | Cosmopedia | FineMath | Active known total | Replacement needed |
 |---|---:|---:|---:|---:|---:|---:|
-| Frontier | 10.4B | 2.4B | 1.4B | 1.8B | 2.4B | 18.4B |
-| Overtrain-50 | 28B | 7B | 3B | 5.5B | 6.5B | 50B |
-| Overtrain-100 | 54B | 16B | 6B | 11B | 13B | 100B |
+| Frontier | 10.4B | 2.4B | 1.4B | 1.8B | 16B | 2.4B before using the historical 18.4B label |
+| Overtrain-50 | 28B | 7B | 3B | 5.5B | 43.5B | 6.5B |
+| Overtrain-100 | 54B | 16B | 6B | 11B | 87B | 13B |
 
-The 100B mix remains 54% educational web, 16% DCLM diversity, 6% synthetic exposition, 11% mathematics and 13% permissive code.
+Stack-Edu is permanently retired from active acquisition and training. The final replacement math/code allocation is not assumed to be the historical 13%; it must be selected from audited candidates and validated by matched learning curves. Until then, `100b` is a compatibility tier name for the 87B active target, not a claim that 100B usable tokens are ready.
 
 ## One-command data acquisition
 

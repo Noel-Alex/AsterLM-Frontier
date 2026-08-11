@@ -6,7 +6,7 @@ At sub-2B scale, data quality, repetition, curriculum and post-training often ma
 
 ## Full pretraining corpus
 
-Configuration: `configs/corpus/corpus_frontier_16b.yaml` plus `stack_edu_2p4b.yaml`.
+Active configuration: `configs/corpus/corpus_frontier_16b.yaml`. Stack-Edu is retired and is not scheduled by any active download profile.
 
 | Source | Target tokens | Weight before adaptive rebalancing | Role |
 |---|---:|---:|---|
@@ -14,13 +14,17 @@ Configuration: `configs/corpus/corpus_frontier_16b.yaml` plus `stack_edu_2p4b.ya
 | DCLM baseline | 2.4B | 13.0% | diverse high-quality web distribution |
 | Cosmopedia-v2 | 1.4B | 7.6% | structured synthetic explanations/textbook prose |
 | FineMath-4+ | 1.8B | 9.8% | mathematical notation and reasoning |
-| Stack-Edu permissive code | 2.4B | 13.0% | code generation, syntax and software knowledge |
+| Replacement code candidate | not promoted | pending | code generation, syntax, FIM and software knowledge |
 
-Raw target: approximately 18.4B tokens. Cleaning and deduplication will reduce usable tokens. The trainer should report effective epochs/repetition after cleaning.
+The active historical frontier tranche targets 16B tokens before cleaning. Larger 43.5B and 87B prose/math tranches exist, but none is called a complete 50B/100B mixture until a replacement math/code candidate passes the promotion gate. Cleaning and deduplication will reduce usable tokens. The trainer reports effective epochs/repetition after cleaning.
 
-## Stack-Edu
+## Retired Stack-Edu source
 
-Stack-Edu rows reference Software Heritage blobs rather than containing code text inline. The materializer:
+Stack-Edu rows reference Software Heritage blobs rather than containing code text inline. Its historical materializer and configs are retained only for reproducibility. The source is permanently excluded from active acquisition, cleaning and training plans because the per-blob reconstruction path was not operationally viable for this campaign. Existing shards remain visible as provenance and must not be mixed.
+
+The replacement code tranche must provide direct, resumable materialization and pass license, quality, duplication, benchmark-contamination and matched learning-curve gates. FIM is enabled only after promotion.
+
+The retired materializer historically:
 
 - downloads blobs in parallel,
 - retains only rows marked permissive in source metadata,

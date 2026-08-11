@@ -7,8 +7,9 @@ presets:
     description: "Reads durable state.json files and uses their actual token counts. No invented target and no forced repetition."
     dynamic: true
   original_100b:
-    label: "Aster 100B research mix"
-    description: "Original controlled overtraining mixture."
+    label: "Retired legacy 100B mix"
+    description: "Historical target only; Stack-Edu is excluded and the replacement tranche is not promoted."
+    retired: true
     sources:
       fineweb_edu: 54000000000
       dclm: 16000000000
@@ -81,15 +82,16 @@ datasets:
     gated: false
     notes: "Existing Aster source; synthetic educational exposition."
   stack_edu:
-    label: "Stack-Edu"
-    category: "permissive code"
+    label: "Stack-Edu (retired)"
+    category: "excluded historical source"
     path: "HuggingFaceTB/stack-edu"
     split: "train"
     text_field: "text"
     shuffle_seed: 1750
-    ready: true
+    ready: false
+    retired: true
     gated: false
-    notes: "Existing Aster code source. Its current materializer fetches Software Heritage blobs after streaming metadata, so throughput can be dramatically lower than direct-Parquet sources. Resume only if you want this exact provenance; otherwise use a faster code source."
+    notes: "Permanently excluded from active Aster acquisition and training plans. Historical local shards remain visible only for provenance."
   finemath_4plus:
     label: "FineMath 4+"
     category: "math"

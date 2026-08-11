@@ -256,7 +256,7 @@ def dataset_status() -> list[dict[str, Any]]:
     rows.append(
         {
             "id": "stack_edu",
-            "label": "Stack-Edu",
+            "label": "Stack-Edu (retired)",
             "tokens": total,
             "target": target,
             "percent": min(100.0, 100.0 * total / target) if target else 0.0,
@@ -266,6 +266,7 @@ def dataset_status() -> list[dict[str, Any]]:
             "reason": "complete" if total >= target else "pending",
             "path": rel(sroot),
             "kind": "stack",
+            "retired": True,
             "languages": language_rows,
         }
     )
@@ -804,25 +805,6 @@ def build_corpus_config(source_id: str, target_tokens: int, entry: dict[str, Any
     return target
 
 
-def build_scaled_stack_config(target_tokens: int) -> Path:
-    base = yaml.safe_load((ROOT / "configs/corpus/stack_edu_13b.yaml").read_text(encoding="utf-8"))
-    cfg = base["stack_edu"]
-    original = sum(int(item["target_tokens"]) for item in cfg["languages"])
-    scale = target_tokens / original
-    remaining = target_tokens
-    for idx, item in enumerate(cfg["languages"]):
-        if idx == len(cfg["languages"]) - 1:
-            value = remaining
-        else:
-            value = max(1, round(int(item["target_tokens"]) * scale))
-            remaining -= value
-        item["target_tokens"] = value
-    target = ROOT / "configs/studio/corpus" / f"stack-edu-{target_tokens}.yaml"
-    target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(yaml.safe_dump(base, sort_keys=False), encoding="utf-8")
-    return target
-
-
 def built_in_source_entry(source_id: str) -> dict[str, Any]:
     for item in corpus_config()["sources"]:
         if item["id"] == source_id:
@@ -839,6 +821,8 @@ def create_clean_plan(payload: dict[str, Any]) -> Path:
     total = 0
     for item in selected:
         sid = sanitize_source(str(item["id"]))
+        if sid == "stack_edu":
+            raise ValueError("Stack-Edu is retired and cannot enter an active cleaning/training plan")
         current = status_map.get(sid)
         if current is None:
             raw_path = str(item.get("raw_path") or f"data/aster-studio/custom-corpus/{sid}")
@@ -892,14 +876,7 @@ def start_action(action: str, payload: dict[str, Any]) -> dict[str, Any]:
         source_id = sanitize_source(str(payload["source_id"]))
         target_tokens = int(payload["target_tokens"])
         if source_id == "stack_edu":
-            config = build_scaled_stack_config(target_tokens)
-            command = [
-                py,
-                "scripts/prepare_stack_edu_multilang.py",
-                "--config", rel(config),
-                "--max-retries", str(settings()["download"]["materializer_retries"]),
-                "--max-rss-gib", str(settings()["download"]["max_rss_gib"]),
-            ]
+            raise ValueError("Stack-Edu is permanently retired from active acquisition")
         else:
             cat = catalog()["datasets"]
             entry = dict(payload.get("entry") or cat.get(source_id) or {})

@@ -12,7 +12,7 @@ Add a separately materialized, revision-pinned 16B-token candidate pool. Do not 
 | `nvidia/Nemotron-CC-Code-v1`, `data` | 8B tokens | Code explanations, documentation, and code-bearing web pages |
 | `nvidia/Nemotron-Pretraining-Code-v1`, `Synthetic-Code` | 5B tokens | Natural-language/code and synthetic programming diversity |
 
-NVIDIA reports 52B tokens in the 4plus math subset and describes its pipeline as MinHash-deduplicated and decontaminated against MATH, GSM8K, MMLU, and MMLU-Pro. That does not remove AsterLM's obligation to deduplicate it against the already-downloaded FineWeb, DCLM, FineMath, Cosmopedia, and Stack-Edu data. See the [official math dataset card](https://huggingface.co/datasets/nvidia/Nemotron-CC-Math-v1).
+NVIDIA reports 52B tokens in the 4plus math subset and describes its pipeline as MinHash-deduplicated and decontaminated against MATH, GSM8K, MMLU, and MMLU-Pro. That does not remove AsterLM's obligation to deduplicate it against the active FineWeb, DCLM, FineMath and Cosmopedia data. See the [official math dataset card](https://huggingface.co/datasets/nvidia/Nemotron-CC-Math-v1).
 
 The Common-Crawl code set contains actual training text. By contrast, `Nemotron-Pretraining-Code-v3` contains 146M metadata rows identifying GitHub repositories, relative paths, languages, and commits; it is not itself a ready-to-train 173B-token text corpus. AsterLM therefore does not treat v3 metadata as downloaded code. See the [official CC-Code card](https://huggingface.co/datasets/nvidia/Nemotron-CC-Code-v1) and [official Code-v3 card](https://huggingface.co/datasets/nvidia/Nemotron-Pretraining-Code-v3).
 

@@ -27,7 +27,6 @@ from asterlm.data.hf_stream import is_legacy_multistream_cursor, is_sequential_c
 
 GIB = 2**30
 DEFAULT_CORPUS_CONFIG = "configs/corpus/corpus_overtrain_100b.yaml"
-DEFAULT_STACK_CONFIG = "configs/corpus/stack_edu_13b.yaml"
 
 
 @dataclass
@@ -198,17 +197,6 @@ def build_stages(args: argparse.Namespace) -> list[Stage]:
                      "--max-retries", str(getattr(args, "materializer_retries", 2)), "--retry-base-seconds", "5",
                      "--retry-max-seconds", "90", "--checkpoint-seconds", str(getattr(args, "checkpoint_seconds", 300.0)),
                      "--checkpoint-documents", str(getattr(args, "checkpoint_documents", 100_000)), "--max-rss-gib", str(getattr(args, "max_rss_gib", 22.0))]
-        ))
-    if not args.no_stack and (not args.only or "stack_edu" in args.only) and "stack_edu" not in args.skip:
-        stack_raw = yaml.safe_load((ROOT / args.stack_config).read_text(encoding="utf-8"))["stack_edu"]
-        stack_output = ROOT / stack_raw.get("output_dir", "data/stack-edu")
-        stages.append(Stage(
-            id="stack-edu", source_id="stack_edu", kind="stack", state_dir=stack_output,
-            target_tokens=sum(int(item["target_tokens"]) for item in stack_raw["languages"]),
-            command=[sys.executable, "scripts/prepare_stack_edu_multilang.py", "--config", args.stack_config,
-                     "--max-retries", str(getattr(args, "materializer_retries", 2)), "--retry-base-seconds", "5",
-                     "--retry-max-seconds", "90", "--checkpoint-seconds", str(getattr(args, "checkpoint_seconds", 300.0)),
-                     "--max-rss-gib", str(getattr(args, "max_rss_gib", 22.0))]
         ))
     return stages
 
@@ -464,8 +452,9 @@ def run_campaign(args: argparse.Namespace) -> int:
 
 
 def add_common_selection(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("--config", default=DEFAULT_CORPUS_CONFIG); parser.add_argument("--stack-config", default=DEFAULT_STACK_CONFIG)
-    parser.add_argument("--skip", action="append", default=[]); parser.add_argument("--only", action="append", default=[]); parser.add_argument("--no-stack", action="store_true")
+    parser.add_argument("--config", default=DEFAULT_CORPUS_CONFIG)
+    parser.add_argument("--skip", action="append", default=[])
+    parser.add_argument("--only", action="append", default=[])
 
 
 def build_parser() -> argparse.ArgumentParser:

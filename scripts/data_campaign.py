@@ -11,9 +11,12 @@ from pathlib import Path
 
 
 TIERS = {
-    "18b": {"pretrain": "frontier", "full": "all", "raw_tokens": 18_400_000_000},
-    "50b": {"pretrain": "overtrain50", "full": "campaign50", "raw_tokens": 50_000_000_000},
-    "100b": {"pretrain": "overtrain100", "full": "campaign100", "raw_tokens": 100_000_000_000},
+    # CLI names are retained for compatibility, but raw_tokens is the honest
+    # active tranche after retiring Stack-Edu. A replacement is not counted
+    # until it passes the candidate-data promotion gate.
+    "18b": {"pretrain": "frontier", "full": "all", "raw_tokens": 16_000_000_000},
+    "50b": {"pretrain": "overtrain50", "full": "campaign50", "raw_tokens": 43_500_000_000},
+    "100b": {"pretrain": "overtrain100", "full": "campaign100", "raw_tokens": 87_000_000_000},
 }
 
 
@@ -68,7 +71,6 @@ def main() -> None:
 
     verify_roots = [
         Path("data/corpus-frontier-16b"),
-        Path("data/stack-edu-frontier-2p4b"),
     ]
     if not args.pretraining_only:
         verify_roots.extend(
@@ -94,8 +96,7 @@ def main() -> None:
             "scripts/prepare_frontier_data.py",
             "--raw-corpus",
             "data/corpus-frontier-16b",
-            "--raw-code",
-            "data/stack-edu-frontier-2p4b",
+            "--skip-code",
             "--benchmarks",
             "data/decontamination-benchmarks",
             "--output",
