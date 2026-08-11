@@ -161,6 +161,7 @@ class Trainer:
             )
         elif initial_checkpoint:
             load_model_weights(self.model, initial_checkpoint)
+        self.grouped_expert_storage = self.model.pack_grouped_expert_storage()
 
         self._milestones_remaining = [
             token for token in train_config.milestone_tokens if token > self.tokens_seen
@@ -267,6 +268,7 @@ class Trainer:
             "system": static_system_manifest(self.device),
             "optimizer_partition": getattr(self.optimizer, "partition", None).__dict__,
             "parameter_storage": self._parameter_storage_summary(),
+            "grouped_expert_storage": self.grouped_expert_storage,
             "loqt_modules": sum(1 for _ in iter_loqt_modules(self.model)),
             "execution_plan": self.execution.plan.to_dict(),
             "training_contract": self.training_contract.to_dict(),
@@ -751,6 +753,7 @@ class Trainer:
                         **gradient_diagnostics(self.model),
                         **parameter_diagnostics(self.model),
                         **self.model.moe_pathway_stats(),
+                        **self.model.moe_execution_stats(),
                     }
                 grad_norm = torch.nn.utils.clip_grad_norm_(
                     self.model.parameters(), cfg.max_grad_norm

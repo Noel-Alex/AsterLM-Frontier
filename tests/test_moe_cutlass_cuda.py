@@ -40,6 +40,11 @@ def test_grouped_moe_matches_dropless_reference(implementation):
 
     reference = reference.cuda().to(torch.bfloat16).train()
     candidate = candidate.cuda().to(torch.bfloat16).train()
+    bridge = candidate._grouped_routed
+    assert bridge is not None
+    pack = getattr(bridge, "pack_parameter_storage", None)
+    if callable(pack):
+        pack()
     x = torch.randn(4, 32, 128, device="cuda", dtype=torch.bfloat16)
     x_reference = x.detach().clone().requires_grad_(True)
     x_candidate = x.detach().clone().requires_grad_(True)
@@ -67,8 +72,6 @@ def test_grouped_moe_matches_dropless_reference(implementation):
         assert actual.grad is not None, name
         assert _relative_l2(actual.grad, expected.grad) < 0.05, name
 
-    bridge = candidate._grouped_routed
-    assert bridge is not None
     assert bridge.cache_refreshes == 2
     candidate.zero_grad(set_to_none=True)
     candidate(x.detach())
@@ -81,3 +84,14 @@ def test_grouped_moe_matches_dropless_reference(implementation):
     optimizer.step()
     candidate(x.detach())
     assert bridge.cache_refreshes == 4
+    diagnostics = getattr(bridge, "diagnostics", None)
+    if callable(diagnostics):
+        observed = diagnostics()
+        assert observed["moe_backend_forward_calls"] == 4
+        assert observed["moe_backend_weight_cache_refreshes"] == 4
+        assert observed["moe_backend_weight_cache_refresh_gib"] == 0
+        assert observed["moe_backend_storage_pack_count"] == 1
+        assert observed["moe_backend_storage_pack_gib"] > 0
+        assert observed["moe_backend_host_metadata_syncs"] == (
+            4 if implementation == "cutlass" else 0
+        )

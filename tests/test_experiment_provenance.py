@@ -2,7 +2,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from scripts.run_moe_utilization_matrix import repository_provenance
+from scripts.run_moe_utilization_matrix import (
+    median_moe_metric,
+    median_moe_ratio,
+    repository_provenance,
+)
 
 
 def test_repository_provenance_records_commit_status_and_diff_hash() -> None:
@@ -24,3 +28,30 @@ def test_repository_provenance_handles_non_repository(tmp_path: Path) -> None:
     assert provenance["available"] is False
     assert provenance["root"] == str(tmp_path.resolve())
     assert provenance["error"]
+
+
+def test_moe_aggregate_helpers_ignore_dense_summaries() -> None:
+    summaries = [
+        {},
+        {"moe_execution": {}},
+        {
+            "moe_execution": {
+                "moe_backend_forward_calls": 20,
+                "moe_backend_host_metadata_syncs": 20,
+            }
+        },
+        {
+            "moe_execution": {
+                "moe_backend_forward_calls": 40,
+                "moe_backend_host_metadata_syncs": 0,
+            }
+        },
+    ]
+
+    assert median_moe_metric(summaries, "moe_backend_forward_calls") == 30
+    assert median_moe_ratio(
+        summaries,
+        "moe_backend_host_metadata_syncs",
+        "moe_backend_forward_calls",
+    ) == 0.5
+    assert median_moe_metric(summaries, "missing") is None

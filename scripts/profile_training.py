@@ -400,6 +400,7 @@ def main() -> None:
                     parameter.data = parameter.data.float()
         else:
             model = model.to(device)
+        result["grouped_expert_storage"] = model.pack_grouped_expert_storage()
         model.train()
         precision = PrecisionManager(train, device, dtype)
         result["architecture"] = model.architecture_summary()
@@ -577,6 +578,7 @@ def main() -> None:
                     else {}
                 ),
                 **balance,
+                **model.moe_execution_stats(),
             }
             result["steps"].append(record)
             print(json.dumps(record, sort_keys=True))
@@ -623,6 +625,7 @@ def main() -> None:
             "final_memory": cuda_snapshot(device),
             "fits_11p25_gib_peak": cuda_snapshot(device).get("peak_allocated_gib", 0) <= 11.25,
             "median_phase_timing": summarize_phase_timing(measured_phase_records),
+            "moe_execution": model.moe_execution_stats(),
         }
         if gpu_sampler is not None:
             gpu_sampler.stop()

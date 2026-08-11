@@ -56,6 +56,7 @@ class TorchGroupedRoutedExperts(CUTLASSGroupedRoutedExperts):
         if top_idx.ndim != 2 or top_weight.shape != top_idx.shape:
             raise ValueError("top_idx and top_weight must have matching [N, top_k] shapes")
 
+        self.forward_calls += 1
         route = top_idx.to(dtype=torch.int32).contiguous()
         counts = fixed_bincount(route, self.num_experts, dtype=torch.int32)
         offsets = counts.cumsum(dim=0, dtype=torch.int32)

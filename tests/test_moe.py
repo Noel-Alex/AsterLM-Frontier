@@ -92,3 +92,8 @@ def test_fixed_bincount_matches_known_extent():
     values = torch.tensor([[0, 3, 1], [3, 3, 0]])
     counts = fixed_bincount(values, 5, dtype=torch.float32)
     torch.testing.assert_close(counts, torch.tensor([2.0, 1.0, 0.0, 3.0, 0.0]))
+
+
+def test_reference_moe_reports_no_grouped_backend_overhead():
+    model = AsterLM(tiny_moe_config(), moe_implementation="reference")
+    assert model.moe_execution_stats() == {}

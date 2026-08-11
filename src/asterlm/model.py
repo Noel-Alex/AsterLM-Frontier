@@ -961,6 +961,60 @@ class AsterLM(nn.Module):
             "moe_routing_bias_absmax": float(bias.abs().max()),
         }
 
+    def moe_execution_stats(self) -> dict[str, float]:
+        """Aggregate cumulative grouped-MoE launch/copy diagnostics across layers."""
+
+        totals: dict[str, float] = {}
+        ffn_modules = [block.ffn for block in self.blocks]
+        if self.mtp_deepseek_block is not None:
+            ffn_modules.append(self.mtp_deepseek_block.ffn)
+        for ffn in ffn_modules:
+            if not isinstance(ffn, (DeepSeekStyleMoE, LatentMoE)):
+                continue
+            bridge = getattr(ffn, "_grouped_routed", None)
+            diagnostics = getattr(bridge, "diagnostics", None)
+            if not callable(diagnostics):
+                continue
+            for name, value in diagnostics().items():
+                totals[name] = totals.get(name, 0.0) + float(value)
+        return totals
+
+    def pack_grouped_expert_storage(self) -> dict[str, float]:
+        """Pack grouped-expert weights once while preserving Parameter identities/keys."""
+
+        totals: dict[str, float] = {}
+        ffn_modules = [block.ffn for block in self.blocks]
+        if self.mtp_deepseek_block is not None:
+            ffn_modules.append(self.mtp_deepseek_block.ffn)
+        for ffn in ffn_modules:
+            if not isinstance(ffn, (DeepSeekStyleMoE, LatentMoE)):
+                continue
+            bridge = getattr(ffn, "_grouped_routed", None)
+            pack = getattr(bridge, "pack_parameter_storage", None)
+            if not callable(pack):
+                continue
+            for name, value in pack().items():
+                totals[name] = totals.get(name, 0.0) + float(value)
+        return totals
+
+    def materialize_grouped_expert_storage(self) -> dict[str, float]:
+        """Make grouped-expert tensors independently serializable until repacked."""
+
+        totals: dict[str, float] = {}
+        ffn_modules = [block.ffn for block in self.blocks]
+        if self.mtp_deepseek_block is not None:
+            ffn_modules.append(self.mtp_deepseek_block.ffn)
+        for ffn in ffn_modules:
+            if not isinstance(ffn, (DeepSeekStyleMoE, LatentMoE)):
+                continue
+            bridge = getattr(ffn, "_grouped_routed", None)
+            materialize = getattr(bridge, "materialize_parameter_storage", None)
+            if not callable(materialize):
+                continue
+            for name, value in materialize().items():
+                totals[name] = totals.get(name, 0.0) + float(value)
+        return totals
+
     @torch.no_grad()
     def apply_qk_clip(self, tau: float | None = None) -> dict[str, float]:
         tau = self.config.qk_clip_tau if tau is None else tau

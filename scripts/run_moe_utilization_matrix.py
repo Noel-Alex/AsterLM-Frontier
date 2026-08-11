@@ -2,9 +2,11 @@
 from __future__ import annotations
 
 import argparse
+import atexit
 import hashlib
 import json
 import os
+import shutil
 import statistics
 import subprocess
 import sys
@@ -12,6 +14,10 @@ import time
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+
+from asterlm.cuda_allocator import cuda_allocator_environment
+from asterlm.experiments.source_checkout import create_pinned_source_checkout
+from asterlm.source_provenance import assert_expected_checkout_source
 
 VARIANTS = {
     "dense-all-mla": ("model-screen-dense-all-mla.yaml", "reference"),
@@ -128,6 +134,34 @@ def median(values: list[float]) -> float | None:
     return statistics.median(values) if values else None
 
 
+def median_moe_metric(
+    summaries: list[dict[str, Any]], metric: str
+) -> float | None:
+    return median(
+        [
+            float(summary["moe_execution"][metric])
+            for summary in summaries
+            if isinstance(summary.get("moe_execution"), dict)
+            and metric in summary["moe_execution"]
+        ]
+    )
+
+
+def median_moe_ratio(
+    summaries: list[dict[str, Any]], numerator: str, denominator: str
+) -> float | None:
+    values = []
+    for summary in summaries:
+        execution = summary.get("moe_execution")
+        if not isinstance(execution, dict):
+            continue
+        top = execution.get(numerator)
+        bottom = execution.get(denominator)
+        if isinstance(top, (int, float)) and isinstance(bottom, (int, float)) and bottom:
+            values.append(float(top) / float(bottom))
+    return median(values)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Matched dense/MoE utilization follow-up")
     parser.add_argument("--config-root", type=Path, required=True)
@@ -189,6 +223,17 @@ def main() -> None:
     )
     args = parser.parse_args()
 
+    root = Path(__file__).resolve().parents[1]
+    source = assert_expected_checkout_source(root)
+    if source.get("dirty"):
+        raise RuntimeError("MoE utilization campaigns require a clean source checkout")
+    execution_commit = str(source["git_commit"])
+    pinned = create_pinned_source_checkout(root, execution_commit)
+    atexit.register(pinned.close)
+    args.config_root = args.config_root.resolve()
+    args.train_config = args.train_config.resolve()
+    args.output = args.output.resolve()
+
     variants = dict(VARIANTS)
     custom_names: list[str] = []
     for raw_spec in args.variant_spec:
@@ -216,14 +261,32 @@ def main() -> None:
         )
     orders = balanced_orders(selected_variants)
 
+    if args.output.exists() and any(args.output.iterdir()):
+        raise RuntimeError(
+            f"Refusing to mix a new utilization matrix into non-empty {args.output}"
+        )
     args.output.mkdir(parents=True, exist_ok=True)
+    protocol_config_root = args.output / "protocol-configs"
+    protocol_config_root.mkdir(parents=False, exist_ok=False)
+    sealed_train_config = protocol_config_root / "train.yaml"
+    shutil.copy2(args.train_config, sealed_train_config)
+    sealed_models: dict[str, Path] = {}
+    for index, variant in enumerate(selected_variants):
+        filename, _ = variants[variant]
+        source_model = args.config_root / filename
+        sealed_model = protocol_config_root / f"model-{index:02d}.yaml"
+        shutil.copy2(source_model, sealed_model)
+        sealed_models[variant] = sealed_model
+
     records: list[dict[str, Any]] = []
-    repository = repository_provenance()
+    repository = repository_provenance(root)
     manifest: dict[str, Any] = {
         "schema_version": 2,
         "created_utc": datetime.now(UTC).isoformat(),
         "git_commit": repository.get("commit"),
         "repository": repository,
+        "source_provenance": source,
+        "execution_checkout": pinned.manifest(),
         "protocol": {
             "steps": args.steps,
             "warmup": args.warmup,
@@ -250,7 +313,11 @@ def main() -> None:
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
         ).stdout.strip(),
-        "train_config": {"path": str(args.train_config), "sha256": sha256(args.train_config)},
+        "train_config": {
+            "source_path": str(args.train_config),
+            "sealed_path": str(sealed_train_config),
+            "sha256": sha256(sealed_train_config),
+        },
         "models": {},
         "trials": records,
     }
@@ -258,8 +325,9 @@ def main() -> None:
         filename, implementation = variants[variant]
         model_path = args.config_root / filename
         manifest["models"][variant] = {
-            "path": str(model_path),
-            "sha256": sha256(model_path),
+            "source_path": str(model_path),
+            "sealed_path": str(sealed_models[variant]),
+            "sha256": sha256(sealed_models[variant]),
             "moe_implementation": implementation,
         }
     atomic_json(args.output / "matrix.json", manifest)
@@ -267,18 +335,18 @@ def main() -> None:
     for repetition in range(args.repetitions):
         order = orders[repetition % len(orders)]
         for variant in order:
-            filename, implementation = variants[variant]
+            _, implementation = variants[variant]
             trial_name = f"r{repetition + 1}-{variant}"
             result_path = args.output / f"{trial_name}.json"
             log_path = args.output / f"{trial_name}.log"
             idle = wait_for_idle(args.cooldown_temperature, args.idle_utilization)
             command = [
                 sys.executable,
-                "scripts/profile_training.py",
+                str(pinned.path / "scripts" / "profile_training.py"),
                 "--model",
-                str(args.config_root / filename),
+                str(sealed_models[variant]),
                 "--train-config",
-                str(args.train_config),
+                str(sealed_train_config),
                 "--sequence",
                 str(args.sequence),
                 "--batch",
@@ -306,6 +374,13 @@ def main() -> None:
                 command.append("--disable-gradient-checkpointing")
             environment = dict(os.environ)
             environment["ASTER_MOE_IMPL"] = implementation
+            environment["PYTHONPATH"] = os.pathsep.join(
+                filter(
+                    None,
+                    (str(pinned.path / "src"), environment.get("PYTHONPATH")),
+                )
+            )
+            environment.update(cuda_allocator_environment(environment))
             started = time.monotonic()
             with log_path.open("w", encoding="utf-8") as log:
                 completed = subprocess.run(
@@ -314,6 +389,7 @@ def main() -> None:
                     stderr=subprocess.STDOUT,
                     text=True,
                     env=environment,
+                    cwd=pinned.path,
                     timeout=args.trial_timeout,
                     check=False,
                 )
@@ -362,10 +438,37 @@ def main() -> None:
             "median_peak_allocated_gib": median(
                 [float(summary["final_memory"]["peak_allocated_gib"]) for summary in summaries]
             ),
+            "median_moe_forward_calls": median_moe_metric(
+                summaries, "moe_backend_forward_calls"
+            ),
+            "median_moe_host_metadata_syncs": median_moe_metric(
+                summaries, "moe_backend_host_metadata_syncs"
+            ),
+            "median_moe_host_metadata_syncs_per_forward": median_moe_ratio(
+                summaries,
+                "moe_backend_host_metadata_syncs",
+                "moe_backend_forward_calls",
+            ),
+            "median_moe_weight_cache_refreshes": median_moe_metric(
+                summaries, "moe_backend_weight_cache_refreshes"
+            ),
+            "median_moe_weight_cache_hits": median_moe_metric(
+                summaries, "moe_backend_weight_cache_hits"
+            ),
+            "median_moe_weight_cache_refresh_gib": median_moe_metric(
+                summaries, "moe_backend_weight_cache_refresh_gib"
+            ),
+            "median_moe_storage_pack_count": median_moe_metric(
+                summaries, "moe_backend_storage_pack_count"
+            ),
+            "median_moe_storage_pack_gib": median_moe_metric(
+                summaries, "moe_backend_storage_pack_gib"
+            ),
         }
     manifest["completed_utc"] = datetime.now(UTC).isoformat()
     manifest["aggregate"] = aggregate
     atomic_json(args.output / "matrix.json", manifest)
+    pinned.close()
     print(json.dumps(aggregate, indent=2, sort_keys=True))
 
 

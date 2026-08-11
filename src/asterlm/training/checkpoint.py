@@ -5,6 +5,8 @@ import os
 import random
 import shutil
 import uuid
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
@@ -41,6 +43,22 @@ def _restore_rng(state: dict[str, Any]) -> None:
     torch.set_rng_state(state["torch"])
     if torch.cuda.is_available() and "cuda" in state:
         torch.cuda.set_rng_state_all(state["cuda"])
+
+
+@contextmanager
+def checkpoint_compatible_parameter_storage(
+    model: torch.nn.Module,
+) -> Iterator[dict[str, float]]:
+    """Materialize partial shared views for Safetensors, then restore packing."""
+
+    materialize = getattr(model, "materialize_grouped_expert_storage", None)
+    repack = getattr(model, "pack_grouped_expert_storage", None)
+    materialized = materialize() if callable(materialize) else {}
+    try:
+        yield materialized
+    finally:
+        if materialized and callable(repack):
+            repack()
 
 
 def save_checkpoint(
@@ -83,17 +101,18 @@ def save_checkpoint(
     )
     try:
         model_path = staging / "model.safetensors"
-        try:
-            from safetensors.torch import save_model
-        except ImportError:
-            model_path = staging / "model.pt"
-            torch.save(model.state_dict(), model_path)
-        else:
-            save_model(
-                model,
-                str(model_path),
-                metadata={"format": "pt", "architecture": "AsterLM"},
-            )
+        with checkpoint_compatible_parameter_storage(model):
+            try:
+                from safetensors.torch import save_model
+            except ImportError:
+                model_path = staging / "model.pt"
+                torch.save(model.state_dict(), model_path)
+            else:
+                save_model(
+                    model,
+                    str(model_path),
+                    metadata={"format": "pt", "architecture": "AsterLM"},
+                )
 
         trainer_state = staging / "trainer_state.pt"
         torch.save(
@@ -290,13 +309,15 @@ def load_model_weights(model: torch.nn.Module, checkpoint: str | Path, strict: b
     if safe.suffix == ".safetensors" and safe.exists():
         from safetensors.torch import load_model
 
-        missing, unexpected = load_model(model, str(safe), strict=strict)
+        with checkpoint_compatible_parameter_storage(model):
+            missing, unexpected = load_model(model, str(safe), strict=strict)
         if strict and (missing or unexpected):
             raise RuntimeError(f"Checkpoint mismatch; missing={missing}, unexpected={unexpected}")
     else:
         pt = checkpoint / "model.pt" if checkpoint.is_dir() else checkpoint
         state = torch.load(pt, map_location="cpu", weights_only=True)
-        model.load_state_dict(state, strict=strict)
+        with checkpoint_compatible_parameter_storage(model):
+            model.load_state_dict(state, strict=strict)
     return checkpoint
 
 
