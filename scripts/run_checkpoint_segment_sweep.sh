@@ -10,6 +10,15 @@ commit="$1"
 output_root="$2"
 model_config="$3"
 train_config="$4"
+segments="${ASTER_SWEEP_SEGMENTS:-2,4,8}"
+segments="${segments//,/ }"
+steps="${ASTER_SWEEP_STEPS:-20}"
+warmup="${ASTER_SWEEP_WARMUP:-5}"
+repetitions="${ASTER_SWEEP_REPETITIONS:-2}"
+sequence="${ASTER_SWEEP_SEQUENCE:-2048}"
+batch="${ASTER_SWEEP_BATCH:-4}"
+accum="${ASTER_SWEEP_ACCUM:-4}"
+optimizer="${ASTER_SWEEP_OPTIMIZER:-adamw}"
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 short_commit="$(git -C "$repo_root" rev-parse --short=12 "$commit")"
 worktree="/tmp/aster-bench-${short_commit}"
@@ -48,7 +57,11 @@ model_root="$(dirname "$model_config")"
 model_filename="$(basename "$model_config")"
 mkdir -p "$output_root"
 
-for segment in 2 4 8; do
+for segment in $segments; do
+  if [[ ! "$segment" =~ ^[1-9][0-9]*$ ]]; then
+    echo "invalid checkpoint segment size: $segment" >&2
+    exit 7
+  fi
   target="$output_root/segment${segment}"
   if [[ -e "$target" ]]; then
     echo "refusing to overwrite existing benchmark output: $target" >&2
@@ -58,13 +71,13 @@ for segment in 2 4 8; do
     --config-root "$model_root" \
     --train-config "$train_config" \
     --output "$target" \
-    --steps 20 \
-    --warmup 5 \
-    --repetitions 2 \
-    --sequence 2048 \
-    --batch 4 \
-    --accum 4 \
-    --optimizer adamw \
+    --steps "$steps" \
+    --warmup "$warmup" \
+    --repetitions "$repetitions" \
+    --sequence "$sequence" \
+    --batch "$batch" \
+    --accum "$accum" \
+    --optimizer "$optimizer" \
     --checkpoint-segment-size "$segment" \
     --variant-spec "k3-cutlass=${model_filename}=cutlass" \
     --variants k3-cutlass
