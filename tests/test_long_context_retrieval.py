@@ -7,6 +7,7 @@ import torch
 
 from asterlm.experiments.long_context import (
     build_exact_key_case,
+    build_retrieval_case,
     score_retrieval_case,
     summarize_retrieval_results,
 )
@@ -74,6 +75,39 @@ def test_exact_key_case_rejects_invalid_geometry():
         build_exact_key_case(tokenizer, target_sequence_tokens=2, depth=0.5, seed=7)
 
 
+@pytest.mark.parametrize("task", ["exact_key", "repeated_key", "two_hop"])
+def test_all_retrieval_tasks_are_deterministic_and_exact_length(task):
+    tokenizer = CharacterTokenizer()
+    first = build_retrieval_case(
+        tokenizer,
+        task=task,
+        target_sequence_tokens=768,
+        depth=0.25,
+        seed=91,
+    )
+    second = build_retrieval_case(
+        tokenizer,
+        task=task,
+        target_sequence_tokens=768,
+        depth=0.25,
+        seed=91,
+    )
+    assert first == second
+    assert first.task == task
+    assert first.prompt_tokens + first.answer_tokens == 768
+
+
+def test_unknown_retrieval_task_is_rejected():
+    with pytest.raises(ValueError, match="unknown retrieval task"):
+        build_retrieval_case(
+            CharacterTokenizer(),
+            task="unknown",
+            target_sequence_tokens=768,
+            depth=0.25,
+            seed=91,
+        )
+
+
 def test_teacher_forced_score_uses_incremental_cache_and_exact_token_metric():
     case = build_exact_key_case(
         CharacterTokenizer(),
@@ -94,6 +128,7 @@ def test_retrieval_summary_keeps_lengths_separate():
     rows = [
         {
             "status": "ok",
+            "task": "exact_key",
             "target_sequence_tokens": 4096,
             "answer_exact_greedy": True,
             "answer_mean_nll": 1.0,
@@ -103,6 +138,7 @@ def test_retrieval_summary_keeps_lengths_separate():
         },
         {
             "status": "ok",
+            "task": "two_hop",
             "target_sequence_tokens": 8192,
             "answer_exact_greedy": False,
             "answer_mean_nll": 2.0,
@@ -115,3 +151,5 @@ def test_retrieval_summary_keeps_lengths_separate():
     assert summary["exact_greedy_accuracy"] == 0.5
     assert summary["by_length"]["4096"]["exact_greedy_accuracy"] == 1.0
     assert summary["by_length"]["8192"]["mean_answer_nll"] == 2.0
+    assert summary["by_task"]["exact_key"]["exact_greedy_accuracy"] == 1.0
+    assert summary["by_task"]["two_hop"]["by_length"]["8192"]["cases"] == 1

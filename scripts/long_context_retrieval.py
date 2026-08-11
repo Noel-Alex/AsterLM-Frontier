@@ -9,7 +9,7 @@ from pathlib import Path
 from asterlm.artifacts import atomic_write_json, atomic_write_text
 from asterlm.experiments.long_context import (
     LONG_CONTEXT_CASE_SCHEMA_VERSION,
-    build_exact_key_case,
+    build_retrieval_case,
     score_retrieval_case,
     summarize_retrieval_results,
 )
@@ -54,6 +54,7 @@ def main() -> None:
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--lengths", default="4096,8192,16384,32768,65536,131072")
     parser.add_argument("--depths", default="0.1,0.5,0.9")
+    parser.add_argument("--tasks", default="exact_key,repeated_key,two_hop")
     parser.add_argument("--repeats", type=int, default=3)
     parser.add_argument("--seed", type=int, default=2026)
     parser.add_argument("--prefill-chunk-size", type=int, default=2048)
@@ -69,8 +70,9 @@ def main() -> None:
         raise ValueError("--repeats must be positive")
     lengths = _csv_ints(args.lengths)
     depths = _csv_floats(args.depths)
-    if not lengths or not depths:
-        raise ValueError("--lengths and --depths must not be empty")
+    tasks = [item.strip() for item in args.tasks.split(",") if item.strip()]
+    if not lengths or not depths or not tasks:
+        raise ValueError("--lengths, --depths, and --tasks must not be empty")
 
     source = assert_current_checkout_source()
     if source is not None and source.get("dirty") and not args.allow_dirty_source:
@@ -105,6 +107,7 @@ def main() -> None:
         "device": args.device,
         "lengths": lengths,
         "depths": depths,
+        "tasks": tasks,
         "repeats": args.repeats,
         "seed": args.seed,
         "prefill_chunk_size": args.prefill_chunk_size,
@@ -119,31 +122,39 @@ def main() -> None:
     atomic_write_json(output / "plan.json", plan)
 
     results = list(existing)
-    for length in lengths:
-        for depth in depths:
-            for repeat in range(args.repeats):
-                case_seed = args.seed + length * 1_009 + round(depth * 10_000) * 97 + repeat
-                case = build_exact_key_case(
-                    tokenizer,
-                    target_sequence_tokens=length,
-                    depth=depth,
-                    seed=case_seed,
-                )
-                if case.case_id in completed_ids:
-                    continue
-                result = score_retrieval_case(
-                    model,
-                    case,
-                    device=args.device,
-                    prefill_chunk_size=args.prefill_chunk_size,
-                )
-                _append_result(results_path, result)
-                results.append(result)
-                completed_ids.add(case.case_id)
-                atomic_write_json(
-                    summary_path,
-                    {**plan, "status": "running", **summarize_retrieval_results(results)},
-                )
+    for task_index, task in enumerate(tasks):
+        for length in lengths:
+            for depth in depths:
+                for repeat in range(args.repeats):
+                    case_seed = (
+                        args.seed
+                        + task_index * 10_000_019
+                        + length * 1_009
+                        + round(depth * 10_000) * 97
+                        + repeat
+                    )
+                    case = build_retrieval_case(
+                        tokenizer,
+                        task=task,
+                        target_sequence_tokens=length,
+                        depth=depth,
+                        seed=case_seed,
+                    )
+                    if case.case_id in completed_ids:
+                        continue
+                    result = score_retrieval_case(
+                        model,
+                        case,
+                        device=args.device,
+                        prefill_chunk_size=args.prefill_chunk_size,
+                    )
+                    _append_result(results_path, result)
+                    results.append(result)
+                    completed_ids.add(case.case_id)
+                    atomic_write_json(
+                        summary_path,
+                        {**plan, "status": "running", **summarize_retrieval_results(results)},
+                    )
 
     atomic_write_json(
         summary_path,
