@@ -461,10 +461,18 @@ python scripts/benchmark_cache_quantization.py --tokens 32768
 python scripts/benchmark_speculative.py \
   --checkpoint artifacts/aster-frontier-dpo-osp-folded \
   --new-tokens 128
-python scripts/needle_test.py \
+python scripts/long_context_retrieval.py \
   --checkpoint artifacts/aster-frontier-dpo-osp-folded \
-  --lengths 8192,16384,32768
+  --lengths 8192,16384,32768 \
+  --depths 0.1,0.5,0.9 \
+  --repeats 3 \
+  --output runs/long-context/aster-frontier-dpo
 ```
+
+The retrieval evaluator uses exact token budgets and teacher-forced answer-token
+scoring, so it also works on base pretraining checkpoints without requiring chat or
+instruction-following behavior. It verifies the checkpoint manifest, rejects dirty
+source by default, appends every completed case durably, and resumes by case ID.
 
 ## 12. Rules that prevent accidental corruption
 

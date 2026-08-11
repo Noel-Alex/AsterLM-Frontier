@@ -105,6 +105,14 @@ no single axis substitutes for the others.
 - report accuracy and latency/memory together, never cache fit alone;
 - compare against full/dense MLA with the largest context that safely runs.
 
+The first implemented gate is `scripts/long_context_retrieval.py`: deterministic
+exact-key retrieval with token-positioned depth, exact prompt-plus-answer length,
+teacher-forced answer NLL/greedy recall, real incremental-cache prefill, case-level
+JSONL durability and source/checkpoint provenance. This deliberately evaluates base
+pretraining checkpoints before instruction tuning. Repeated-key interference,
+multi-hop retrieval, long-code dependency and natural-document perplexity remain
+separate required tasks; the exact-key gate alone cannot promote long context.
+
 ## Recipe ablations
 
 - KDA head dimension and projection expansion;
