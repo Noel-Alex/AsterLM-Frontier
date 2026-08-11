@@ -22,12 +22,24 @@ def test_modal_profiles_are_aliases_only(tmp_path):
 
 def test_provider_catalog_has_sources_and_readiness():
     rows = providers.provider_status()
-    assert {"local", "modal", "lightning", "huggingface_jobs", "skypilot"} <= {
+    assert {"local", "modal", "gcp", "lightning", "huggingface_jobs", "skypilot"} <= {
         row["id"] for row in rows
     }
     for row in rows:
         assert isinstance(row["ready"], bool)
         assert row["researched_at"]
+
+
+def test_gcp_fallback_profile_never_implies_authentication(monkeypatch):
+    monkeypatch.setattr(providers, "_command", lambda _name: None)
+    row = next(
+        item
+        for item in providers.provider_status({"gcp_profiles": ["google-credit"]})
+        if item["id"] == "gcp"
+    )
+    assert row["profiles"] == ["google-credit"]
+    assert row["authenticated"] is False
+    assert row["ready"] is False
 
 
 def test_command_probe_keeps_virtualenv_sibling_path(tmp_path, monkeypatch):

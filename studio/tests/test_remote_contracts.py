@@ -25,6 +25,22 @@ def _providers(ready: bool = True) -> list[dict]:
     return [{"id": "modal", "ready": ready, "profiles": ["student"]}]
 
 
+def test_gcp_contract_selects_real_dispatch_adapter(tmp_path):
+    for name in ("model.yaml", "train.yaml", "data.yaml"):
+        (tmp_path / name).write_text(name, encoding="utf-8")
+    payload = _payload()
+    payload.update({"provider": "gcp", "profile_alias": "google-credit"})
+    contract = build_contract(
+        payload,
+        root=tmp_path,
+        policy={"max_spend_usd_per_job": 30, "require_cost_confirmation": True},
+        providers=[{"id": "gcp", "ready": False, "profiles": ["google-credit"]}],
+        repository={"commit": "c" * 40, "dirty": False},
+    )
+    assert contract["dispatch_adapter"] == "gcloud_compute_v1"
+    assert contract["blockers"] == ["provider_not_ready"]
+
+
 def test_contract_hashes_inputs_and_never_contains_credentials(tmp_path):
     for name in ("model.yaml", "train.yaml", "data.yaml"):
         (tmp_path / name).write_text(name, encoding="utf-8")

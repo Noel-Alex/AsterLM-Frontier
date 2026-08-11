@@ -27,6 +27,13 @@ SOURCE_ALIASES = {
     "stack_edu": ("stack_edu", "stack-edu", "stack", "code"),
     "cosmopedia_v2": ("cosmopedia_v2", "cosmopedia-v2", "cosmopedia"),
 }
+DEFAULT_SOURCE_WEIGHTS = {
+    "fineweb_edu": 35,
+    "dclm": 15,
+    "finemath_4plus": 20,
+    "stack_edu": 20,
+    "cosmopedia_v2": 10,
+}
 RECORD_SUFFIXES = (
     ".jsonl", ".jsonl.gz", ".jsonl.zst", ".json", ".parquet", ".txt", ".md", ".markdown"
 )
@@ -238,6 +245,7 @@ def materialize_proxy(
     val_target: int,
     seed: int,
     output_dir: Path,
+    source_weights: dict[str, int],
 ) -> tuple[Path, Path, dict]:
     """Materialize a hash-disjoint proxy corpus with *token* quotas per source.
 
@@ -251,6 +259,11 @@ def materialize_proxy(
     train_file = output_dir / "train.jsonl"
     val_file = output_dir / "val.jsonl"
     meta_file = output_dir / "manifest.json"
+    names = [name for name in source_weights if name in sources]
+    if len(names) < 2:
+        raise RuntimeError(f"Need at least two local corpus families, found {names}")
+    total_weight = sum(source_weights[name] for name in names)
+    normalized = {name: source_weights[name] / total_weight for name in names}
     if meta_file.is_file() and train_file.is_file() and val_file.is_file():
         try:
             meta = json.loads(meta_file.read_text())
@@ -258,25 +271,13 @@ def materialize_proxy(
                 meta.get("train_tokens", 0) >= train_target
                 and meta.get("val_tokens", 0) >= val_target
                 and meta.get("quota_mode") == "per_source_tokens_v2"
+                and meta.get("source_weights_normalized") == normalized
             ):
                 return train_file, val_file, meta
         except Exception:
             pass
 
     tok = AsterTokenizer(tokenizer_path)
-    source_weights = {
-        "fineweb_edu": 35,
-        "dclm": 15,
-        "finemath_4plus": 20,
-        "stack_edu": 20,
-        "cosmopedia_v2": 10,
-    }
-    names = [n for n in source_weights if n in sources]
-    if len(names) < 2:
-        raise RuntimeError(f"Need at least two local corpus families, found {names}")
-    total_weight = sum(source_weights[n] for n in names)
-    normalized = {n: source_weights[n] / total_weight for n in names}
-
     def quotas(total: int) -> dict[str, int]:
         q = {n: int(total * normalized[n]) for n in names}
         # Assign integer-rounding remainder deterministically to the largest weights.
@@ -386,6 +387,7 @@ def materialize_proxy(
         "source_tokens": dict(source_tokens),
         "source_quotas": quota_report,
         "source_weights_normalized": normalized,
+        "excluded_sources": sorted(set(DEFAULT_SOURCE_WEIGHTS) - set(source_weights)),
         "sources": {k: str(v) for k, v in sources.items()},
         "dedup_hashes": len(seen),
         "split_rule": "blake2b128(text) first32bits mod10 == 0 => validation",
@@ -437,10 +439,22 @@ def main() -> None:
     parser.add_argument("--seed", type=int, default=1337)
     parser.add_argument("--output", type=Path, default=DEFAULT_RUN)
     parser.add_argument("--tokenizer-output", type=Path, default=DEFAULT_TOKENIZER)
+    parser.add_argument(
+        "--exclude-source",
+        action="append",
+        default=["stack_edu"],
+        choices=sorted(SOURCE_ALIASES),
+        help="Exclude a corpus family from tokenizer and proxy materialization; repeatable.",
+    )
     args = parser.parse_args()
     output_dir = args.output.resolve()
     tokenizer_output = args.tokenizer_output.resolve()
-    sources = discover_sources()
+    discovered = discover_sources()
+    excluded = set(args.exclude_source)
+    sources = {name: path for name, path in discovered.items() if name not in excluded}
+    source_weights = {
+        name: weight for name, weight in DEFAULT_SOURCE_WEIGHTS.items() if name not in excluded
+    }
     output_dir.mkdir(parents=True, exist_ok=True)
     (output_dir / "source-discovery.json").write_text(
         json.dumps({k: str(v) for k, v in sources.items()}, indent=2), encoding="utf-8"
@@ -457,6 +471,7 @@ def main() -> None:
         args.val_tokens,
         args.seed,
         output_dir,
+        source_weights,
     )
     data = write_data_config(train, val, output_dir)
     result = {

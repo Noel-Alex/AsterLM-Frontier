@@ -36,6 +36,8 @@ REMOTE_CONTRACT_ROOT = STUDIO_ROOT / "remote-contracts"
 CATALOG_PATH = ROOT / "studio" / "catalog.yaml"
 STATIC_ROOT = ROOT / "studio" / "static"
 GIB = 2**30
+_EXECUTION_BACKEND_CACHE: dict[str, Any] = {"updated": 0.0, "rows": []}
+_EXECUTION_BACKEND_LOCK = threading.Lock()
 
 DEFAULT_SETTINGS: dict[str, Any] = {
     "download": {
@@ -66,6 +68,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
         "require_cost_confirmation": True,
         "max_spend_usd_per_job": 30.0,
         "huggingface_namespaces": [],
+        "gcp_profiles": ["google-credit"],
         "lightning_profiles": [],
         "skypilot_workspaces": [],
         "aws_profiles": [],
@@ -370,6 +373,41 @@ def system_info() -> dict[str, Any]:
     except Exception as exc:
         result["gpu"] = {"available": False, "error": str(exc)}
     return result
+
+
+def execution_backend_status(ttl_seconds: float = 30.0) -> list[dict[str, Any]]:
+    """Return a cached, evidence-separated view of training runtime readiness."""
+
+    now = time.monotonic()
+    with _EXECUTION_BACKEND_LOCK:
+        cached = _EXECUTION_BACKEND_CACHE["rows"]
+        if cached and now - float(_EXECUTION_BACKEND_CACHE["updated"]) < ttl_seconds:
+            return list(cached)
+        try:
+            import torch
+
+            from asterlm.training.execution import probe_execution_backends
+
+            device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+            capabilities = probe_execution_backends(
+                device,
+                lock_path=ROOT / "configs/research/upstream_sources_2026-08-10.yaml",
+            )
+            rows = [capability.to_dict() for capability in capabilities.values()]
+        except (ImportError, OSError, RuntimeError, ValueError) as exc:
+            rows = [
+                {
+                    "backend": "probe",
+                    "importable": False,
+                    "adapter_implemented": False,
+                    "promoted": False,
+                    "topology_supported": False,
+                    "usable": False,
+                    "blockers": [f"Capability probe failed: {type(exc).__name__}: {exc}"],
+                }
+            ]
+        _EXECUTION_BACKEND_CACHE.update({"updated": now, "rows": rows})
+        return list(rows)
 
 def tail_lines(path: Path, limit: int = 300) -> list[str]:
     if not path.is_file():
@@ -1195,6 +1233,7 @@ def overview() -> dict[str, Any]:
         "jobs": JOBS.list(),
         "runs": runs_status(),
         "capabilities": cap,
+        "execution_backends": execution_backend_status(),
         "settings": settings(),
         "providers": provider_status(settings().get("providers")),
     }
@@ -1286,6 +1325,8 @@ class Handler(BaseHTTPRequestHandler):
                 if report is None:
                     report = {"checks": catalog().get("capability_research", [])}
                 return self.send_json(report)
+            if path == "/api/execution-backends":
+                return self.send_json(execution_backend_status())
             if path == "/api/providers":
                 return self.send_json(provider_status(settings().get("providers")))
             if path == "/api/provider/contracts":

@@ -3,11 +3,12 @@ from __future__ import annotations
 import os
 import re
 import shutil
+import subprocess
 import sys
 from pathlib import Path
 from typing import Any
 
-RESEARCHED_AT = "2026-08-10"
+RESEARCHED_AT = "2026-08-11"
 
 
 PROVIDER_CATALOG: dict[str, dict[str, Any]] = {
@@ -24,6 +25,13 @@ PROVIDER_CATALOG: dict[str, dict[str, Any]] = {
         "automation": "profile-aware",
         "credit": "$30/month Starter compute credit; academic grants up to $10k",
         "source_url": "https://modal.com/pricing",
+    },
+    "gcp": {
+        "label": "Google Cloud Compute Engine",
+        "kind": "gpu-vm-job",
+        "automation": "gcloud-contract",
+        "credit": "$300 Welcome credit; GPU access requires activating paid billing and quota",
+        "source_url": "https://cloud.google.com/free/docs/free-cloud-features",
     },
     "lightning": {
         "label": "Lightning AI",
@@ -84,6 +92,40 @@ def _modal_profiles(path: Path) -> list[str]:
     return sorted({name.strip() for name in names if name.strip() not in {"settings"}})
 
 
+SAFE_PROFILE = re.compile(r"^[A-Za-z0-9_.-]+$")
+
+
+def _gcloud_profiles(command: str | None) -> tuple[list[str], bool]:
+    """Return configuration aliases and auth presence, never account names or tokens."""
+    if not command:
+        return [], False
+    try:
+        configurations = subprocess.run(
+            [command, "config", "configurations", "list", "--format=value(name)"],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        auth = subprocess.run(
+            [command, "auth", "list", "--filter=status:ACTIVE", "--format=value(status)"],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return [], False
+    profiles = sorted(
+        {
+            value.strip()
+            for value in configurations.stdout.splitlines()
+            if value.strip() and SAFE_PROFILE.fullmatch(value.strip())
+        }
+    )
+    return profiles, bool(auth.returncode == 0 and auth.stdout.strip())
+
+
 def provider_status(provider_settings: dict[str, Any] | None = None) -> list[dict[str, Any]]:
     """Build a secret-safe provider readiness report for Studio.
 
@@ -97,6 +139,16 @@ def provider_status(provider_settings: dict[str, Any] | None = None) -> list[dic
         or (Path.home() / ".modal.toml")
     ).expanduser()
     modal_profiles = _modal_profiles(modal_path)
+    gcloud_command = _command("gcloud")
+    gcloud_profiles, gcloud_authenticated = _gcloud_profiles(gcloud_command)
+    if not gcloud_profiles:
+        gcloud_profiles = sorted(
+            {
+                str(value)
+                for value in config.get("gcp_profiles", [])
+                if SAFE_PROFILE.fullmatch(str(value))
+            }
+        )
     hf_token_present = bool(os.environ.get("HF_TOKEN")) or any(
         path.is_file()
         for path in (
@@ -117,6 +169,17 @@ def provider_status(provider_settings: dict[str, Any] | None = None) -> list[dic
             "profiles": modal_profiles,
             "active_profile": os.environ.get("MODAL_PROFILE"),
             "credential_store": str(modal_path) if modal_path.is_file() else None,
+        },
+        "gcp": {
+            "installed": bool(gcloud_command),
+            "authenticated": gcloud_authenticated,
+            "profiles": gcloud_profiles,
+            "active_profile": os.environ.get("CLOUDSDK_ACTIVE_CONFIG_NAME"),
+            "credential_store": None,
+            "blockers": [
+                "activate_paid_billing_for_gpu",
+                "request_regional_gpu_quota",
+            ],
         },
         "lightning": {
             "installed": bool(_command("lightning")),

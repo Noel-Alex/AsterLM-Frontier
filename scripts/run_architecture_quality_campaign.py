@@ -62,6 +62,7 @@ def _train_payload(
     seed: int,
     max_tokens: int,
     tokenizer: Path,
+    train_overrides: dict[str, Any],
     no_compile: bool,
     resume: Path | None,
 ) -> dict[str, Any]:
@@ -71,6 +72,12 @@ def _train_payload(
     else:
         train = payload
         payload = {"train": train}
+    train.update(copy.deepcopy(train_overrides))
+    if no_compile and train.get("compile") is True:
+        raise ValueError(
+            "--no-compile cannot relabel an execution variant that requires compile=true; "
+            "select the corresponding eager variant instead"
+        )
     train["output_dir"] = run_dir.as_posix()
     train["seed"] = seed
     train["deterministic_named_initialization"] = True
@@ -96,6 +103,34 @@ def _train_payload(
     return payload
 
 
+def _execution_matrix(
+    materialized: dict[str, Any],
+    candidates: tuple[str, ...],
+    requested_variants: tuple[str, ...],
+) -> list[tuple[str, str]]:
+    known_variants = set(materialized["execution_variants"])
+    unknown = sorted(set(requested_variants) - known_variants)
+    if unknown:
+        raise ValueError(f"Unknown execution variants: {unknown}")
+    requested = set(requested_variants)
+    matrix: list[tuple[str, str]] = []
+    for candidate_id in candidates:
+        allowed = materialized["candidates"][candidate_id]["execution_variants"]
+        for variant_id in allowed:
+            if not requested or variant_id in requested:
+                matrix.append((candidate_id, variant_id))
+    if requested:
+        unused = sorted(requested - {variant_id for _, variant_id in matrix})
+        if unused:
+            raise ValueError(
+                "Requested execution variants do not apply to the selected candidates: "
+                f"{unused}"
+            )
+    if not matrix:
+        raise ValueError("The selected candidates and execution variants produce an empty matrix")
+    return matrix
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Run source-pinned, shared-initialization architecture quality comparisons"
@@ -109,11 +144,21 @@ def main() -> None:
     parser.add_argument(
         "--data",
         type=Path,
-        default=Path("runs/architecture-campaign/quality-data-100m/data-proxy.yaml"),
+        default=Path("runs/architecture-campaign/quality-data-100m-stackfree/data-proxy.yaml"),
     )
-    parser.add_argument("--tokenizer", type=Path, default=Path("artifacts/tokenizer_proxy.json"))
+    parser.add_argument(
+        "--tokenizer",
+        type=Path,
+        default=Path("artifacts/tokenizer_quality_stackfree.json"),
+    )
     parser.add_argument("--output", type=Path, default=Path("runs/architecture-campaign/quality"))
     parser.add_argument("--candidate", action="append", default=[])
+    parser.add_argument(
+        "--execution-variant",
+        action="append",
+        default=[],
+        help="Run only this physical execution variant; repeat to select a matched subset.",
+    )
     parser.add_argument("--seed", action="append", type=int, default=[])
     parser.add_argument("--tokens", type=int, default=16_777_216)
     parser.add_argument("--preflight-only", action="store_true")
@@ -149,6 +194,11 @@ def main() -> None:
     unknown = sorted(set(candidates) - set(materialized["candidates"]))
     if unknown:
         raise ValueError(f"Unknown campaign candidates: {unknown}")
+    execution_matrix = _execution_matrix(
+        materialized,
+        candidates,
+        tuple(args.execution_variant),
+    )
 
     configs = [
         (
@@ -163,7 +213,7 @@ def main() -> None:
         str(seed): audit_named_initialization(configs, seed) for seed in seeds
     }
     manifest: dict[str, Any] = {
-        "schema_version": 1,
+        "schema_version": 2,
         "status": "preflight_ok",
         "source_provenance": source,
         "campaign": _portable(campaign_path, root),
@@ -171,6 +221,11 @@ def main() -> None:
         "data": _portable(data_path, root),
         "tokenizer": _portable(tokenizer, root),
         "candidates": list(candidates),
+        "execution_variants": sorted({variant for _, variant in execution_matrix}),
+        "execution_matrix": [
+            {"candidate_id": candidate, "execution_variant": variant}
+            for candidate, variant in execution_matrix
+        ],
         "seeds": list(seeds),
         "tokens_per_candidate": args.tokens,
         "initialization_audits": initialization_audits,
@@ -185,11 +240,11 @@ def main() -> None:
     base_train = yaml.safe_load(train_path.read_text(encoding="utf-8")) or {}
     failures = 0
     for seed in seeds:
-        for candidate_id in candidates:
-            run_dir = output / f"seed-{seed}" / candidate_id
+        for candidate_id, variant_id in execution_matrix:
+            run_dir = output / f"seed-{seed}" / candidate_id / variant_id
             existing = summarize_quality_run(run_dir)
             if existing["status"] == "ok" and existing["tokens_seen"] >= args.tokens:
-                manifest["runs"][f"{seed}:{candidate_id}"] = existing
+                manifest["runs"][f"{seed}:{candidate_id}:{variant_id}"] = existing
                 atomic_write_json(output / "quality-campaign.json", manifest)
                 continue
             resume = latest_complete_checkpoint(run_dir)
@@ -204,13 +259,23 @@ def main() -> None:
                 seed=seed,
                 max_tokens=args.tokens,
                 tokenizer=tokenizer,
+                train_overrides=materialized["execution_variants"][variant_id][
+                    "train_overrides"
+                ],
                 no_compile=args.no_compile,
                 resume=resume,
             )
-            generated = output / "train-configs" / f"seed-{seed}-{candidate_id}.yaml"
+            generated = (
+                output
+                / "train-configs"
+                / f"seed-{seed}-{candidate_id}--{variant_id}.yaml"
+            )
             generated.parent.mkdir(parents=True, exist_ok=True)
             generated.write_text(yaml.safe_dump(train_payload, sort_keys=False), encoding="utf-8")
-            model_path = Path(materialized["candidates"][candidate_id]["materialized_config"])
+            effective_variant = materialized["candidates"][candidate_id][
+                "effective_variants"
+            ][variant_id]
+            model_path = Path(effective_variant["materialized_config"])
             command = [
                 sys.executable,
                 str(root / "scripts/train_pretrain.py"),
@@ -227,18 +292,29 @@ def main() -> None:
             environment["ASTERLM_EXPERIMENT_HYPOTHESIS"] = str(
                 materialized["candidates"][candidate_id]["hypothesis"]
             )
+            environment["ASTERLM_EXECUTION_VARIANT"] = variant_id
+            environment_delta = dict(effective_variant["environment"])
+            environment.update(environment_delta)
             print("$", " ".join(command), flush=True)
             completed = subprocess.run(command, cwd=root, env=environment, check=False)
             summary = summarize_quality_run(run_dir)
             summary.update(
                 {
                     "candidate_id": candidate_id,
+                    "execution_variant": variant_id,
                     "seed": seed,
                     "returncode": completed.returncode,
                     "resumed_from": str(resume) if resume is not None else None,
+                    "model_config": _portable(model_path, root),
+                    "model_config_sha256": effective_variant["config_sha256"],
+                    "train_config": _portable(generated, root),
+                    "train_overrides": materialized["execution_variants"][variant_id][
+                        "train_overrides"
+                    ],
+                    "environment": environment_delta,
                 }
             )
-            manifest["runs"][f"{seed}:{candidate_id}"] = summary
+            manifest["runs"][f"{seed}:{candidate_id}:{variant_id}"] = summary
             failures += int(completed.returncode != 0)
             manifest["status"] = "running" if failures == 0 else "partial_failure"
             atomic_write_json(output / "quality-campaign.json", manifest)

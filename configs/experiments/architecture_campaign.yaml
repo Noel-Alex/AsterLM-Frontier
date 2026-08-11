@@ -1,4 +1,4 @@
-schema_version: 1
+schema_version: 2
 objective: measured_quality_efficiency_pareto
 context_lengths: [4096, 8192, 16384, 32768, 65536, 131072]
 comparison_axes: [equal_tokens, equal_active_flops, equal_wall_time, equal_cost]
@@ -6,6 +6,52 @@ size_frontier:
   - {total_params: 900000000, active_params_min: 450000000, active_params_max: 500000000}
   - {total_params: 1500000000, active_params_min: 550000000, active_params_max: 650000000}
   - {total_params: 1900000000, active_params_min: 700000000, active_params_max: 800000000}
+execution_variants:
+  torch-sdpa-bf16:
+    description: Eager PyTorch SDPA and BF16 control.
+    model_overrides: {attention_train_backend: sdpa, linear_backend: torch, ffn_linear_backend: torch}
+    train_overrides: {compile: false, precision_backend: amp}
+    environment: {}
+  torch-compile-bf16:
+    description: Static-shape torch.compile SDPA and BF16 path.
+    model_overrides: {attention_train_backend: sdpa, linear_backend: torch, ffn_linear_backend: torch}
+    train_overrides: {compile: true, precision_backend: amp}
+    environment: {}
+  fla-kda-bf16:
+    description: Source-pinned FLA KDA in eager BF16 execution.
+    model_overrides: {kda_backend: fla, linear_backend: torch, ffn_linear_backend: torch}
+    train_overrides: {compile: false, precision_backend: amp}
+    environment: {}
+  fla-kda-compile-bf16:
+    description: Source-pinned FLA KDA with static-shape torch.compile.
+    model_overrides: {kda_backend: fla, linear_backend: torch, ffn_linear_backend: torch}
+    train_overrides: {compile: true, precision_backend: amp}
+    environment: {}
+  fla-gdn2-bf16:
+    description: Source-pinned FLA GDN2 in eager BF16 execution.
+    model_overrides: {linear_backend: torch, ffn_linear_backend: torch}
+    train_overrides: {compile: false, precision_backend: amp}
+    environment: {}
+  fla-gdn2-compile-bf16:
+    description: Source-pinned FLA GDN2 with static-shape torch.compile.
+    model_overrides: {linear_backend: torch, ffn_linear_backend: torch}
+    train_overrides: {compile: true, precision_backend: amp}
+    environment: {}
+  torch-reference:
+    description: Reference per-expert PyTorch MoE execution in BF16.
+    model_overrides: {linear_backend: torch, ffn_linear_backend: torch}
+    train_overrides: {compile: false, precision_backend: amp}
+    environment: {ASTER_MOE_IMPL: reference}
+  transformer-engine-grouped:
+    description: Transformer Engine grouped experts with the validated FP8 surroundings.
+    model_overrides: {linear_backend: transformer_engine, ffn_linear_backend: transformer_engine}
+    train_overrides: {compile: false, precision_backend: transformer_engine_fp8}
+    environment: {ASTER_MOE_IMPL: grouped}
+  cutlass-grouped:
+    description: Current Ada winner using cached CUTLASS grouped expert GEMMs and BF16 expert weights.
+    model_overrides: {linear_backend: transformer_engine, ffn_linear_backend: transformer_engine}
+    train_overrides: {compile: false, precision_backend: transformer_engine_fp8}
+    environment: {ASTER_MOE_IMPL: cutlass}
 candidates:
   - id: tier0-dense-mla-220m
     tier: 0
@@ -79,6 +125,22 @@ candidates:
       linear_backend: torch
       ffn_linear_backend: torch
     execution_variants: [fla-kda-bf16, fla-kda-compile-bf16]
+  - id: tier1-dense-gdn2-mla-220m
+    tier: 1
+    hypothesis: A matched 3:1 GDN2/MLA hybrid beats dense MLA or KDA/MLA on quality per token or wall time.
+    base_model: configs/model/aster_220m.yaml
+    model_overrides:
+      ffn_type: dense
+      layer_pattern: [gdn2, gdn2, gdn2, latent, gdn2, gdn2, gdn2, latent, gdn2, gdn2, gdn2, latent, gdn2, gdn2, gdn2, latent, gdn2, gdn2, gdn2, latent, gdn2, gdn2, gdn2, latent]
+      mtp_depth: 0
+      norm_type: rmsnorm
+      embedding_projection: false
+      use_block_attnres: false
+      cache_dtype: bfloat16
+      rope_scaling_type: none
+      linear_backend: torch
+      ffn_linear_backend: torch
+    execution_variants: [fla-gdn2-bf16, fla-gdn2-compile-bf16]
   - id: tier0-dense-mla-480m
     tier: 0
     hypothesis: Dense MLA is the gold correctness and systems reference.
@@ -191,7 +253,7 @@ candidates:
       moe_num_experts: 4
       moe_top_k: 2
       moe_shared_experts: 0
-    execution_variants: [torch-reference, transformer-engine-grouped]
+    execution_variants: [torch-reference, transformer-engine-grouped, cutlass-grouped]
   - id: tier2-moe-e8k2
     tier: 2
     hypothesis: Eight routed experts without shared compute improve capacity at competitive time-to-quality.
@@ -200,7 +262,7 @@ candidates:
       moe_num_experts: 8
       moe_top_k: 2
       moe_shared_experts: 0
-    execution_variants: [torch-reference, transformer-engine-grouped]
+    execution_variants: [torch-reference, transformer-engine-grouped, cutlass-grouped]
   - id: tier2-moe-e8k2-shared
     tier: 2
     hypothesis: The shared expert earns its always-on compute through quality per wall time.
@@ -209,7 +271,7 @@ candidates:
       moe_num_experts: 8
       moe_top_k: 2
       moe_shared_experts: 1
-    execution_variants: [torch-reference, transformer-engine-grouped]
+    execution_variants: [torch-reference, transformer-engine-grouped, cutlass-grouped]
 research_queue:
   - {tier: 3, id: longcat-zero-compute-expert, prerequisite: tier2_routing_profile}
   - {tier: 4, id: deepseek-v4-csa-hca, prerequisite: semantic_reference_and_retrieval_harness}

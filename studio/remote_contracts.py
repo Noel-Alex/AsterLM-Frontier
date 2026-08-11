@@ -10,10 +10,10 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-CONTRACT_VERSION = 1
+CONTRACT_VERSION = 2
 SAFE_ALIAS = re.compile(r"^[A-Za-z0-9_.-]+$")
 SAFE_HUB_REPO = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
-REMOTE_PROVIDERS = {"modal", "lightning", "huggingface_jobs", "skypilot"}
+REMOTE_PROVIDERS = {"modal", "gcp", "lightning", "huggingface_jobs", "skypilot"}
 
 
 def _sha256(path: Path) -> str:
@@ -53,7 +53,10 @@ def build_contract(
 ) -> dict[str, Any]:
     provider_id = str(payload.get("provider") or policy.get("preferred") or "")
     if provider_id not in REMOTE_PROVIDERS:
-        raise ValueError("Remote contract provider must be Modal, Lightning, Hugging Face Jobs, or SkyPilot")
+        raise ValueError(
+            "Remote contract provider must be Modal, Google Cloud, Lightning, "
+            "Hugging Face Jobs, or SkyPilot"
+        )
 
     provider = next((row for row in providers if row.get("id") == provider_id), None)
     if provider is None:
@@ -135,7 +138,7 @@ def build_contract(
         "provider_ready_at_creation": bool(provider.get("ready")),
         "blockers": blockers,
         "status": "ready" if not blockers else "blocked",
-        "dispatch_adapter": "planned",
+        "dispatch_adapter": "gcloud_compute_v1" if provider_id == "gcp" else "planned",
     }
 
 

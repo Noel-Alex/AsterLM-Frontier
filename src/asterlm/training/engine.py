@@ -24,11 +24,12 @@ from asterlm.source_provenance import assert_current_checkout_source
 
 from .checkpoint import (
     load_checkpoint,
+    load_data_state,
     load_model_weights,
     pin_kda_backend_from_checkpoint,
     save_checkpoint,
 )
-from .execution import resolve_execution_engine
+from .execution import probe_execution_backends, resolve_execution_engine
 from .hub import HubRunSync
 from .metrics import JsonlLogger
 from .precision import PrecisionManager
@@ -167,13 +168,13 @@ class Trainer:
                 f"effective schedule horizon ({self.schedule_total_steps})"
             )
 
-        if train_config.resume and train_config.num_workers != 0:
-            # Worker process scheduling/prefetch state is not represented in our
-            # checkpoints. Force a single-process deterministic stream so replaying
-            # consumed microbatches restores the exact packed-data position.
+        if train_config.num_workers != 0:
+            # Worker scheduling and prefetched-but-not-consumed batches are not yet
+            # represented by the cursor protocol. Exact checkpoints therefore use
+            # the main process until worker queues become checkpointable too.
             print(
-                f"resume requested with num_workers={train_config.num_workers}; "
-                "forcing num_workers=0 for deterministic data-position recovery"
+                f"exact data checkpoints require num_workers=0; "
+                f"overriding requested num_workers={train_config.num_workers}"
             )
             train_config.num_workers = 0
             train_config.prefetch_factor = None
@@ -182,11 +183,21 @@ class Trainer:
         self.validation_loader = (
             self._build_loader(validation=True) if data_config.validation_sources else None
         )
+        resume_data_state = load_data_state(train_config.resume) if train_config.resume else None
+        if resume_data_state is not None:
+            self._restore_training_data_state(resume_data_state)
+        elif train_config.resume and self.tokens_seen:
+            if os.environ.get("ASTERLM_ALLOW_LEGACY_DATA_REPLAY") != "1":
+                raise RuntimeError(
+                    "Resume checkpoint has no exact data_state.pt. Set "
+                    "ASTERLM_ALLOW_LEGACY_DATA_REPLAY=1 only for a bounded legacy run; "
+                    "final/remote training must use checkpointable data cursors."
+                )
         self.train_iterator = iter(self.train_loader)
         self.validation_iterator = (
             iter(self.validation_loader) if self.validation_loader is not None else None
         )
-        if train_config.resume and self.tokens_seen:
+        if train_config.resume and self.tokens_seen and resume_data_state is None:
             self._restore_training_data_position()
 
         self.execution = resolve_execution_engine(model_config, train_config, self.device)
@@ -238,6 +249,10 @@ class Trainer:
             "parameter_storage": self._parameter_storage_summary(),
             "loqt_modules": sum(1 for _ in iter_loqt_modules(self.model)),
             "execution_plan": self.execution.plan.to_dict(),
+            "execution_backends": {
+                name: capability.to_dict()
+                for name, capability in probe_execution_backends(self.device).items()
+            },
             "source_provenance": self.source_provenance,
         }
         self.registry = ExperimentRegistry.create(
@@ -380,6 +395,47 @@ class Trainer:
             if (index + 1) % 100_000 == 0:
                 print(f"data-position replay: {index + 1:,}/{batches:,} microbatches")
 
+    def _restore_training_data_state(self, state: dict[str, Any]) -> None:
+        if state.get("schema_version") != 1:
+            raise RuntimeError("Unsupported training data checkpoint schema")
+        if (
+            int(state.get("step", -1)) != self.step
+            or int(state.get("tokens_seen", -1)) != self.tokens_seen
+        ):
+            raise RuntimeError("Data cursor step/token identity does not match trainer state")
+        train_state = state.get("train")
+        if not isinstance(train_state, dict):
+            raise RuntimeError("Checkpoint is missing the training data cursor")
+        load = getattr(self.train_loader.dataset, "load_state_dict", None)
+        if not callable(load):
+            raise RuntimeError("Training dataset cannot restore its checkpoint cursor")
+        load(train_state)
+        validation_state = state.get("validation")
+        if validation_state is not None:
+            if self.validation_loader is None:
+                raise RuntimeError(
+                    "Checkpoint contains validation state but no validation data is configured"
+                )
+            validation_load = getattr(self.validation_loader.dataset, "load_state_dict", None)
+            if not callable(validation_load):
+                raise RuntimeError("Validation dataset cannot restore its checkpoint cursor")
+            validation_load(validation_state)
+
+    def _training_data_state(self) -> dict[str, Any]:
+        train_state = self.train_loader.dataset.state_dict()
+        validation_state = (
+            self.validation_loader.dataset.state_dict()
+            if self.validation_loader is not None and self.validation_iterator is not None
+            else None
+        )
+        return {
+            "schema_version": 1,
+            "step": self.step,
+            "tokens_seen": self.tokens_seen,
+            "train": train_state,
+            "validation": validation_state,
+        }
+
     def _next_batch(self, validation: bool = False) -> dict[str, torch.Tensor]:
         iterator = self.validation_iterator if validation else self.train_iterator
         if iterator is None:
@@ -466,6 +522,7 @@ class Trainer:
             tag=tag,
             permanent=permanent,
             reason=reason,
+            data_state=self._training_data_state(),
         )
         self.registry.add_checkpoint(path, reason=reason)
         if self.train_config.save_diagnostic_bundle:

@@ -12,7 +12,6 @@ import numpy as np
 import torch
 import yaml
 
-from asterlm.config import AsterConfig, TrainConfig
 from asterlm.artifacts import (
     artifact_record,
     atomic_write_json,
@@ -21,6 +20,7 @@ from asterlm.artifacts import (
     fsync_file,
     sha256_file,
 )
+from asterlm.config import AsterConfig, TrainConfig
 from asterlm.optim.hybrid import HybridOptimizer, SingleOptimizerAdapter
 
 
@@ -250,6 +250,21 @@ def load_model_weights(model: torch.nn.Module, checkpoint: str | Path, strict: b
         state = torch.load(pt, map_location="cpu", weights_only=True)
         model.load_state_dict(state, strict=strict)
     return checkpoint
+
+
+def load_data_state(checkpoint: str | Path) -> dict[str, Any] | None:
+    """Load the independently hashed data cursor from a complete checkpoint."""
+    resolved = resolve_checkpoint(checkpoint)
+    if not resolved.is_dir():
+        return None
+    manifest = verify_checkpoint(resolved)
+    filename = manifest.get("data_state_file")
+    if not filename:
+        return None
+    state = torch.load(resolved / str(filename), map_location="cpu", weights_only=False)
+    if not isinstance(state, dict):
+        raise RuntimeError("Checkpoint data_state is not a mapping")
+    return state
 
 
 def load_checkpoint(

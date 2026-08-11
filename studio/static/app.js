@@ -212,6 +212,14 @@ function renderProviders() {
   const rows=S.overview?.providers||[];
   const grid=$("#provider-grid");
   if(!grid)return;
+  for(const id of ["#provider-preferred","#contract-provider"]){
+    const select=$(id);
+    if(select && !select.querySelector('option[value="gcp"]')){
+      const option=document.createElement("option");
+      option.value="gcp"; option.textContent="Google Cloud";
+      select.appendChild(option);
+    }
+  }
   grid.innerHTML=rows.map(row=>{
     const state=row.ready?"ready":row.installed?"auth needed":"not installed";
     const cls=row.ready?"good":row.installed?"warning":"ref";
@@ -226,7 +234,7 @@ function renderProviders() {
   const aliases=rows.filter(row=>(row.profiles||[]).length);
   $("#provider-profile-ledger").innerHTML=aliases.length?aliases.map(row=>`<div class="profile-row"><strong>${esc(row.label)}</strong><div>${row.profiles.map(profile=>`<span class="profile-chip">${esc(profile)}</span>`).join("")}</div></div>`).join(""):`<div class="empty-state">No provider profile aliases are visible to this WSL environment yet.</div>`;
   const preferred=S.overview?.settings?.providers?.preferred;
-  if(preferred && ["modal","lightning","huggingface_jobs","skypilot"].includes(preferred)) $("#contract-provider").value=preferred;
+  if(preferred && ["modal","gcp","lightning","huggingface_jobs","skypilot"].includes(preferred)) $("#contract-provider").value=preferred;
 }
 
 function renderPresets() {
@@ -300,6 +308,32 @@ function renderCapabilities(report) {
   }).join("");
 }
 
+function renderExecutionBackends(rows=[]) {
+  const grid=$("#execution-backend-grid");
+  if(!grid)return;
+  const labels={aster_local:"Aster local",megatron_core:"Megatron Core",torchtitan:"TorchTitan",deepspeed:"DeepSpeed",probe:"Capability probe"};
+  grid.innerHTML=rows.map(row=>{
+    let stage="not ready", cls="research-gap";
+    if(row.usable){stage="usable",cls="implemented";}
+    else if(row.promoted){stage="promoted / topology blocked",cls="optional-runtime";}
+    else if(row.adapter_implemented){stage="adapter testing",cls="optional-runtime";}
+    else if(row.source_matches_lock){stage="source pinned",cls="reference";}
+    const facts=[
+      row.importable?`package ${row.installed_version||"detected"}`:"package missing",
+      row.source_repository?(row.source_matches_lock?"source commit matched":"source lock unmatched"):"Aster source",
+      row.adapter_implemented?"adapter implemented":"adapter missing",
+      row.topology_supported?"topology supported":"topology unvalidated",
+    ];
+    const blockers=(row.blockers||[]).slice(0,3).join(" · ")||"No active blockers.";
+    return `<article class="cap-card ${cls}">
+      <div class="eyebrow">${esc(stage)}</div>
+      <h3>${esc(labels[row.backend]||row.backend)}</h3>
+      <div class="provider-facts">${facts.map(f=>`<span>${esc(f)}</span>`).join("")}</div>
+      <p>${esc(blockers)}</p>
+    </article>`;
+  }).join("")||`<div class="empty-state">Execution backend evidence is unavailable.</div>`;
+}
+
 function renderSettings() {
   const s=S.overview?.settings;if(!s)return;
   const d=s.download||{},t=s.training||{};
@@ -322,7 +356,7 @@ function renderSettings() {
 async function refreshOverview() {
   try {
     S.overview=await api("/api/overview");
-    renderOverview();renderDatasetCatalog();renderVerifyAndClean();renderSettings();renderProviders();renderRuns();renderJobs();
+    renderOverview();renderDatasetCatalog();renderVerifyAndClean();renderSettings();renderProviders();renderExecutionBackends(S.overview.execution_backends||[]);renderRuns();renderJobs();
     if(S.overview.capabilities)renderCapabilities(S.overview.capabilities);
   } catch(e){showError(e);}
 }

@@ -7,6 +7,7 @@ from asterlm import AsterConfig, AsterLM, TrainConfig
 from asterlm.optim import build_hybrid_optimizer
 from asterlm.training.checkpoint import (
     load_checkpoint,
+    load_data_state,
     pin_kda_backend_from_checkpoint,
     save_checkpoint,
     verify_checkpoint,
@@ -67,6 +68,7 @@ def test_checkpoint_round_trip(tmp_path):
     assert manifest["data_state_file"] == "data_state.pt"
     data_state = torch.load(checkpoint / "data_state.pt", weights_only=False)
     assert data_state["cursor"] == 17
+    assert load_data_state(checkpoint) == {"cursor": 17, "residual": [1, 2, 3]}
     assert {item["path"] for item in manifest["artifacts"]} >= {
         manifest["model_file"],
         "trainer_state.pt",
@@ -108,6 +110,7 @@ def test_checkpoint_rejects_explicit_backend_mismatch(tmp_path):
 
 def test_checkpoint_hash_detects_corruption(tmp_path):
     import json
+
     import pytest
 
     model_config = tiny_config()

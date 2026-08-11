@@ -1,0 +1,24 @@
+schema_version: 1
+profiles:
+  google-credit:
+    gcloud_configuration: google-credit
+    project_id: SET_AFTER_GCLOUD_LOGIN
+    region: us-central1
+    zones: [us-central1-a, us-central1-b, us-central1-c]
+    artifact_image: SET_AFTER_ARTIFACT_REGISTRY_SETUP
+    bucket: SET_AFTER_CLOUD_STORAGE_SETUP
+    service_account: SET_AFTER_IAM_SETUP
+    billing_mode: free_trial_unactivated
+    gpu_quota_confirmed: false
+    dispatch_enabled: false
+    max_spend_usd_per_job: 30.0
+    provisioning_models: [STANDARD]
+    machine_candidates:
+      - {machine_type: a3-highgpu-1g, accelerator: h100-80gb, role: primary_training_benchmark}
+      - {machine_type: a2-ultragpu-1g, accelerator: a100-80gb, role: price_per_token_control}
+      - {machine_type: g2-standard-4, accelerator: l4-24gb, role: small_model_cost_control}
+    boot_disk_gb: 200
+    checkpoint_prefix: checkpoints
+    dataset_prefix: datasets
+    hf_secret: aster-hf-token
+    wandb_secret: aster-wandb-api-key

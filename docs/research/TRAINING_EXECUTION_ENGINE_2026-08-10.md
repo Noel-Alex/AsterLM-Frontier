@@ -61,6 +61,16 @@ The plan records:
 unimplemented adapter fails loudly instead of running a different engine while the
 manifest claims otherwise.
 
+Each run manifest also contains an `execution_backends` capability report. It keeps
+the following evidence separate for every candidate: Python package importability
+and installed version, pinned upstream repository and expected commit, observed
+checkout commit, Aster adapter implementation, promotion-gate status, detected
+topology support, final usability, and explicit blockers. The probe uses module
+specification and package metadata without importing heavyweight runtimes. On the
+current WSL environment, all three external source checkouts match their exact locks;
+their packages and Aster adapters are not yet installed/promoted, so none is falsely
+reported as usable.
+
 ## Target-specific plans
 
 ### Laptop, one Ada GPU

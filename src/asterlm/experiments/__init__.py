@@ -9,6 +9,7 @@ from .benchmark import (
 from .campaign import (
     ArchitectureCampaign,
     ArchitectureCandidate,
+    ExecutionVariant,
     load_architecture_campaign,
     materialize_architecture_campaign,
 )
@@ -26,6 +27,7 @@ __all__ = [
     "REQUIRED_FINAL_RUN_GATES",
     "ArchitectureCampaign",
     "ArchitectureCandidate",
+    "ExecutionVariant",
     "BenchmarkRecordError",
     "ExperimentRegistry",
     "PromotionDecision",

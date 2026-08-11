@@ -32,6 +32,9 @@ cursor, cache-writability, and disk checks with approximately 678 GiB free.
   tokens when one decoded Arrow row group reached 4.0 GiB. The cursor and output
   shard were committed. The run resumed with a still-bounded 6 GiB process ceiling
   and the independent 2 GiB available-memory floor intact.
+- The resumed Math materializer completed successfully at 3,000,000,834 estimated
+  tokens, checkpoint 167, with `last_checkpoint_reason: target`. Its download
+  launcher exited zero and retained the run manifest and per-stage logs.
 - `nvidia/Nemotron-CC-Code-v1` remains gated for the authenticated account. Its
   license/access terms must be accepted by the user; authorization failures are not
   retried as network failures.
@@ -58,6 +61,15 @@ S3-throttling evidence are still required; early bursts are not a final benchmar
 
 The one-shard Arrow input bound remains unchanged. Only independent blob-fetch
 latency is overlapped.
+
+On the user's direction, Stack-Edu was dropped from the active acquisition plan
+after a final clean SIGINT checkpoint at 83,969,133 Python tokens. The
+partial materialization is retained as a recoverable artifact but is excluded from
+the intended training mixture and will not be resumed unless explicitly requested.
+The short tuning exercise established that 64 workers could sustain about 41k
+tok/s over a warmed committed interval, compared with roughly 36k tok/s at 32
+workers and the original roughly 5--15k tok/s at 4 workers; this result is retained
+only as downloader evidence, not as a reason to promote the dataset.
 
 ### Reasoning and post-training
 
