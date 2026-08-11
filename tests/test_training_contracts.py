@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import subprocess
 import sys
@@ -65,11 +66,50 @@ def _sealed_data(tmp_path: Path) -> tuple[Path, DataConfig]:
 
 
 def _passed_gates(path: Path) -> None:
+    evidence = path.parent / "promotion-evidence"
+    evidence.mkdir(exist_ok=True)
+    records = {}
+    for gate in [*REQUIRED_FINAL_RUN_GATES, "energy_and_power"]:
+        artifact = evidence / f"{gate}-result.json"
+        artifact.write_text(json.dumps({"gate_id": gate, "passed": True}), encoding="utf-8")
+        proof = evidence / f"{gate}-proof.json"
+        proof.write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "gate_id": gate,
+                    "status": "passed",
+                    "evaluator": {
+                        "name": "training-contract-test",
+                        "version": "1",
+                        "git_commit": "b" * 40,
+                    },
+                    "experiment_ids": [f"test-{gate}"],
+                    "artifacts": [
+                        {
+                            "path": artifact.relative_to(path.parent).as_posix(),
+                            "sha256": hashlib.sha256(artifact.read_bytes()).hexdigest(),
+                        }
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+        records[gate] = {
+            "path": proof.relative_to(path.parent).as_posix(),
+            "sha256": hashlib.sha256(proof.read_bytes()).hexdigest(),
+        }
     payload = {
-        "schema_version": 1,
+        "schema_version": 2,
+        "repo_root": ".",
         "allowed_statuses": ["not_run", "running", "passed", "failed", "blocked"],
         "gates": [
-            {"id": gate, "required": True, "status": "passed", "evidence": ["evidence"]}
+            {
+                "id": gate,
+                "required": True,
+                "status": "passed",
+                "evidence": [records[gate]],
+            }
             for gate in REQUIRED_FINAL_RUN_GATES
         ]
         + [
@@ -77,7 +117,7 @@ def _passed_gates(path: Path) -> None:
                 "id": "energy_and_power",
                 "required": False,
                 "status": "passed",
-                "evidence": ["observational"],
+                "evidence": [records["energy_and_power"]],
             }
         ],
     }

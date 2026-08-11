@@ -1,4 +1,5 @@
-schema_version: 1
+schema_version: 2
+repo_root: ../..
 policy: all_required_gates_must_pass_before_final_full_scale_training
 allowed_statuses: [not_run, running, passed, failed, blocked]
 gates:

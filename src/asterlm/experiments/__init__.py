@@ -16,6 +16,7 @@ from .campaign import (
 from .promotion import (
     REQUIRED_FINAL_RUN_GATES,
     PromotionDecision,
+    PromotionEvidence,
     PromotionGate,
     evaluate_promotion_gates,
 )
@@ -27,10 +28,11 @@ __all__ = [
     "REQUIRED_FINAL_RUN_GATES",
     "ArchitectureCampaign",
     "ArchitectureCandidate",
-    "ExecutionVariant",
     "BenchmarkRecordError",
+    "ExecutionVariant",
     "ExperimentRegistry",
     "PromotionDecision",
+    "PromotionEvidence",
     "PromotionGate",
     "evaluate_promotion_gates",
     "load_architecture_campaign",
