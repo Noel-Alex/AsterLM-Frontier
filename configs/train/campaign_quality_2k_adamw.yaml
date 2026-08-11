@@ -12,8 +12,11 @@ train:
   activation_offload: false
 
   sequence_length: 2048
-  micro_batch_size: 1
-  gradient_accumulation_steps: 8
+  # Keep the 16,384-token optimizer update fixed while exposing enough concurrent
+  # expert work to saturate the RTX 4080 Laptop. The earlier 1 x 8 geometry was a
+  # conservative correctness probe and materially underfilled grouped MoE kernels.
+  micro_batch_size: 4
+  gradient_accumulation_steps: 2
   max_steps: 100000
   max_tokens: 16777216
 

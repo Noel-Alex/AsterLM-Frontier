@@ -78,6 +78,12 @@ seed, update-token batch, optimizer, schedule, validation set and checkpoint cad
 Compare equal tokens, equal active FLOPs, equal wall time, and equal total parameters;
 no single axis substitutes for the others.
 
+The campaign quality template uses microbatch 4 x accumulation 2 at sequence 2K.
+This preserves the original 16,384 tokens per optimizer update while giving grouped
+experts enough concurrent work to avoid the known microbatch-1 utilization artifact.
+A source-pinned 1M-token rehearsal must clear memory, numerical and throughput checks
+before this geometry is used for the 16.8M/two-seed rejection screen.
+
 ## Quality ladder
 
 ### Rejection screen
