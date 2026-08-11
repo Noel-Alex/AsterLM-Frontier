@@ -15,13 +15,15 @@ profiles:
     wandb_secret: aster-wandb-api-key
     timeout_minutes: 720
     dispatch_enabled: false
+    spend_budget_confirmed: false
     max_spend_usd_per_job: 30.0
+    cost_contingency: 1.50
     gpu_candidates:
-      - {gpu: B300, min_cuda: "13.1", role: maximum_throughput_candidate}
-      - {gpu: H200, min_cuda: "12.4", role: long_context_capacity_candidate}
-      - {gpu: H100!, min_cuda: "12.1", role: exact_h100_reproducibility_candidate}
-      - {gpu: A100-80GB, min_cuda: "11.8", role: price_per_quality_control}
-      - {gpu: L40S, min_cuda: "12.1", role: low_cost_small_scale_control}
+      - {gpu: B300, min_cuda: "13.1", usd_per_second: 0.001972, role: maximum_throughput_candidate}
+      - {gpu: H200, min_cuda: "12.4", usd_per_second: 0.001261, role: long_context_capacity_candidate}
+      - {gpu: H100!, min_cuda: "12.1", usd_per_second: 0.001097, role: exact_h100_reproducibility_candidate}
+      - {gpu: A100-80GB, min_cuda: "11.8", usd_per_second: 0.000694, role: price_per_quality_control}
+      - {gpu: L40S, min_cuda: "12.1", usd_per_second: 0.000542, role: low_cost_small_scale_control}
   friend-1:
     modal_environment: main
     app_name: asterlm-boost-friend-1
@@ -36,12 +38,14 @@ profiles:
     wandb_secret: aster-wandb-api-key
     timeout_minutes: 720
     dispatch_enabled: false
+    spend_budget_confirmed: false
     max_spend_usd_per_job: 30.0
+    cost_contingency: 1.50
     gpu_candidates:
-      - {gpu: B300, min_cuda: "13.1", role: maximum_throughput_candidate}
-      - {gpu: H200, min_cuda: "12.4", role: long_context_capacity_candidate}
-      - {gpu: H100!, min_cuda: "12.1", role: exact_h100_reproducibility_candidate}
-      - {gpu: A100-80GB, min_cuda: "11.8", role: price_per_quality_control}
+      - {gpu: B300, min_cuda: "13.1", usd_per_second: 0.001972, role: maximum_throughput_candidate}
+      - {gpu: H200, min_cuda: "12.4", usd_per_second: 0.001261, role: long_context_capacity_candidate}
+      - {gpu: H100!, min_cuda: "12.1", usd_per_second: 0.001097, role: exact_h100_reproducibility_candidate}
+      - {gpu: A100-80GB, min_cuda: "11.8", usd_per_second: 0.000694, role: price_per_quality_control}
   friend-2:
     modal_environment: main
     app_name: asterlm-boost-friend-2
@@ -56,9 +60,11 @@ profiles:
     wandb_secret: aster-wandb-api-key
     timeout_minutes: 720
     dispatch_enabled: false
+    spend_budget_confirmed: false
     max_spend_usd_per_job: 30.0
+    cost_contingency: 1.50
     gpu_candidates:
-      - {gpu: B300, min_cuda: "13.1", role: maximum_throughput_candidate}
-      - {gpu: H200, min_cuda: "12.4", role: long_context_capacity_candidate}
-      - {gpu: H100!, min_cuda: "12.1", role: exact_h100_reproducibility_candidate}
-      - {gpu: A100-80GB, min_cuda: "11.8", role: price_per_quality_control}
+      - {gpu: B300, min_cuda: "13.1", usd_per_second: 0.001972, role: maximum_throughput_candidate}
+      - {gpu: H200, min_cuda: "12.4", usd_per_second: 0.001261, role: long_context_capacity_candidate}
+      - {gpu: H100!, min_cuda: "12.1", usd_per_second: 0.001097, role: exact_h100_reproducibility_candidate}
+      - {gpu: A100-80GB, min_cuda: "11.8", usd_per_second: 0.000694, role: price_per_quality_control}

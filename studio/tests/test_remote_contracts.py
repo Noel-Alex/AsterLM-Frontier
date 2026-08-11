@@ -97,6 +97,38 @@ def test_contract_records_cross_provider_hub_resume(tmp_path):
     assert "resume" not in contract["inputs"]
 
 
+def test_contract_binds_decision_grade_dataset_manifest(tmp_path):
+    (tmp_path / "model.yaml").write_text("model", encoding="utf-8")
+    (tmp_path / "train.yaml").write_text("train", encoding="utf-8")
+    manifest = {
+        "schema_version": 1,
+        "status": "complete",
+        "pipeline": {flag: True for flag in (
+            "cleaned",
+            "exact_deduplicated",
+            "near_deduplicated",
+            "cross_source_deduplicated",
+            "benchmark_decontaminated",
+            "validation_split_disjoint",
+            "pii_handled",
+        )},
+    }
+    (tmp_path / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+    (tmp_path / "data.yaml").write_text(
+        "data:\n  manifest_path: manifest.json\n", encoding="utf-8"
+    )
+    contract = build_contract(
+        _payload(),
+        root=tmp_path,
+        policy={"max_spend_usd_per_job": 30, "require_cost_confirmation": True},
+        providers=_providers(),
+        repository={"commit": "a" * 40, "dirty": False},
+    )
+    assert contract["dataset_manifest_decision_grade"] is True
+    assert contract["inputs"]["dataset_manifest"]["path"] == "manifest.json"
+    assert len(contract["inputs"]["dataset_manifest"]["sha256"]) == 64
+
+
 def test_contract_hashes_inputs_and_never_contains_credentials(tmp_path):
     for name in ("model.yaml", "train.yaml", "data.yaml"):
         (tmp_path / name).write_text(name, encoding="utf-8")

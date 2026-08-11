@@ -10,11 +10,23 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-CONTRACT_VERSION = 3
+import yaml
+
+CONTRACT_VERSION = 4
 SAFE_ALIAS = re.compile(r"^[A-Za-z0-9_.-]+$")
 SAFE_HUB_REPO = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 SAFE_HUB_REVISION = re.compile(r"^[A-Za-z0-9._/-]+$")
+SAFE_ACCELERATOR = re.compile(r"^[A-Za-z0-9._:+!-]+$")
 REMOTE_PROVIDERS = {"modal", "gcp", "lightning", "huggingface_jobs", "skypilot"}
+DECISION_DATA_FLAGS = {
+    "cleaned",
+    "exact_deduplicated",
+    "near_deduplicated",
+    "cross_source_deduplicated",
+    "benchmark_decontaminated",
+    "validation_split_disjoint",
+    "pii_handled",
+}
 
 
 def _sha256(path: Path) -> str:
@@ -76,6 +88,30 @@ def _hub_checkpoint(payload: dict[str, Any], default_repo: str) -> dict[str, str
     return {"repo_id": repo, "revision": revision, "path": path}
 
 
+def _dataset_manifest(root: Path, data_config: Path) -> tuple[dict[str, str], bool] | None:
+    config_payload = yaml.safe_load(data_config.read_text(encoding="utf-8")) or {}
+    if not isinstance(config_payload, dict):
+        return None
+    section = config_payload.get("data", config_payload)
+    manifest_value = section.get("manifest_path") if isinstance(section, dict) else None
+    if not manifest_value:
+        return None
+    manifest = _repo_file(root, str(manifest_value))
+    normalized = str(manifest.relative_to(root.resolve())).replace(os.sep, "/")
+    try:
+        payload = json.loads(manifest.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ValueError(f"Dataset manifest is unreadable: {manifest}") from exc
+    pipeline = payload.get("pipeline") if isinstance(payload, dict) else None
+    decision_grade = bool(
+        payload.get("schema_version") == 1
+        and payload.get("status") == "complete"
+        and isinstance(pipeline, dict)
+        and all(pipeline.get(flag) is True for flag in DECISION_DATA_FLAGS)
+    )
+    return {"path": normalized, "sha256": _sha256(manifest)}, decision_grade
+
+
 def git_state(root: Path) -> dict[str, Any]:
     commit = subprocess.check_output(
         ["git", "rev-parse", "HEAD"], cwd=root, text=True, stderr=subprocess.DEVNULL
@@ -132,17 +168,27 @@ def build_contract(
     hub_repo = str(payload.get("hub_repo") or "").strip()
     if not SAFE_HUB_REPO.fullmatch(hub_repo):
         raise ValueError("hub_repo is required in namespace/repository form")
+    gpu = str(payload.get("gpu") or "").strip()
+    if gpu and not SAFE_ACCELERATOR.fullmatch(gpu):
+        raise ValueError("gpu contains unsafe characters")
 
     inputs: dict[str, dict[str, str]] = {}
     command = ["python", "scripts/studio_train.py", "--mode", "pretrain"]
+    input_paths: dict[str, Path] = {}
     for key, option in (("model", "--model"), ("train", "--train"), ("data", "--data")):
         relative = str(payload.get(key) or "")
         path = _repo_file(root, relative)
         normalized = str(path.relative_to(root.resolve())).replace(os.sep, "/")
         inputs[key] = {"path": normalized, "sha256": _sha256(path)}
+        input_paths[key] = path
         command.extend([option, normalized])
     command.extend(["--hub-repo", hub_repo])
     command.append("--remote-durable")
+    manifest_input = _dataset_manifest(root, input_paths["data"])
+    dataset_manifest_decision_grade = False
+    if manifest_input is not None:
+        inputs["dataset_manifest"] = manifest_input[0]
+        dataset_manifest_decision_grade = manifest_input[1]
 
     resume = str(payload.get("resume") or "").strip()
     hub_checkpoint = _hub_checkpoint(payload, hub_repo)
@@ -179,6 +225,8 @@ def build_contract(
         "estimated_spend_usd": estimated_spend,
         "max_spend_usd": policy_ceiling,
         "hub_repo": hub_repo,
+        "gpu": gpu or None,
+        "dataset_manifest_decision_grade": dataset_manifest_decision_grade,
         "resume_hub": hub_checkpoint,
         "parent_run_id": payload.get("parent_run_id"),
         "wandb_project": payload.get("wandb_project"),

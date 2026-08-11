@@ -75,6 +75,11 @@ def main() -> None:
                 "python",
                 "scripts/cloud/modal_entrypoint.py",
                 app=app,
+                tags={
+                    "aster_contract": plan["contract_id"],
+                    "aster_profile": plan["profile_alias"],
+                    "aster_gpu": attempt["gpu"],
+                },
                 image=image,
                 env=environment,
                 secrets=secrets,

@@ -37,6 +37,8 @@ class ModalProfile:
     timeout_minutes: int
     dispatch_enabled: bool
     max_spend_usd_per_job: float
+    spend_budget_confirmed: bool
+    cost_contingency: float
     gpu_candidates: tuple[dict[str, Any], ...]
 
 
@@ -67,6 +69,9 @@ def load_modal_profile(path: str | Path, alias: str) -> ModalProfile:
         _safe(str(candidate.get("gpu", "")), "GPU candidate", SAFE_GPU)
         if candidate.get("min_cuda") is not None:
             _cuda_number(str(candidate["min_cuda"]))
+        rate = float(candidate.get("usd_per_second", 0.0))
+        if rate <= 0:
+            raise ValueError("Every Modal GPU candidate requires a positive usd_per_second")
     cuda_minor = str(raw.get("cuda_minor", ""))
     _cuda_number(cuda_minor)
     return ModalProfile(
@@ -85,6 +90,8 @@ def load_modal_profile(path: str | Path, alias: str) -> ModalProfile:
         timeout_minutes=int(raw.get("timeout_minutes", 180)),
         dispatch_enabled=bool(raw.get("dispatch_enabled", False)),
         max_spend_usd_per_job=float(raw.get("max_spend_usd_per_job", 0.0)),
+        spend_budget_confirmed=bool(raw.get("spend_budget_confirmed", False)),
+        cost_contingency=float(raw.get("cost_contingency", 1.2)),
         gpu_candidates=candidates,
     )
 
@@ -101,8 +108,14 @@ def _global_blockers(profile: ModalProfile, contract: dict[str, Any]) -> list[st
         blockers.append("modal_profile_spend_ceiling_exceeded")
     if not profile.dispatch_enabled:
         blockers.append("modal_dispatch_disabled")
+    if not profile.spend_budget_confirmed:
+        blockers.append("modal_workspace_or_environment_budget_not_confirmed")
     if not GIT_COMMIT.fullmatch(str(contract.get("git_commit", ""))):
         blockers.append("modal_contract_requires_exact_git_commit")
+    if "dataset_manifest" not in (contract.get("inputs") or {}):
+        blockers.append("modal_dataset_manifest_required_before_cache_or_training")
+    elif not contract.get("dataset_manifest_decision_grade"):
+        blockers.append("modal_decision_grade_dataset_manifest_required")
     return list(dict.fromkeys(blockers))
 
 
@@ -132,9 +145,12 @@ def build_modal_launch_plan(
         raise FileNotFoundError(contract_path)
     contract_digest = hashlib.sha256(contract_path.read_bytes()).hexdigest()
 
+    requested_gpu = str(contract.get("gpu") or "")
     attempts: list[dict[str, Any]] = []
     image_cuda = _cuda_number(profile.cuda_minor)
     for candidate in profile.gpu_candidates:
+        if requested_gpu and str(candidate["gpu"]) != requested_gpu:
+            continue
         blockers: list[str] = []
         minimum = candidate.get("min_cuda")
         if minimum is not None and image_cuda < _cuda_number(str(minimum)):
@@ -144,13 +160,31 @@ def build_modal_launch_plan(
                 "gpu": str(candidate["gpu"]),
                 "role": candidate.get("role"),
                 "min_cuda": minimum,
+                "usd_per_second": float(candidate["usd_per_second"]),
                 "blockers": blockers,
             }
         )
     global_blockers = _global_blockers(profile, contract)
+    if not requested_gpu:
+        global_blockers.append("modal_gpu_must_be_explicitly_selected_in_contract")
+    elif not attempts:
+        global_blockers.append("modal_requested_gpu_is_not_in_profile_candidates")
     usable_attempts = [attempt for attempt in attempts if not attempt["blockers"]]
-    if not usable_attempts:
+    if requested_gpu and not usable_attempts:
         global_blockers.append("modal_no_cuda_compatible_gpu_candidate")
+    timeout_seconds = min(int(contract["timeout_minutes"]), profile.timeout_minutes) * 60
+    estimated_max_cost = (
+        float(usable_attempts[0]["usd_per_second"])
+        * timeout_seconds
+        * profile.cost_contingency
+        if usable_attempts
+        else None
+    )
+    if (
+        estimated_max_cost is not None
+        and float(contract.get("estimated_spend_usd", 0.0)) + 1e-9 < estimated_max_cost
+    ):
+        global_blockers.append("modal_declared_spend_below_timeout_cost_guard")
     blockers = list(dict.fromkeys(global_blockers))
     return {
         "schema_version": 1,
@@ -161,7 +195,9 @@ def build_modal_launch_plan(
         "profile_alias": profile.alias,
         "modal_environment": profile.modal_environment,
         "app_name": profile.app_name,
-        "timeout_seconds": min(int(contract["timeout_minutes"]), profile.timeout_minutes) * 60,
+        "timeout_seconds": timeout_seconds,
+        "requested_gpu": requested_gpu or None,
+        "estimated_max_cost_usd": estimated_max_cost,
         "image": {
             "base": profile.base_image,
             "cuda_minor": profile.cuda_minor,
@@ -180,6 +216,15 @@ def build_modal_launch_plan(
         "blockers": blockers,
         "status": "dispatchable" if not blockers else "blocked",
         "secret_policy": "Modal secret names only; values never enter contracts, plans, or Studio",
+        "billing_policy": {
+            "container_count": 1,
+            "silent_gpu_fallback": False,
+            "pricing_researched_at": "2026-08-11",
+            "contingency_multiplier": profile.cost_contingency,
+            "hard_timeout_seconds": timeout_seconds,
+            "contract_estimated_spend_usd": float(contract.get("estimated_spend_usd", 0.0)),
+            "profile_ceiling_usd": profile.max_spend_usd_per_job,
+        },
         "cache_policy": {
             "dataset": "profile-scoped Volume mounted at /opt/aster/data",
             "cache": "profile-scoped Volume mounted at /var/cache/aster",

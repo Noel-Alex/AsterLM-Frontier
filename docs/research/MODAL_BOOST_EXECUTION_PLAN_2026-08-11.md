@@ -20,13 +20,30 @@ to stop billing immediately when losing work since the last completed checkpoint
 | `/var/cache/aster` | profile-scoped Modal Volume | Hugging Face, compiler, and package caches |
 | `/opt/aster/runs` | profile-scoped Modal Volume v2 | live metrics, diagnostics, and atomic checkpoints |
 
+Remote contracts bind the decision-grade clean-corpus manifest hash as an input. The worker verifies
+that manifest from the mounted dataset Volume before model allocation, so an empty, stale, raw-only,
+or partially uploaded cache fails without consuming a training run. Raw downloaded corpora are not
+uploaded merely because they exist locally; the final cleaned/deduplicated/decontaminated artifacts
+are staged once per authorized workspace after their immutable manifest is complete.
+
 The repository is cloned at the contract's exact 40-character commit while the CUDA/PyTorch base image must be pinned by registry SHA-256 digest. The remote entrypoint verifies `git rev-parse HEAD` before it executes the hashed model, train, and data configs.
 
 Every remote run uses `--remote-durable`: full optimizer/RNG/data-state checkpoints are uploaded to a private Hugging Face repository at every configured save, milestone, and final boundary, and the run fails closed if a promised Hub upload cannot be verified. Cross-provider resume names one `runs/.../checkpoints/...` folder plus repository revision; the worker downloads only that folder and runs `verify_checkpoint` before training starts.
 
 ## GPU selection
 
-Capacity attempts are ordered and recorded. B300 is a candidate only for a base image declaring CUDA 13.1 or newer; H200, exact H100 (`H100!`), A100-80GB, and L40S remain measurable fallbacks. This order is not a price/performance verdict. Promotion requires matched tokens, loss, wall time, GPU-hours, total spend, recovery, and hardware identity. Silent H100-to-H100-SXM substitution is prohibited in reproducibility campaigns.
+Every contract must explicitly name exactly one GPU. There is no paid automatic fallback or silent
+hardware substitution. B300 is a candidate only for a base image declaring CUDA 13.1 or newer;
+H200, exact H100 (`H100!`), A100-80GB, and L40S are separate cost-to-quality treatments.
+Promotion requires matched tokens, loss, wall time, GPU-hours, actual spend, recovery, and hardware
+identity.
+
+The 2026-08-11 published GPU rates are recorded per candidate and the launch plan computes a
+worst-case GPU cost from the hard timeout with a conservative 50% CPU/memory contingency. Dispatch fails closed
+when the contract's declared spend is below that guard, when the workspace/environment spend budget
+has not been confirmed, or when no exact GPU is selected. Sandbox tags bind subsequent billing
+reports to the Aster contract. Rates must be refreshed from https://modal.com/pricing before a paid
+campaign.
 
 ## Remaining credential-time gates
 

@@ -23,9 +23,14 @@ def _contract(tmp_path: Path, **overrides) -> tuple[dict, Path]:
         "provider": "modal",
         "profile_alias": "noelalex404",
         "git_commit": "b" * 40,
-        "timeout_minutes": 180,
+        "timeout_minutes": 10,
         "estimated_spend_usd": 10.0,
+        "gpu": "B300",
         "blockers": ["provider_not_ready"],
+        "inputs": {
+            "dataset_manifest": {"path": "data/clean/manifest.json", "sha256": "c" * 64}
+        },
+        "dataset_manifest_decision_grade": True,
     }
     payload.update(overrides)
     path = tmp_path / "contract.json"
@@ -42,12 +47,16 @@ def test_default_modal_profile_is_safely_blocked_and_secret_free(tmp_path):
     assert plan["status"] == "blocked"
     assert "modal_base_image_not_configured" in plan["blockers"]
     assert "modal_dispatch_disabled" in plan["blockers"]
+    assert "modal_workspace_or_environment_budget_not_confirmed" in plan["blockers"]
     assert plan["volume_version"] == 2
     assert plan["volumes"]["/opt/aster/data"] == "aster-data-noelalex404"
     serialized = json.dumps(plan)
     assert "HF_TOKEN" not in serialized
     assert "WANDB_API_KEY" not in serialized
-    assert [row["gpu"] for row in plan["attempts"]][:3] == ["B300", "H200", "H100!"]
+    assert [row["gpu"] for row in plan["attempts"]] == ["B300"]
+    assert plan["billing_policy"]["container_count"] == 1
+    assert plan["billing_policy"]["silent_gpu_fallback"] is False
+    assert plan["estimated_max_cost_usd"] == pytest.approx(1.7748)
 
 
 def test_modal_profiles_do_not_share_persistent_volumes():
@@ -83,6 +92,29 @@ def test_modal_dispatch_is_dry_run_by_default(tmp_path):
     )
     result = dispatch_modal_launch_plan(plan)
     assert result["status"] == "dry_run"
+
+
+def test_modal_requires_explicit_gpu_and_honest_timeout_cost(tmp_path):
+    contract, contract_path = _contract(
+        tmp_path,
+        gpu=None,
+        timeout_minutes=180,
+        estimated_spend_usd=1.0,
+        blockers=[],
+    )
+    profile = load_modal_profile(ROOT / "configs/providers/modal_boost.yaml", "noelalex404")
+    plan = build_modal_launch_plan(
+        contract, profile, root=ROOT, contract_path=contract_path
+    )
+    assert "modal_gpu_must_be_explicitly_selected_in_contract" in plan["blockers"]
+
+    contract["gpu"] = "H100!"
+    contract_path.write_text(json.dumps(contract), encoding="utf-8")
+    plan = build_modal_launch_plan(
+        contract, profile, root=ROOT, contract_path=contract_path
+    )
+    assert [row["gpu"] for row in plan["attempts"]] == ["H100!"]
+    assert "modal_declared_spend_below_timeout_cost_guard" in plan["blockers"]
 
 
 def test_modal_control_is_profile_isolated_and_structured(monkeypatch):

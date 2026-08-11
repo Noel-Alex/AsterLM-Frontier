@@ -827,6 +827,7 @@ function bind() {
         train:$("#contract-train").value.trim(),
         data:$("#contract-data").value.trim(),
         hub_repo:$("#contract-hub-repo").value.trim(),
+        gpu:$("#contract-gpu").value.trim(),
         resume_hub_path:$("#contract-resume-hub-path").value.trim(),
         resume_hub_repo:$("#contract-resume-hub-repo").value.trim(),
         resume_hub_revision:$("#contract-resume-hub-revision").value.trim(),
