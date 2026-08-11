@@ -24,12 +24,21 @@ from asterlm.experiments.quality import (
 from asterlm.experiments.quality_analysis import analyze_quality_campaign
 from asterlm.experiments.source_checkout import create_pinned_source_checkout
 from asterlm.source_provenance import assert_expected_checkout_source
-from scripts.run_architecture_quality_campaign import (
-    _absolute_data_config,
-    _portable,
-    _train_payload,
-    _validate_data,
-)
+
+try:
+    from scripts.run_architecture_quality_campaign import (
+        _absolute_data_config,
+        _portable,
+        _train_payload,
+        _validate_data,
+    )
+except ModuleNotFoundError:
+    from run_architecture_quality_campaign import (  # type: ignore[no-redef]
+        _absolute_data_config,
+        _portable,
+        _train_payload,
+        _validate_data,
+    )
 
 
 def _sha256(path: Path) -> str:
