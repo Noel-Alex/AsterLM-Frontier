@@ -463,7 +463,7 @@ function mountResearchArchive() {
       <button id="research-filter" class="ink">Apply</button><button id="research-compare" class="ghost" disabled>Compare selected</button>
     </div>
     <div id="research-compatibility" class="research-compatibility"></div>
-    <div class="research-table-wrap"><table class="research-table"><thead><tr><th></th><th>Trial / provenance</th><th>Protocol</th><th>tokens/s</th><th>GPU</th><th>Peak VRAM</th><th>Parameters</th></tr></thead><tbody id="research-trial-rows"><tr><td colspan="7" class="empty-state">Loading indexed trialsâ€¦</td></tr></tbody></table></div>
+    <div class="research-table-wrap"><table class="research-table"><thead><tr><th></th><th>Trial / provenance</th><th>Protocol</th><th>tokens/s</th><th>Eval loss</th><th>Time to target</th><th>GPU</th><th>Peak VRAM</th><th>Parameters</th></tr></thead><tbody id="research-trial-rows"><tr><td colspan="9" class="empty-state">Loading indexed trialsâ€¦</td></tr></tbody></table></div>
     <div class="research-pagination"><span id="research-range" class="muted"></span><button id="research-more" class="ghost small">Load more</button></div>
   </article>
   <div class="research-lower-grid">
@@ -508,11 +508,15 @@ function researchTrialHtml(row) {
   const checked=S.researchSelected.has(row.id)?"checked":"";
   const protocol=[row.sequence_length?`${fmtTokens(row.sequence_length)} ctx`:null,row.micro_batch_size!=null?`mb${row.micro_batch_size}`:null,row.gradient_accumulation!=null?`acc${row.gradient_accumulation}`:null,row.optimizer].filter(Boolean).join(" Â· ");
   const params=row.total_parameters?`${fmtTokens(row.total_parameters)} total / ${fmtTokens(row.active_parameters)} active`:"â€”";
+  const loss=row.eval_loss??row.loss;
+  const lossSpread=row.eval_loss_stdev!=null?` +/- ${Number(row.eval_loss_stdev).toFixed(4)}`:"";
   return `<tr>
     <td><input class="research-select" type="checkbox" data-trial-id="${esc(row.id)}" ${checked}/></td>
     <td><strong>${esc(row.variant||row.name)}</strong><small>${esc(row.backend||row.status)} Â· ${esc((row.git_commit||"unbound").slice(0,8))}</small><code title="${esc(row.matrix_path)}">${esc(row.matrix_path)}</code></td>
     <td><span>${esc(protocol||"â€”")}</span><small>${row.gradient_checkpointing?`checkpoint seg ${esc(row.checkpoint_segment_size)}`:"no activation checkpoint"}</small></td>
     <td class="numeric">${row.tokens_per_second!=null?fmtTokens(row.tokens_per_second):"â€”"}</td>
+    <td class="numeric">${loss!=null?`${Number(loss).toFixed(4)}${lossSpread}`:"â€”"}</td>
+    <td class="numeric">${row.time_to_common_loss!=null?`${Number(row.time_to_common_loss).toFixed(1)} s`:"â€”"}</td>
     <td class="numeric">${row.gpu_utilization!=null?`${Number(row.gpu_utilization).toFixed(1)}%`:"â€”"}</td>
     <td class="numeric">${row.peak_allocated_gib!=null?`${Number(row.peak_allocated_gib).toFixed(2)} GiB`:"â€”"}</td>
     <td><span>${esc(params)}</span><small>${esc(row.gpu_name||"hardware unrecorded")}</small></td>
@@ -523,7 +527,7 @@ function renderResearchTrials(append=false) {
   const body=$("#research-trial-rows");
   if(!append)body.innerHTML="";
   body.insertAdjacentHTML("beforeend",S.researchRows.slice(append?S.researchOffset:0).map(researchTrialHtml).join(""));
-  if(!S.researchRows.length)body.innerHTML='<tr><td colspan="7" class="empty-state">No indexed trials match these filters.</td></tr>';
+  if(!S.researchRows.length)body.innerHTML='<tr><td colspan="9" class="empty-state">No indexed trials match these filters.</td></tr>';
   $("#research-range").textContent=`Showing ${S.researchRows.length} of ${S.researchTotal} matching trials`;
   $("#research-more").hidden=S.researchRows.length>=S.researchTotal;
 }
@@ -560,7 +564,16 @@ async function loadResearchComparison() {
   const ids=[...S.researchSelected];if(ids.length<2)return;
   const result=await api(`/api/research/compare?ids=${encodeURIComponent(ids.join(","))}`);
   const mismatches=result.dimensions.filter(x=>!x.match),holder=$("#research-comparison");
-  const metrics=[["tokens_per_second","tokens/s",""],["gpu_utilization","GPU utilization","%"],["peak_allocated_gib","peak VRAM"," GiB"]];
+  const metrics=[
+    ["tokens_per_second","tokens/s (higher is better)",""],
+    ["eval_loss","eval loss (lower is better)",""],
+    ["token_curve_auc","token-curve loss AUC (lower is better)",""],
+    ["equal_wall_loss","equal-wall loss (lower is better)",""],
+    ["time_to_common_loss","time to common quality (lower is better)"," s"],
+    ["tokens_to_common_loss","tokens to common quality (lower is better)",""],
+    ["gpu_utilization","GPU utilization (higher is better)","%"],
+    ["peak_allocated_gib","peak VRAM (lower is better)"," GiB"],
+  ];
   const charts=metrics.map(([key,label,unit])=>{
     const max=Math.max(0,...result.trials.map(x=>Number(x[key])||0));
     return `<section><h4>${esc(label)}</h4>${result.trials.map(row=>comparisonBar(row,key,max,label,unit)).join("")}</section>`;

@@ -10,7 +10,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 HASH_LIMIT_BYTES = 8 * 1024 * 1024
 FINDINGS_PATH = Path("docs/research/findings.jsonl")
 
@@ -38,6 +38,12 @@ METRIC_DEFINITIONS = {
         "unit": "nats/token",
         "direction": "lower",
         "definition": "Training or evaluation cross-entropy as recorded by the producing run.",
+    },
+    "time_to_common_loss": {
+        "label": "Time to common quality",
+        "unit": "s",
+        "direction": "lower",
+        "definition": "Interpolated wall time to the strongest terminal loss every compared arm is proven to reach.",
     },
     "power_w": {
         "label": "GPU power (observational)",
@@ -229,6 +235,23 @@ class ResearchArchive:
                 CREATE INDEX IF NOT EXISTS findings_created ON findings(created_utc DESC);
                 """
             )
+            trial_columns = {row[1] for row in db.execute("PRAGMA table_info(trials)")}
+            quality_columns = {
+                "quality_trial": "INTEGER NOT NULL DEFAULT 0",
+                "seed": "INTEGER",
+                "eval_loss": "REAL",
+                "eval_loss_stdev": "REAL",
+                "token_curve_auc": "REAL",
+                "wall_curve_auc": "REAL",
+                "equal_wall_loss": "REAL",
+                "equal_flops_loss": "REAL",
+                "time_to_common_loss": "REAL",
+                "tokens_to_common_loss": "REAL",
+                "flops_to_common_loss": "REAL",
+            }
+            for name, declaration in quality_columns.items():
+                if name not in trial_columns:
+                    db.execute(f"ALTER TABLE trials ADD COLUMN {name} {declaration}")
             db.execute(
                 "INSERT OR REPLACE INTO archive_meta(key, value) VALUES('schema_version', ?)",
                 (str(SCHEMA_VERSION),),
@@ -256,6 +279,7 @@ class ResearchArchive:
         started = time.time()
         files = list(self._files())
         matrices: list[Path] = []
+        quality_analyses: list[Path] = []
         standalone_profiles: list[tuple[Path, dict[str, Any]]] = []
         referenced_results: set[str] = set()
         artifact_revisions = 0
@@ -302,6 +326,11 @@ class ResearchArchive:
                     (relative, kind, stat.st_size, stat.st_mtime_ns, sha256, started),
                 )
                 artifact_revisions += int(db.total_changes > before)
+                if path.name == "quality-analysis.json":
+                    # Always rebuild these cheap derived rows. This also backfills
+                    # quality trials after a schema upgrade even when the artifact's
+                    # mtime did not change.
+                    quality_analyses.append(path)
                 if path.name == "matrix.json" and not unchanged:
                     matrices.append(path)
                 elif not unchanged and path.suffix.lower() == ".json" and stat.st_size <= HASH_LIMIT_BYTES:
@@ -336,6 +365,11 @@ class ResearchArchive:
                 }
                 self._upsert_trial(db, synthetic_matrix, payload, trial, result_payload=payload)
                 trial_count += 1
+
+            for analysis_path in quality_analyses:
+                payload = _read_json(analysis_path)
+                if payload:
+                    trial_count += self._ingest_quality_analysis(db, analysis_path, payload)
 
             finding_count = self._ingest_findings(db)
             db.execute("INSERT OR REPLACE INTO archive_meta(key, value) VALUES('last_indexed', ?)", (str(started),))
@@ -437,7 +471,16 @@ class ResearchArchive:
         )
         db.execute(
             """
-            INSERT INTO trials VALUES (
+            INSERT INTO trials (
+                id, matrix_path, result_path, name, variant, backend, status,
+                created_utc, git_commit, model_path, model_sha256, train_sha256,
+                sequence_length, micro_batch_size, gradient_accumulation,
+                global_batch_size, steps, warmup_steps, optimizer, dtype,
+                precision_backend, checkpoint_segment_size, gradient_checkpointing,
+                gpu_name, total_parameters, active_parameters, tokens_per_second,
+                gpu_utilization, peak_allocated_gib, power_w, measured_tokens,
+                measured_seconds, loss, raw_json, updated_at
+            ) VALUES (
                 ?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?
             )
             ON CONFLICT(id) DO UPDATE SET
@@ -464,6 +507,221 @@ class ResearchArchive:
             """,
             fields,
         )
+        db.execute(
+            """
+            INSERT OR IGNORE INTO trial_revisions(trial_id, payload_sha256, raw_json, observed_at)
+            VALUES(?, ?, ?, ?)
+            """,
+            (trial_id, raw_hash, raw_json, time.time()),
+        )
+
+    def _ingest_quality_analysis(
+        self,
+        db: sqlite3.Connection,
+        analysis_path: Path,
+        analysis: dict[str, Any],
+    ) -> int:
+        campaign = _read_json(analysis_path.with_name("quality-campaign.json")) or {}
+        run_records = [row for row in analysis.get("runs", []) if isinstance(row, dict)]
+        count = 0
+        representative_by_identity: dict[str, tuple[dict[str, Any], dict[str, Any]]] = {}
+        for record in run_records:
+            run_dir = analysis_path.parent / str(record.get("run_dir") or "")
+            experiment_path = run_dir / "experiment.json"
+            experiment = _read_json(experiment_path) or {}
+            identity = f"{record.get('candidate_id')}:{record.get('execution_variant')}"
+            if experiment:
+                representative_by_identity.setdefault(identity, (record, experiment))
+            self._upsert_quality_trial(
+                db,
+                analysis_path=analysis_path,
+                campaign=campaign,
+                record=record,
+                experiment=experiment,
+                aggregate=None,
+            )
+            count += 1
+
+        for identity, aggregate in (analysis.get("candidates") or {}).items():
+            if not isinstance(aggregate, dict):
+                continue
+            representative = representative_by_identity.get(str(identity), ({}, {}))
+            self._upsert_quality_trial(
+                db,
+                analysis_path=analysis_path,
+                campaign=campaign,
+                record=representative[0],
+                experiment=representative[1],
+                aggregate=aggregate,
+            )
+            count += 1
+        return count
+
+    def _upsert_quality_trial(
+        self,
+        db: sqlite3.Connection,
+        *,
+        analysis_path: Path,
+        campaign: dict[str, Any],
+        record: dict[str, Any],
+        experiment: dict[str, Any],
+        aggregate: dict[str, Any] | None,
+    ) -> None:
+        matrix_relative = self._relative(analysis_path)
+        candidate = str(
+            (aggregate or {}).get("candidate_id") or record.get("candidate_id") or "candidate"
+        )
+        variant = str(
+            (aggregate or {}).get("execution_variant")
+            or record.get("execution_variant")
+            or "quality"
+        )
+        seed = None if aggregate is not None else _as_int(record.get("seed"))
+        identity = f"{candidate}:{variant}"
+        name = f"{identity} aggregate" if aggregate is not None else f"{identity} seed-{seed}"
+        trial_id = _stable_id(matrix_relative, name)
+        train = ((experiment.get("train") or {}).get("config") or {})
+        model = experiment.get("model") or {}
+        architecture = model.get("architecture") or {}
+        environment = experiment.get("environment") or {}
+        gpu = environment.get("gpu") or {}
+        code = experiment.get("code") or {}
+        campaign_runs = campaign.get("runs") or {}
+        run_key = f"{seed}:{candidate}:{variant}" if seed is not None else ""
+        campaign_run = campaign_runs.get(run_key) if isinstance(campaign_runs, dict) else {}
+        campaign_run = campaign_run if isinstance(campaign_run, dict) else {}
+        complete = int((aggregate or {}).get("complete_seed_count") or 0)
+        expected = int((aggregate or {}).get("expected_seed_count") or 0)
+        status = (
+            ("ok" if expected > 0 and complete == expected else "partial")
+            if aggregate is not None
+            else str(record.get("status") or experiment.get("status") or "missing")
+        )
+        tokens_per_update = (
+            (_as_int(train.get("sequence_length")) or 0)
+            * (_as_int(train.get("micro_batch_size")) or 0)
+            * (_as_int(train.get("gradient_accumulation_steps")) or 0)
+        )
+        curve = record.get("learning_curve") if isinstance(record.get("learning_curve"), list) else []
+        steps = max((_as_int(point.get("step")) or 0 for point in curve), default=None)
+        eval_loss = _as_float(
+            (aggregate or {}).get("final_eval_loss_mean")
+            if aggregate is not None
+            else record.get("eval_main_loss")
+        )
+        raw = {
+            "analysis": matrix_relative,
+            "campaign_type": campaign.get("campaign_type", "architecture_quality"),
+            "candidate": candidate,
+            "variant": variant,
+            "seed": seed,
+            "record": record,
+            "aggregate": aggregate,
+            "experiment": experiment,
+        }
+        raw_json = _json(raw)
+        experiment_relative = None
+        if aggregate is None and record.get("run_dir"):
+            experiment_relative = self._relative(
+                analysis_path.parent / str(record["run_dir"]) / "experiment.json"
+            )
+        values = {
+            "id": trial_id,
+            "matrix_path": matrix_relative,
+            "result_path": (
+                matrix_relative
+                if aggregate is not None
+                else experiment_relative
+            ),
+            "name": name,
+            "variant": variant,
+            "backend": variant,
+            "status": status,
+            "created_utc": experiment.get("started_at_utc"),
+            "git_commit": code.get("git_commit")
+            or (campaign.get("source_provenance") or {}).get("git_commit"),
+            "model_path": campaign_run.get("model_config") or campaign.get("model"),
+            "model_sha256": campaign_run.get("model_config_sha256")
+            or model.get("config_sha256")
+            or campaign.get("model_sha256"),
+            "train_sha256": (experiment.get("train") or {}).get("config_sha256"),
+            "sequence_length": _as_int(train.get("sequence_length")),
+            "micro_batch_size": _as_int(train.get("micro_batch_size")),
+            "gradient_accumulation": _as_int(train.get("gradient_accumulation_steps")),
+            "global_batch_size": (
+                (_as_int(train.get("micro_batch_size")) or 0)
+                * (_as_int(train.get("gradient_accumulation_steps")) or 0)
+            )
+            or None,
+            "steps": steps,
+            "warmup_steps": _as_int(train.get("warmup_steps")),
+            "optimizer": train.get("optimizer"),
+            "dtype": train.get("dtype"),
+            "precision_backend": train.get("precision_backend"),
+            "checkpoint_segment_size": _as_int(
+                (model.get("config") or {}).get("checkpoint_segment_size")
+            ),
+            "gradient_checkpointing": (
+                int(bool((model.get("config") or {}).get("gradient_checkpointing")))
+                if model
+                else None
+            ),
+            "gpu_name": gpu.get("name") or environment.get("nvidia_smi"),
+            "total_parameters": _as_int(
+                architecture.get("effective_parameters")
+                or architecture.get("trainable_parameters")
+            ),
+            "active_parameters": _as_int(architecture.get("active_parameters_estimate")),
+            "tokens_per_second": _as_float(
+                (aggregate or {}).get("median_training_tokens_per_second")
+                if aggregate is not None
+                else record.get("median_training_tokens_per_second")
+            ),
+            "gpu_utilization": _as_float(
+                (aggregate or {}).get("mean_gpu_util_percent")
+                if aggregate is not None
+                else record.get("mean_gpu_util_percent")
+            ),
+            "peak_allocated_gib": _as_float(
+                (aggregate or {}).get("peak_vram_gib")
+                if aggregate is not None
+                else record.get("peak_vram_gib")
+            ),
+            "power_w": None,
+            "measured_tokens": _as_int(record.get("tokens_seen"))
+            or (tokens_per_update * steps if steps is not None else None),
+            "measured_seconds": _as_float(record.get("wall_clock_total_seconds")),
+            "loss": eval_loss,
+            "raw_json": raw_json,
+            "updated_at": time.time(),
+            "quality_trial": 1,
+            "seed": seed,
+            "eval_loss": eval_loss,
+            "eval_loss_stdev": _as_float((aggregate or {}).get("final_eval_loss_stdev")),
+            "token_curve_auc": _as_float((aggregate or {}).get("token_curve_auc_mean")),
+            "wall_curve_auc": _as_float((aggregate or {}).get("wall_curve_auc_mean")),
+            "equal_wall_loss": _as_float((aggregate or {}).get("equal_wall_loss_mean")),
+            "equal_flops_loss": _as_float(
+                (aggregate or {}).get("equal_active_flops_loss_mean")
+            ),
+            "time_to_common_loss": _as_float(
+                (aggregate or {}).get("time_to_common_loss_seconds_mean")
+            ),
+            "tokens_to_common_loss": _as_float(
+                (aggregate or {}).get("tokens_to_common_loss_mean")
+            ),
+            "flops_to_common_loss": _as_float(
+                (aggregate or {}).get("active_flops_to_common_loss_mean")
+            ),
+        }
+        columns = list(values)
+        assignments = ",".join(f"{column}=excluded.{column}" for column in columns if column != "id")
+        db.execute(
+            f"INSERT INTO trials ({','.join(columns)}) VALUES ({','.join('?' for _ in columns)}) "
+            f"ON CONFLICT(id) DO UPDATE SET {assignments}",
+            tuple(values[column] for column in columns),
+        )
+        raw_hash = hashlib.sha256(raw_json.encode("utf-8")).hexdigest()
         db.execute(
             """
             INSERT OR IGNORE INTO trial_revisions(trial_id, payload_sha256, raw_json, observed_at)

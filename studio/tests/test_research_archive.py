@@ -118,3 +118,106 @@ def test_archive_ingests_append_only_findings_ledger(tmp_path) -> None:
     assert payload["total"] == 1
     assert payload["rows"][0]["id"] == "utilization-repaired"
     assert payload["rows"][0]["evidence"] == ["runs/campaign/matrix.json"]
+
+
+def test_archive_indexes_quality_runs_and_aggregate_metrics(tmp_path) -> None:
+    campaign = tmp_path / "runs" / "quality"
+    run = campaign / "seed-7" / "k3" / "muon"
+    run.mkdir(parents=True)
+    experiment = {
+        "status": "ok",
+        "started_at_utc": "2026-08-11T00:00:00Z",
+        "code": {"git_commit": "abc123"},
+        "environment": {"gpu": {"name": "Test GPU"}},
+        "model": {
+            "config_sha256": "model-sha",
+            "config": {"gradient_checkpointing": True, "checkpoint_segment_size": 2},
+            "architecture": {
+                "effective_parameters": 270,
+                "active_parameters_estimate": 188,
+            },
+        },
+        "train": {
+            "config_sha256": "train-sha",
+            "config": {
+                "sequence_length": 2048,
+                "micro_batch_size": 4,
+                "gradient_accumulation_steps": 2,
+                "warmup_steps": 10,
+                "optimizer": "muon_adamw",
+                "dtype": "bfloat16",
+                "precision_backend": "amp",
+            },
+        },
+    }
+    (run / "experiment.json").write_text(json.dumps(experiment), encoding="utf-8")
+    quality_campaign = {
+        "source_provenance": {"git_commit": "abc123"},
+        "runs": {
+            "7:k3:muon": {
+                "model_config": "configs/k3.yaml",
+                "model_config_sha256": "model-sha",
+            }
+        },
+    }
+    (campaign / "quality-campaign.json").write_text(
+        json.dumps(quality_campaign), encoding="utf-8"
+    )
+    analysis = {
+        "runs": [
+            {
+                "seed": 7,
+                "candidate_id": "k3",
+                "execution_variant": "muon",
+                "run_dir": "seed-7/k3/muon",
+                "status": "ok",
+                "tokens_seen": 4096,
+                "eval_main_loss": 3.5,
+                "median_training_tokens_per_second": 1200,
+                "mean_gpu_util_percent": 91,
+                "peak_vram_gib": 4.5,
+                "wall_clock_total_seconds": 10,
+                "learning_curve": [
+                    {"step": 1, "tokens_seen": 2048, "eval_main_loss": 4.0},
+                    {"step": 2, "tokens_seen": 4096, "eval_main_loss": 3.5},
+                ],
+            }
+        ],
+        "candidates": {
+            "k3:muon": {
+                "candidate_id": "k3",
+                "execution_variant": "muon",
+                "complete_seed_count": 1,
+                "expected_seed_count": 1,
+                "final_eval_loss_mean": 3.5,
+                "final_eval_loss_stdev": None,
+                "token_curve_auc_mean": 3.75,
+                "wall_curve_auc_mean": 3.75,
+                "equal_wall_loss_mean": 3.5,
+                "equal_active_flops_loss_mean": 3.5,
+                "time_to_common_loss_seconds_mean": 10,
+                "tokens_to_common_loss_mean": 4096,
+                "active_flops_to_common_loss_mean": 1000000,
+                "median_training_tokens_per_second": 1200,
+                "mean_gpu_util_percent": 91,
+                "peak_vram_gib": 4.5,
+            }
+        },
+    }
+    (campaign / "quality-analysis.json").write_text(json.dumps(analysis), encoding="utf-8")
+
+    archive = ResearchArchive(tmp_path, tmp_path / "archive.sqlite3")
+    indexed = archive.reindex()
+    rows = archive.trials(query="muon")["rows"]
+
+    assert indexed["trials"] == 2
+    assert len(rows) == 2
+    aggregate = next(row for row in rows if row["seed"] is None)
+    individual = next(row for row in rows if row["seed"] == 7)
+    assert aggregate["quality_trial"] == 1
+    assert aggregate["eval_loss"] == 3.5
+    assert aggregate["token_curve_auc"] == 3.75
+    assert aggregate["time_to_common_loss"] == 10
+    assert individual["result_path"] == "runs/quality/seed-7/k3/muon/experiment.json"
+    assert individual["total_parameters"] == 270
+    assert individual["active_parameters"] == 188
