@@ -100,6 +100,109 @@ def first_budget_at_or_below(
     return None
 
 
+def optimizer_screening(
+    campaign: dict[str, Any], candidates: dict[str, dict[str, Any]]
+) -> dict[str, Any]:
+    """Select tuned family representatives without declaring a final optimizer."""
+
+    arms = campaign.get("arms") or {}
+    families: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    disqualified: dict[str, list[str]] = {}
+    for identity, metrics in candidates.items():
+        variant = str(metrics.get("execution_variant") or "")
+        arm = arms.get(variant) or {}
+        family = str(arm.get("family") or "unknown")
+        reasons: list[str] = []
+        expected = int(metrics.get("expected_seed_count") or 0)
+        complete = int(metrics.get("complete_seed_count") or 0)
+        if expected <= 0 or complete != expected:
+            reasons.append("incomplete_seed_set")
+        if float(metrics.get("run_survival_rate") or 0.0) < 1.0:
+            reasons.append("run_failure")
+        if int(metrics.get("training_loss_nonfinite_count") or 0):
+            reasons.append("nonfinite_training_loss")
+        if int(metrics.get("gradient_nonfinite_count") or 0):
+            reasons.append("nonfinite_gradient")
+        for required in (
+            "final_eval_loss_mean",
+            "equal_wall_loss_mean",
+            "median_training_tokens_per_second",
+        ):
+            if not isinstance(metrics.get(required), (int, float)):
+                reasons.append(f"missing_{required}")
+        if reasons:
+            disqualified[identity] = reasons
+            continue
+        families[family].append({"identity": identity, **metrics})
+
+    family_winners: dict[str, dict[str, Any]] = {}
+    for family, rows in sorted(families.items()):
+        ranked = sorted(
+            rows,
+            key=lambda row: (
+                float(row["equal_wall_loss_mean"]),
+                float(row["final_eval_loss_mean"]),
+                float(row.get("wall_curve_auc_mean") or float("inf")),
+                -float(row["median_training_tokens_per_second"]),
+                str(row["execution_variant"]),
+            ),
+        )
+        winner = ranked[0]
+        family_winners[family] = {
+            "identity": winner["identity"],
+            "execution_variant": winner["execution_variant"],
+            "equal_wall_loss_mean": winner["equal_wall_loss_mean"],
+            "final_eval_loss_mean": winner["final_eval_loss_mean"],
+            "time_to_common_loss_seconds_mean": winner.get(
+                "time_to_common_loss_seconds_mean"
+            ),
+            "median_training_tokens_per_second": winner[
+                "median_training_tokens_per_second"
+            ],
+            "screen_ranked_variants": [row["execution_variant"] for row in ranked],
+        }
+
+    winner_rows = list(family_winners.values())
+
+    def dominates(left: dict[str, Any], right: dict[str, Any]) -> bool:
+        lower = ("equal_wall_loss_mean", "final_eval_loss_mean")
+        higher = ("median_training_tokens_per_second",)
+        no_worse = all(float(left[key]) <= float(right[key]) for key in lower) and all(
+            float(left[key]) >= float(right[key]) for key in higher
+        )
+        strictly_better = any(float(left[key]) < float(right[key]) for key in lower) or any(
+            float(left[key]) > float(right[key]) for key in higher
+        )
+        return no_worse and strictly_better
+
+    pareto = sorted(
+        row["execution_variant"]
+        for row in winner_rows
+        if not any(
+            dominates(other, row)
+            for other in winner_rows
+            if other["execution_variant"] != row["execution_variant"]
+        )
+    )
+    return {
+        "status": "screen_complete" if len(family_winners) == len({
+            str((arm or {}).get("family") or "unknown") for arm in arms.values()
+        }) else "screen_partial",
+        "ranking_contract": (
+            "disqualify incomplete or non-finite arms; tune each family by equal-wall "
+            "loss, then terminal loss, wall-curve AUC and throughput; retain the "
+            "non-dominated family winners for longer multi-seed confirmation"
+        ),
+        "family_winners": family_winners,
+        "promotion_shortlist": pareto,
+        "disqualified": disqualified,
+        "final_optimizer_selected": False,
+        "required_next_gate": (
+            "longer multi-seed time-to-quality, stability, exact-resume and native-scale confirmation"
+        ),
+    }
+
+
 def analyze_quality_campaign(campaign_path: str | Path) -> dict[str, Any]:
     campaign_path = Path(campaign_path).resolve()
     root = campaign_path.parent
@@ -294,7 +397,7 @@ def analyze_quality_campaign(campaign_path: str | Path) -> dict[str, Any]:
         }
     expected_runs = len(expected)
     complete_runs = sum(record.get("status") == "ok" for record in records)
-    return {
+    result = {
         "schema_version": 1,
         "campaign": campaign_path.as_posix(),
         "campaign_status": campaign.get("status"),
@@ -318,3 +421,6 @@ def analyze_quality_campaign(campaign_path: str | Path) -> dict[str, Any]:
             ),
         },
     }
+    if campaign.get("campaign_type") == "optimizer_quality":
+        result["optimizer_screening"] = optimizer_screening(campaign, candidates)
+    return result
