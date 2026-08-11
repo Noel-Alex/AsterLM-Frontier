@@ -57,9 +57,8 @@ construction verifies the following logical/active parameter geometry on commit 
 | `aster_k3_latentmoe_1p95b_a766m` | 1.954B | 765.9M | 18 experts, top-3, 1 shared, 832 latent |
 
 Each retains Stable LatentMoE, SiTU-GLU, Quantile Balancing and a 3:1 KDA/MLA pattern with
-128-dimensional KDA heads. They are scale-gate candidates, not promoted final models. Promotion
-still requires full training-state fit, stable optimized execution, matched learning curves and
-long-context validation at the native scale.
+128-dimensional KDA heads. They remain future scale-up tiers. They are not allowed to delay the
+frozen laptop launch candidate or restart broad architecture screening.
 
 ## Ada utilization diagnosis and GPU-resident grouped backend
 
@@ -84,6 +83,12 @@ instead of `torch.bincount`, so their known output cardinality no longer require
 discovery. Forward output, input gradient, every expert parameter gradient, cache invalidation and
 checkpoint-key parity pass against the dropless reference path. In the first one-update operator
 profile, native grouped MM plus fused AdamW reduced stream synchronizations from 1,029 to 185 and
-profiled total forward/backward/optimizer wall time from 1.029 s to 0.750 s. This is diagnostic
-evidence only; a clean balanced end-to-end matrix and matched learning curve remain mandatory for
-promotion.
+profiled total forward/backward/optimizer wall time from 1.029 s to 0.750 s.
+
+The subsequent four-repetition source-pinned matrix on commit `e8acb30` selected packed CUTLASS for
+the laptop: median throughput was 9,294.9 tok/s versus 9,188.1 tok/s for `torch_grouped`, at the same
+5.774 GiB peak allocated memory. `torch_grouped` removed all 9,200 host metadata synchronizations
+per trial, but its slower backward path erased the forward benefit. Both backends retained zero
+post-update weight-restacking bytes after expert storage packing. CUTLASS is therefore frozen as the
+laptop physical backend; `torch_grouped` remains diagnostic kernel work and does not reopen model
+selection.

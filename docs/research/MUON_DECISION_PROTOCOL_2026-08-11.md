@@ -90,10 +90,13 @@ selected from that screen. Family winners proceed to a multi-seed confirmation w
 - peak VRAM and the largest native-scale model each optimizer can fit;
 - non-finite failures, loss spikes, gradient clipping frequency, QK clipping and max-logit growth.
 
-## Current decision
+## Frozen laptop decision (2026-08-11)
 
-Muon is a **first-class challenger**, not rejected and not yet selected. The best optimizer for the
-final run will be the recipe that minimizes stable wall-clock time to matched quality while fitting
-the strongest validated model. A modest per-step cost is acceptable if Muon saves substantially
-more steps or prevents an otherwise failed run. Conversely, a stability story alone does not win if
-an independently tuned AdamW or APOLLO recipe reaches the same quality materially sooner.
+Per-head Muon at `5e-3` is the selected primary optimizer for the frozen K3 laptop candidate.
+Across the completed source-pinned 4,194,304-token screen it led at the common wall budget with
+loss 6.1482 and finished at 6.0556. AdamW-WSD at `5e-4` is retained as the recovery/control recipe;
+it reached equal-wall loss 6.4310, terminal loss 6.3715 and about 11.1k tok/s. APOLLO did not earn
+promotion. This is an implementation freeze rather than a claim that one short seed proves a
+universal optimizer ranking. Remaining Muon work is bounded execution hardening and recovery
+validation; it does not reopen optimizer selection unless Muon becomes non-finite, cannot resume
+exactly, or loses a declared long-run time-to-quality checkpoint to the retained AdamW control.
