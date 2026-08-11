@@ -119,3 +119,35 @@ def test_aster_model_runs_explicit_csa_hca_pattern_and_fails_closed_for_cache() 
 
     with pytest.raises(RuntimeError, match="cached decoding is unavailable"):
         model(input_ids[:, :1], use_cache=True)
+
+
+def test_aster_model_runs_mhc_backbone_and_is_parameter_matched() -> None:
+    shared = {
+        "vocab_size": 64,
+        "d_model": 16,
+        "n_layers": 2,
+        "n_heads": 2,
+        "head_dim": 8,
+        "max_seq_len": 8,
+        "kda_ratio": 0,
+        "rope_dim": 4,
+        "mtp_depth": 0,
+        "gradient_checkpointing": True,
+        "checkpoint_segment_size": 2,
+    }
+    standard = AsterLM(AsterConfig(**shared, ffn_hidden=32))
+    mhc = AsterLM(
+        AsterConfig(
+            **shared,
+            ffn_hidden=24,
+            residual_architecture="mhc",
+            mhc_streams=4,
+        )
+    )
+    input_ids = torch.randint(0, 64, (2, 8))
+    output = mhc(input_ids, labels=input_ids, return_logits=False)
+    assert output.loss is not None and torch.isfinite(output.loss)
+    output.loss.backward()
+    assert mhc.blocks[0].mhc_attention is not None
+    assert mhc.blocks[0].mhc_attention.mix_weight.grad is not None
+    assert mhc.parameter_count() > standard.parameter_count()

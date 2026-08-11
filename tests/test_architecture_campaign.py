@@ -196,3 +196,16 @@ def test_csa_hca_proxy_is_parameter_matched_to_dense_mla(tmp_path):
     assert compressed.active_parameter_count() == pytest.approx(
         dense.active_parameter_count(), rel=3e-3
     )
+
+
+def test_mhc_proxy_pays_for_mixers_by_reducing_ffn_width(tmp_path):
+    campaign = load_architecture_campaign(CAMPAIGN, repo_root=ROOT)
+    manifest = materialize_architecture_campaign(campaign, tmp_path)
+    models = {}
+    for candidate_id in ("tier0-dense-mla-220m", "tier5-dense-mla-mhc-220m"):
+        materialized = Path(manifest["candidates"][candidate_id]["materialized_config"])
+        with torch.device("meta"):
+            models[candidate_id] = AsterLM(AsterConfig.from_yaml(materialized))
+    assert models["tier5-dense-mla-mhc-220m"].active_parameter_count() == pytest.approx(
+        models["tier0-dense-mla-220m"].active_parameter_count(), rel=2e-4
+    )

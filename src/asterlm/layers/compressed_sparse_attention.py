@@ -3,6 +3,8 @@ from __future__ import annotations
 import torch
 from torch import nn
 
+from asterlm.kernels import sparse_gather_attention
+
 from .deepseek_v4_reference import GatedKVCompressor, compressed_sparse_topk
 from .norm import RMSNorm
 from .rotary import RotaryEmbedding, apply_rotary
@@ -35,6 +37,7 @@ class CompressedSparseAttentionReference(nn.Module):
         output_lora_rank: int | None = None,
         norm_eps: float = 1e-6,
         rope_theta: float = 1_000_000.0,
+        backend: str = "reference",
     ) -> None:
         super().__init__()
         if min(input_dim, n_heads, head_dim, max_seq_len, local_window) <= 0:
@@ -60,6 +63,7 @@ class CompressedSparseAttentionReference(nn.Module):
         self.output_groups = output_groups
         self.output_lora_rank = output_lora_rank or max(1, input_dim // output_groups)
         self.norm_eps = norm_eps
+        self.backend = backend
 
         rank = q_lora_rank or input_dim
         self.q_down = nn.Linear(input_dim, rank, bias=False)
@@ -247,24 +251,16 @@ class CompressedSparseAttentionReference(nn.Module):
         selected_indices = torch.cat((local_indices, compressed_indices), dim=-1)
         self.last_selected_indices = selected_indices.detach()
 
-        valid = selected_indices >= 0
-        safe_indices = selected_indices.clamp_min(0)
-        gather_source = all_kv.unsqueeze(1).expand(-1, sequence, -1, -1)
-        selected_kv = torch.gather(
-            gather_source,
-            2,
-            safe_indices.unsqueeze(-1).expand(-1, -1, -1, self.head_dim),
+        backend = "torch" if self.backend == "reference" else self.backend
+        output = sparse_gather_attention(
+            query,
+            all_kv,
+            selected_indices,
+            self.attention_sink,
+            scale=self.head_dim**-0.5,
+            backend=backend,
         )
-        scores = torch.einsum(
-            "bshd,bskd->bshk", query.float(), selected_kv.float()
-        ) * self.head_dim**-0.5
-        scores = scores.masked_fill(~valid.unsqueeze(2), float("-inf"))
-        sink_scores = self.attention_sink.view(1, 1, -1, 1).expand(
-            batch, sequence, -1, -1
-        )
-        weights = torch.cat((scores, sink_scores), dim=-1).softmax(dim=-1)[..., :-1]
-        output = torch.einsum("bshk,bskd->bshd", weights, selected_kv.float())
-        output = self._inverse_rope(output.to(hidden.dtype), positions)
+        output = self._inverse_rope(output, positions)
 
         heads_per_group = self.n_heads // self.output_groups
         grouped = output.reshape(

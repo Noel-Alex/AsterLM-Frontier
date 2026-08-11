@@ -1,3 +1,5 @@
+import pytest
+
 from asterlm import AsterConfig
 
 
@@ -16,9 +18,14 @@ def test_explicit_compressed_attention_pattern_validation():
     assert config.pattern == ["csa", "hca"]
 
 
-def test_invalid_backend_rejected():
-    import pytest
+def test_mhc_rejects_unvalidated_compositions():
+    with pytest.raises(ValueError, match="mutually exclusive"):
+        AsterConfig(residual_architecture="mhc", use_block_attnres=True, mtp_depth=0)
+    with pytest.raises(ValueError, match="MTP integration"):
+        AsterConfig(residual_architecture="mhc", mtp_depth=1)
 
+
+def test_invalid_backend_rejected():
     with pytest.raises(ValueError, match="kda_backend"):
         AsterConfig(kda_backend="mystery")
 

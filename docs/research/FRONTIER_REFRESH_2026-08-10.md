@@ -78,6 +78,21 @@ dense-MLA proxy within 0.3% active parameters. Cached decoding fails closed on t
 reference implementation; this prevents its gather-heavy PyTorch path from being
 mistaken for the eventual inference backend.
 
+### DeepSeek V4 mHC residual candidate
+
+The portable mHC reference is integrated as a distinct residual architecture with
+four streams, separate attention/FFN mixers, 20 Sinkhorn passes and the published
+head-reduction form. It is mutually exclusive with Block AttnRes, and mHC+MTP is
+fail-closed until the sequential MTP stream semantics receive their own parity
+gate. The registered `tier5-dense-mla-mhc-220m` control reduces FFN hidden width
+from 2,048 to 1,984 to pay for the new mixers: it has 192,157,205 active parameters
+versus 192,143,616 for dense MLA (0.007% more), so a later quality result cannot be
+explained by a material capacity increase.
+
+This is still an isolated candidate. mHC must beat the standard residual on
+multi-seed equal-token, equal-wall and equal-active-FLOP learning curves before it
+can be composed with KDA, CSA/HCA or Stable LatentMoE.
+
 ### Kimi Linear: 3:1 KDA/MLA
 
 Moonshot's official paper reports that its 48B-total/3B-active 3:1 KDA-to-MLA hybrid

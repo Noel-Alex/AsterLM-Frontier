@@ -108,6 +108,7 @@ class AsterConfig:
     compressed_attention_output_groups: int = 1
     compressed_attention_output_lora_rank: int | None = None
     compressed_attention_rope_theta: float = 160_000.0
+    compressed_attention_backend: str = "reference"  # reference | triton | auto
 
     # Inference cache storage. KDA layers use fixed recurrent states; these options
     # apply to the latent/global-attention layers only. `hadamard_int4` is a
@@ -136,6 +137,10 @@ class AsterConfig:
     use_block_attnres: bool = False
     attnres_block_size: int = 4
     attnres_key_dim: int = 64
+    residual_architecture: str = "standard"  # standard | mhc
+    mhc_streams: int = 4
+    mhc_sinkhorn_iterations: int = 20
+    mhc_eps: float = 1e-6
 
     # Multi-token prediction; heads predict t+2, t+3, ... beyond the main next-token head.
     mtp_depth: int = 2
@@ -234,6 +239,8 @@ class AsterConfig:
             raise ValueError("compressed HCA ratio must exceed one")
         if self.compressed_attention_rope_theta <= 0:
             raise ValueError("compressed attention RoPE theta must be positive")
+        if self.compressed_attention_backend not in {"reference", "triton", "auto"}:
+            raise ValueError("compressed attention backend must be reference, triton, or auto")
         if self.compressed_attention_index_topk <= 0:
             raise ValueError("compressed attention index top-k must be positive")
         if (
@@ -252,6 +259,14 @@ class AsterConfig:
             raise ValueError("norm_type must be rmsnorm or ssnorm")
         if not 0.0 <= self.residual_dropout < 1.0 or not 0.0 <= self.ffn_dropout < 1.0:
             raise ValueError("residual and FFN dropout must be in [0, 1)")
+        if self.residual_architecture not in {"standard", "mhc"}:
+            raise ValueError("residual_architecture must be standard or mhc")
+        if self.mhc_streams <= 0 or self.mhc_sinkhorn_iterations <= 0 or self.mhc_eps <= 0:
+            raise ValueError("mHC streams, iterations, and epsilon must be positive")
+        if self.residual_architecture == "mhc" and self.use_block_attnres:
+            raise ValueError("mHC and Block AttnRes are mutually exclusive research candidates")
+        if self.residual_architecture == "mhc" and self.mtp_depth > 0:
+            raise ValueError("mHC MTP integration is not yet reference-parity validated")
         if self.latent_rank <= 0:
             raise ValueError("latent_rank must be positive")
         if self.q_lora_rank is not None and self.q_lora_rank <= 0:

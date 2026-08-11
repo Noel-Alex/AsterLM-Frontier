@@ -260,3 +260,53 @@ class MHCResidualMixer(nn.Module):
             "bstu,bsud->bstd", combination.float(), residual.float()
         )
         return (expanded + mixed_residual).to(sublayer_output.dtype)
+
+
+class MHCHeadReducer(nn.Module):
+    """DeepSeek V4 head reduction from residual streams to one hidden state."""
+
+    def __init__(
+        self,
+        dim: int,
+        *,
+        streams: int = 4,
+        norm_eps: float = 1e-6,
+        eps: float = 1e-6,
+    ) -> None:
+        super().__init__()
+        if dim <= 0 or streams <= 0:
+            raise ValueError("dim and streams must be positive")
+        self.dim = dim
+        self.streams = streams
+        self.norm_eps = norm_eps
+        self.eps = eps
+        self.mix_weight = nn.Parameter(
+            torch.zeros(streams, streams * dim, dtype=torch.float32)
+        )
+        self.base = nn.Parameter(torch.empty(streams, dtype=torch.float32))
+        self.scale = nn.Parameter(torch.zeros(1, dtype=torch.float32))
+        self.reset_parameters()
+
+    def reset_parameters(self) -> None:
+        nn.init.zeros_(self.mix_weight)
+        probability = 1.0 / self.streams - self.eps
+        logit = math.log(probability / (1.0 - probability))
+        with torch.no_grad():
+            self.base.fill_(logit)
+            self.scale.zero_()
+
+    def forward(self, residual: torch.Tensor) -> torch.Tensor:
+        if residual.ndim != 4 or residual.shape[-2:] != (self.streams, self.dim):
+            raise ValueError(
+                f"residual must have shape [B, T, {self.streams}, {self.dim}]"
+            )
+        output_dtype = residual.dtype
+        flat = residual.flatten(2).float()
+        inverse_rms = torch.rsqrt(
+            flat.square().mean(dim=-1, keepdim=True) + self.norm_eps
+        )
+        mixes = F.linear(flat, self.mix_weight.float()) * inverse_rms
+        pre = torch.sigmoid(
+            mixes * self.scale.float() + self.base.float()
+        ) + self.eps
+        return (pre.unsqueeze(-1) * residual.float()).sum(dim=2).to(output_dtype)

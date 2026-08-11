@@ -102,7 +102,14 @@ execution_variants:
     description: Portable full-precision CSA/HCA correctness path; never a production throughput result.
     comparison_role: numerical_control
     numerical_family: bf16-torch
-    model_overrides: {linear_backend: torch, ffn_linear_backend: torch}
+    model_overrides: {linear_backend: torch, ffn_linear_backend: torch, compressed_attention_backend: reference}
+    train_overrides: {compile: false, precision_backend: amp}
+    environment: {}
+  compressed-triton-bf16:
+    description: Ada Triton indexed shared-KV attention with fused online softmax and custom backward.
+    comparison_role: system_recipe
+    numerical_family: bf16-torch
+    model_overrides: {linear_backend: torch, ffn_linear_backend: torch, compressed_attention_backend: triton}
     train_overrides: {compile: false, precision_backend: amp}
     environment: {}
 candidates:
@@ -289,7 +296,28 @@ candidates:
       rope_scaling_type: none
       linear_backend: torch
       ffn_linear_backend: torch
-    execution_variants: [compressed-reference-bf16]
+    execution_variants: [compressed-reference-bf16, compressed-triton-bf16]
+  - id: tier5-dense-mla-mhc-220m
+    tier: 5
+    hypothesis: Four-stream mHC improves optimization or final quality at matched parameters enough to repay its residual mixing compute.
+    base_model: configs/model/aster_220m.yaml
+    model_overrides:
+      ffn_type: dense
+      ffn_hidden: 1984
+      kda_ratio: 0
+      residual_architecture: mhc
+      mhc_streams: 4
+      mhc_sinkhorn_iterations: 20
+      mhc_eps: 0.000001
+      mtp_depth: 0
+      norm_type: rmsnorm
+      embedding_projection: false
+      use_block_attnres: false
+      cache_dtype: bfloat16
+      rope_scaling_type: none
+      linear_backend: torch
+      ffn_linear_backend: torch
+    execution_variants: [torch-sdpa-bf16]
   - id: tier0-dense-mla-480m
     tier: 0
     hypothesis: Dense MLA is the gold correctness and systems reference.

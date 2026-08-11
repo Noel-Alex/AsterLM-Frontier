@@ -15,6 +15,7 @@ from .cache import AsterCache
 from .config import AsterConfig
 from .layers.attnres_vnext import AttnResMix
 from .layers.compressed_sparse_attention import CompressedSparseAttentionReference
+from .layers.deepseek_v4_reference import MHCHeadReducer, MHCResidualMixer
 from .layers.ffn import SwiGLU
 from .layers.gdn2 import GDN2
 from .layers.kda import KDA
@@ -119,6 +120,7 @@ class AsterBlock(nn.Module):
                 output_lora_rank=config.compressed_attention_output_lora_rank,
                 norm_eps=config.rms_eps,
                 rope_theta=config.compressed_attention_rope_theta,
+                backend=config.compressed_attention_backend,
             )
         else:
             raise ValueError(f"Unknown block kind: {kind}")
@@ -183,6 +185,25 @@ class AsterBlock(nn.Module):
                 init_std=config.init_std,
             )
         self.residual_dropout = nn.Dropout(config.residual_dropout)
+        self.use_mhc = config.residual_architecture == "mhc"
+        if self.use_mhc:
+            self.mhc_attention = MHCResidualMixer(
+                config.d_model,
+                streams=config.mhc_streams,
+                iterations=config.mhc_sinkhorn_iterations,
+                norm_eps=config.rms_eps,
+                sinkhorn_eps=config.mhc_eps,
+            )
+            self.mhc_ffn = MHCResidualMixer(
+                config.d_model,
+                streams=config.mhc_streams,
+                iterations=config.mhc_sinkhorn_iterations,
+                norm_eps=config.rms_eps,
+                sinkhorn_eps=config.mhc_eps,
+            )
+        else:
+            self.mhc_attention = None
+            self.mhc_ffn = None
         self.use_attnres = config.use_block_attnres
         if self.use_attnres:
             self.attn_res_mix = AttnResMix(config.d_model, config.rms_eps)
@@ -198,6 +219,36 @@ class AsterBlock(nn.Module):
         cache: AsterCache | None = None,
         use_cache: bool = False,
     ) -> torch.Tensor:
+        if self.use_mhc:
+            assert self.mhc_attention is not None and self.mhc_ffn is not None
+            residual = hidden
+            attention_input, post, combination = self.mhc_attention.reduce(hidden)
+            normed = self.norm_mixer(attention_input)
+            if self.kind in {"kda", "gdn2"}:
+                mixed = self.mixer(normed, cache=cache, use_cache=use_cache)
+            elif self.kind in {"csa", "hca"}:
+                if cache is not None or use_cache:
+                    raise RuntimeError(
+                        "CSA/HCA cached decoding is unavailable until the optimized "
+                        "backend passes reference parity"
+                    )
+                mixed = self.mixer(normed)
+            else:
+                layer_cache = None if cache is None else cache.latent_layer(self.layer_idx)
+                mixed = self.mixer(
+                    normed, position_ids, cache=layer_cache, use_cache=use_cache
+                )
+            hidden = self.mhc_attention.expand(
+                self.residual_dropout(mixed), residual, post, combination
+            )
+
+            residual = hidden
+            ffn_input, post, combination = self.mhc_ffn.reduce(hidden)
+            ffn_output = self.ffn(self.norm_ffn(ffn_input))
+            return self.mhc_ffn.expand(
+                self.residual_dropout(ffn_output), residual, post, combination
+            )
+
         normed = self.norm_mixer(hidden)
         if self.kind in {"kda", "gdn2"}:
             mixed = self.mixer(normed, cache=cache, use_cache=use_cache)
@@ -323,6 +374,17 @@ class AsterLM(nn.Module):
         self.use_block_attnres = config.use_block_attnres
         self.attnres_block_size = config.attnres_block_size
         self.final_attnres = AttnResMix(config.d_model, config.rms_eps) if self.use_block_attnres else None
+        self.use_mhc = config.residual_architecture == "mhc"
+        self.final_mhc = (
+            MHCHeadReducer(
+                config.d_model,
+                streams=config.mhc_streams,
+                norm_eps=config.rms_eps,
+                eps=config.mhc_eps,
+            )
+            if self.use_mhc
+            else None
+        )
 
         self.final_norm = build_norm(config.d_model, config.rms_eps, config.norm_type)
         self.lm_head = nn.Linear(config.d_model, config.vocab_size, bias=False)
@@ -632,6 +694,8 @@ class AsterLM(nn.Module):
         position_ids = torch.arange(start, start + seq_len, device=input_ids.device).unsqueeze(0).expand(bsz, -1)
 
         hidden = self.embedding_dropout(self.embedding_in_proj(self.token_embedding(input_ids)))
+        if self.use_mhc:
+            hidden = hidden.unsqueeze(2).expand(-1, -1, self.config.mhc_streams, -1).contiguous()
         depth_states: list[torch.Tensor] | None = None
         if (
             not self.use_block_attnres
@@ -661,6 +725,9 @@ class AsterLM(nn.Module):
         if self.use_block_attnres:
             assert self.final_attnres is not None
             hidden = self.final_attnres([*(depth_states or []), hidden])
+        if self.use_mhc:
+            assert self.final_mhc is not None
+            hidden = self.final_mhc(hidden)
         # Keep the raw backbone state for faithful sequential MTP. The main LM head
         # still consumes the ordinary final-normalized state.
         backbone_hidden = hidden

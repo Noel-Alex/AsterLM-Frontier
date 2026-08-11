@@ -4,6 +4,7 @@ import torch
 
 from asterlm.layers.deepseek_v4_reference import (
     GatedKVCompressor,
+    MHCHeadReducer,
     MHCResidualMixer,
     compressed_sparse_topk,
     mhc_split_sinkhorn,
@@ -113,3 +114,11 @@ def test_mhc_residual_mixer_initializes_as_stable_four_stream_reference() -> Non
     assert residual.grad is not None
     assert sublayer.grad is not None
 
+
+def test_mhc_head_reducer_starts_as_stream_mean_and_backpropagates() -> None:
+    reducer = MHCHeadReducer(8, streams=4)
+    residual = torch.randn(2, 5, 4, 8, requires_grad=True)
+    reduced = reducer(residual)
+    torch.testing.assert_close(reduced, residual.mean(dim=2), atol=1e-5, rtol=1e-5)
+    reduced.square().mean().backward()
+    assert residual.grad is not None and torch.isfinite(residual.grad).all()
