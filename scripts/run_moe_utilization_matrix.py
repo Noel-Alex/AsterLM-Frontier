@@ -201,6 +201,7 @@ def main() -> None:
             "grouped",
             "cutlass",
             "torch_grouped",
+            "liger",
         }:
             raise SystemExit(f"Invalid --variant-spec {raw_spec!r}")
         variants[name] = (filename, implementation)
