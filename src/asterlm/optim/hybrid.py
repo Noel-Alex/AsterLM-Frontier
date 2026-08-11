@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import torch
 from torch import nn
 
 from asterlm.config import TrainConfig
+
 from .muon import Muon
 
 
@@ -15,6 +16,7 @@ class OptimizerPartition:
     muon_names: list[str]
     adam_decay_names: list[str]
     adam_no_decay_names: list[str]
+    per_head_muon_names: list[str] = field(default_factory=list)
 
 
 class HybridOptimizer:
@@ -85,15 +87,41 @@ def _unique_named_parameters(model: nn.Module) -> Iterable[tuple[str, nn.Paramet
 
 def build_hybrid_optimizer(model: nn.Module, config: TrainConfig) -> HybridOptimizer:
     muon: list[nn.Parameter] = []
+    per_head_muon: list[tuple[nn.Parameter, int]] = []
     adam_decay: list[nn.Parameter] = []
     adam_no_decay: list[nn.Parameter] = []
     muon_names: list[str] = []
     adam_decay_names: list[str] = []
     adam_no_decay_names: list[str] = []
+    per_head_muon_names: list[str] = []
+
+    model_config = getattr(model, "config", None)
+
+    def per_head_count(name: str, parameter: nn.Parameter) -> int | None:
+        if not config.muon_per_head or model_config is None:
+            return None
+        lower = name.lower()
+        kda_projection = any(
+            lower.endswith(f".impl.{projection}_proj.weight")
+            for projection in ("q", "k", "v")
+        )
+        mla_projection = any(
+            lower.endswith(f".mixer.{projection}.weight")
+            for projection in ("q_up", "k_up", "v_up")
+        )
+        if kda_projection:
+            count = model_config.kda_num_heads or model_config.n_heads
+        elif mla_projection:
+            count = model_config.n_heads
+        else:
+            return None
+        return int(count) if parameter.shape[0] % int(count) == 0 else None
 
     for name, param in _unique_named_parameters(model):
         lower = name.lower()
-        is_osp_projection = lower.startswith("embedding_in_proj") or lower.startswith("embedding_out_proj")
+        is_osp_projection = lower.startswith(
+            ("embedding_in_proj", "embedding_out_proj")
+        )
         is_embedding_or_head = ("embedding" in lower and not is_osp_projection) or lower.startswith("lm_head")
         is_matrix = param.ndim == 2
         is_norm_or_bias = param.ndim < 2 or lower.endswith("bias") or "norm" in lower or "router" in lower
@@ -103,7 +131,12 @@ def build_hybrid_optimizer(model: nn.Module, config: TrainConfig) -> HybridOptim
         # Muon is reserved for dense hidden matrices. Tied embeddings/output heads use
         # AdamW with no decay, following stability-oriented small-model recipes.
         if is_matrix and not is_embedding_or_head and not is_special_adam:
-            muon.append(param)
+            head_count = per_head_count(name, param)
+            if head_count is None:
+                muon.append(param)
+            else:
+                per_head_muon.append((param, head_count))
+                per_head_muon_names.append(name)
             muon_names.append(name)
         elif is_norm_or_bias or is_embedding_or_head:
             adam_no_decay.append(param)
@@ -112,9 +145,16 @@ def build_hybrid_optimizer(model: nn.Module, config: TrainConfig) -> HybridOptim
             adam_decay.append(param)
             adam_decay_names.append(name)
 
+    muon_groups: list[dict] = []
+    if muon:
+        muon_groups.append({"params": muon, "split_count": 1, "split_axis": 0})
+    muon_groups.extend(
+        {"params": [parameter], "split_count": head_count, "split_axis": 0}
+        for parameter, head_count in per_head_muon
+    )
     muon_optim = (
         Muon(
-            muon,
+            muon_groups,
             lr=config.muon_lr,
             momentum=config.muon_momentum,
             weight_decay=config.weight_decay,
@@ -122,7 +162,7 @@ def build_hybrid_optimizer(model: nn.Module, config: TrainConfig) -> HybridOptim
             nesterov=config.muon_nesterov,
             update_rms=config.muon_update_rms,
         )
-        if muon
+        if muon_groups
         else None
     )
     adam_groups = []
@@ -141,7 +181,12 @@ def build_hybrid_optimizer(model: nn.Module, config: TrainConfig) -> HybridOptim
         if adam_groups
         else None
     )
-    partition = OptimizerPartition(muon_names, adam_decay_names, adam_no_decay_names)
+    partition = OptimizerPartition(
+        muon_names,
+        adam_decay_names,
+        adam_no_decay_names,
+        per_head_muon_names,
+    )
     return HybridOptimizer(muon_optim, adam_optim, partition)
 
 
@@ -205,7 +250,9 @@ def build_apollo_optimizer(model: nn.Module, config: TrainConfig) -> SingleOptim
 
     for name, param in _unique_named_parameters(model):
         lower = name.lower()
-        is_osp_projection = lower.startswith("embedding_in_proj") or lower.startswith("embedding_out_proj")
+        is_osp_projection = lower.startswith(
+            ("embedding_in_proj", "embedding_out_proj")
+        )
         embedding_or_head = ("embedding" in lower and not is_osp_projection) or lower.startswith("lm_head")
         sensitive = "router" in lower or "norm" in lower or lower.endswith("bias")
         special = "conv" in lower or "a_log" in lower or "dt_bias" in lower

@@ -53,14 +53,16 @@ class Muon(Optimizer):
         nesterov: bool = True,
         update_rms: float = 0.2,
     ) -> None:
-        defaults = dict(
-            lr=lr,
-            momentum=momentum,
-            weight_decay=weight_decay,
-            ns_steps=ns_steps,
-            nesterov=nesterov,
-            update_rms=update_rms,
-        )
+        defaults = {
+            "lr": lr,
+            "momentum": momentum,
+            "weight_decay": weight_decay,
+            "ns_steps": ns_steps,
+            "nesterov": nesterov,
+            "update_rms": update_rms,
+            "split_count": 1,
+            "split_axis": 0,
+        }
         super().__init__(params, defaults)
 
     @torch.no_grad()
@@ -76,6 +78,8 @@ class Muon(Optimizer):
             ns_steps = group["ns_steps"]
             nesterov = group["nesterov"]
             target_rms = group["update_rms"]
+            split_count = int(group.get("split_count", 1))
+            split_axis = int(group.get("split_axis", 0))
             for param in group["params"]:
                 if param.grad is None:
                     continue
@@ -91,11 +95,25 @@ class Muon(Optimizer):
                 buffer = state["momentum_buffer"]
                 buffer.mul_(momentum).add_(grad.float())
                 update = grad.float().add(buffer, alpha=momentum) if nesterov else buffer
-                update = zeropower_via_newton_schulz5(update, steps=ns_steps)
-
-                # Match the update RMS convention used in Kimi K2's Muon recipe.
-                scale = target_rms * math.sqrt(max(param.shape))
-                update = update.mul(scale)
+                if split_count > 1:
+                    if param.shape[split_axis] % split_count:
+                        raise RuntimeError(
+                            f"Per-head Muon cannot split shape {tuple(param.shape)} "
+                            f"into {split_count} blocks on axis {split_axis}"
+                        )
+                    blocks = []
+                    for block in update.chunk(split_count, dim=split_axis):
+                        orthogonal = zeropower_via_newton_schulz5(
+                            block, steps=ns_steps
+                        )
+                        block_scale = target_rms * math.sqrt(max(block.shape))
+                        blocks.append(orthogonal.mul(block_scale))
+                    update = torch.cat(blocks, dim=split_axis)
+                else:
+                    update = zeropower_via_newton_schulz5(update, steps=ns_steps)
+                    # Match the update RMS convention used in Kimi K2's Muon recipe.
+                    scale = target_rms * math.sqrt(max(param.shape))
+                    update = update.mul(scale)
                 if wd:
                     param.mul_(1.0 - lr * wd)
                 param.add_(update.to(param.dtype), alpha=-lr)

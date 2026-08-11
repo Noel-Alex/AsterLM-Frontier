@@ -37,11 +37,17 @@ class AsterConfig:
     latent_moe_dim: int | None = None
     # Kimi-K3-inspired Stable LatentMoE ablation: RMS-normalize the aggregated routed latent before up-projection.
     latent_moe_post_norm: bool = False
+    # Kimi K3 Stable LatentMoE uses bounded SiTU-GLU in both routed and shared experts.
+    moe_activation: str = "swiglu"  # swiglu | situ_glu
+    moe_situ_beta_gate: float = 4.0
+    moe_situ_beta_up: float = 25.0
     moe_aux_loss_weight: float = 0.01
     moe_router_z_loss_weight: float = 0.001
     moe_router_score: str = "sigmoid"  # sigmoid (DeepSeek-style) | softmax
-    moe_balance_strategy: str = "bias"  # bias | aux_loss | hybrid
+    moe_balance_strategy: str = "bias"  # bias | aux_loss | hybrid | quantile
     moe_router_bias_update_speed: float = 0.001
+    moe_quantile_bins: int = 256
+    moe_quantile_margin_bound: float = 4.0
     max_seq_len: int = 8192
     tie_embeddings: bool = True
 
@@ -169,10 +175,18 @@ class AsterConfig:
             raise ValueError("MoE loss weights must be non-negative")
         if self.moe_router_score not in {"sigmoid", "softmax"}:
             raise ValueError("moe_router_score must be sigmoid or softmax")
-        if self.moe_balance_strategy not in {"bias", "aux_loss", "hybrid"}:
-            raise ValueError("moe_balance_strategy must be bias, aux_loss, or hybrid")
+        if self.moe_activation not in {"swiglu", "situ_glu"}:
+            raise ValueError("moe_activation must be swiglu or situ_glu")
+        if self.moe_situ_beta_gate <= 0 or self.moe_situ_beta_up <= 0:
+            raise ValueError("SiTU-GLU beta values must be positive")
+        if self.moe_balance_strategy not in {"bias", "aux_loss", "hybrid", "quantile"}:
+            raise ValueError(
+                "moe_balance_strategy must be bias, aux_loss, hybrid, or quantile"
+            )
         if self.moe_router_bias_update_speed < 0:
             raise ValueError("moe_router_bias_update_speed must be non-negative")
+        if self.moe_quantile_bins < 16 or self.moe_quantile_margin_bound <= 0:
+            raise ValueError("quantile balancing requires >=16 bins and a positive margin bound")
         if self.kda_ratio < 0:
             raise ValueError("kda_ratio must be non-negative")
         if self.layer_pattern is not None:
@@ -256,7 +270,7 @@ class AsterConfig:
         return [cycle[i % len(cycle)] for i in range(self.n_layers)]
 
     @classmethod
-    def from_yaml(cls, path: str | Path) -> "AsterConfig":
+    def from_yaml(cls, path: str | Path) -> AsterConfig:
         values = yaml.safe_load(Path(path).read_text(encoding="utf-8")) or {}
         if "model" in values:
             values = values["model"]
@@ -318,6 +332,8 @@ class TrainConfig:
     muon_ns_steps: int = 5
     muon_nesterov: bool = True
     muon_update_rms: float = 0.2
+    # Kimi K3 orthogonalizes Q/K/V momentum independently per attention head.
+    muon_per_head: bool = False
     max_grad_norm: float = 1.0
 
     # APOLLO/APOLLO-Mini: low-rank optimizer states for VRAM-constrained full pretraining.
@@ -437,7 +453,7 @@ class TrainConfig:
             raise ValueError("apollo_mini requires apollo_rank=1 and apollo_scale_type=tensor")
 
     @classmethod
-    def from_yaml(cls, path: str | Path) -> "TrainConfig":
+    def from_yaml(cls, path: str | Path) -> TrainConfig:
         values = yaml.safe_load(Path(path).read_text(encoding="utf-8")) or {}
         if "train" in values:
             values = values["train"]
@@ -490,7 +506,7 @@ class DataConfig:
     manifest_path: str | None = None
 
     @classmethod
-    def from_yaml(cls, path: str | Path) -> "DataConfig":
+    def from_yaml(cls, path: str | Path) -> DataConfig:
         values = yaml.safe_load(Path(path).read_text(encoding="utf-8")) or {}
         if "data" in values:
             values = values["data"]

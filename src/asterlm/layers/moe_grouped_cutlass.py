@@ -4,6 +4,8 @@ import torch
 from torch import nn
 from torch.nn import functional as F
 
+from .ffn import situ_glu
+
 
 class _CachedParameterStack(torch.autograd.Function):
     """Expose a detached packed cache while returning gradients to source Parameters."""
@@ -82,6 +84,16 @@ class CUTLASSGroupedRoutedExperts:
                 raise RuntimeError("CUTLASS grouped MoE expects SwiGLU gate_up/down modules")
             if not hasattr(gate_up, "weight") or not hasattr(down, "weight"):
                 raise RuntimeError("CUTLASS grouped MoE requires explicit expert weights")
+        self.activation_name = str(
+            getattr(self.routed_experts[0], "activation_name", "swiglu")
+        )
+        if any(
+            getattr(expert, "activation_name", "swiglu") != self.activation_name
+            for expert in self.routed_experts
+        ):
+            raise RuntimeError("All grouped experts must use the same activation")
+        self.beta_gate = float(getattr(self.routed_experts[0], "beta_gate", 4.0))
+        self.beta_up = float(getattr(self.routed_experts[0], "beta_up", 25.0))
 
     def _stack_parameters(
         self,
@@ -141,7 +153,10 @@ class CUTLASSGroupedRoutedExperts:
             permuted, gate_up_weights, batch_sizes, trans_b=True
         )
         gate, up = gate_up.chunk(2, dim=-1)
-        hidden = F.silu(gate) * up
+        if self.activation_name == "situ_glu":
+            hidden = situ_glu(gate, up, self.beta_gate, self.beta_up)
+        else:
+            hidden = F.silu(gate) * up
 
         down_weights = self._stack_parameters(
             "down",

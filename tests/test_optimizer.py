@@ -77,3 +77,40 @@ def test_adamw_control_has_no_muon_partition_and_steps_on_cpu():
     assert optimizer.partition.muon_names == []
     assert optimizer.partition.adam_decay_names
     assert "token_embedding.weight" in optimizer.partition.adam_no_decay_names
+
+
+def test_per_head_muon_partitions_attention_projections_and_steps():
+    config = AsterConfig(
+        vocab_size=64,
+        d_model=32,
+        n_layers=2,
+        n_heads=2,
+        head_dim=16,
+        ffn_hidden=96,
+        max_seq_len=16,
+        kda_ratio=1,
+        kda_backend="torch",
+        kda_num_heads=2,
+        kda_head_dim=16,
+        latent_rank=8,
+        rope_dim=8,
+        attention_window=None,
+        sink_tokens=0,
+        mtp_depth=0,
+        gradient_checkpointing=False,
+    )
+    model = AsterLM(config)
+    train = TrainConfig(
+        device="cpu", max_steps=2, optimizer="muon_adamw", muon_per_head=True
+    )
+    optimizer = build_hybrid_optimizer(model, train)
+    assert optimizer.partition.per_head_muon_names
+    assert any("q_proj.weight" in name for name in optimizer.partition.per_head_muon_names)
+    split_groups = [
+        group for group in optimizer.muon.param_groups if group["split_count"] > 1
+    ]
+    assert split_groups and all(group["split_count"] == 2 for group in split_groups)
+    ids = torch.randint(0, 64, (2, 8))
+    loss = model(ids, labels=ids).loss
+    loss.backward()
+    optimizer.step()

@@ -217,10 +217,6 @@ def main() -> None:
         candidates,
         tuple(args.execution_variant),
     )
-    cuda_toolchain = None
-    if any(variant_id.startswith("fla-kda") for _, variant_id in execution_matrix):
-        cuda_toolchain = require_compatible_cuda_toolchain()
-
     configs = [
         (
             candidate_id,
@@ -230,6 +226,12 @@ def main() -> None:
         )
         for candidate_id in candidates
     ]
+    cuda_toolchain = None
+    if any(
+        "kda" in config.pattern and config.kda_backend in {"auto", "fla"}
+        for _, config in configs
+    ):
+        cuda_toolchain = require_compatible_cuda_toolchain()
     initialization_audits = (
         {str(seed): audit_named_initialization(configs, seed) for seed in seeds}
         if len(configs) > 1

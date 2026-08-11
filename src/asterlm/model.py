@@ -118,6 +118,11 @@ class AsterBlock(nn.Module):
                 init_std=config.init_std,
                 norm_eps=config.rms_eps,
                 post_norm=config.latent_moe_post_norm,
+                activation=config.moe_activation,
+                situ_beta_gate=config.moe_situ_beta_gate,
+                situ_beta_up=config.moe_situ_beta_up,
+                quantile_bins=config.moe_quantile_bins,
+                quantile_margin_bound=config.moe_quantile_margin_bound,
             )
         elif use_moe:
             self.ffn = DeepSeekStyleMoE(
