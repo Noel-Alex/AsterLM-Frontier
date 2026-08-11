@@ -9,6 +9,7 @@ from asterlm.quantization.loqt import effective_parameter_count
 from .ffn import SiTUGLU, SwiGLU
 from .linear import build_linear, mark_residual
 from .moe_grouped_cutlass import CUTLASSGroupedRoutedExperts
+from .moe_grouped_liger import LigerGroupedRoutedExperts
 from .moe_grouped_te import TEGroupedRoutedExperts
 from .moe_grouped_torch import TorchGroupedRoutedExperts
 from .norm import RMSNorm
@@ -64,9 +65,15 @@ class LatentMoE(nn.Module):
             raise ValueError("LatentMoE latent_dim must be positive and smaller than dim")
         if shared_experts < 0:
             raise ValueError("shared_experts must be non-negative")
-        if moe_impl not in {"reference", "grouped", "cutlass", "torch_grouped"}:
+        if moe_impl not in {
+            "reference",
+            "grouped",
+            "cutlass",
+            "torch_grouped",
+            "liger",
+        }:
             raise ValueError(
-                "moe_impl must be reference, grouped, cutlass, or torch_grouped"
+                "moe_impl must be reference, grouped, cutlass, torch_grouped, or liger"
             )
         if moe_impl == "grouped" and linear_backend != "transformer_engine":
             raise ValueError("grouped LatentMoE requires Transformer Engine expert linears")
@@ -76,6 +83,10 @@ class LatentMoE(nn.Module):
             raise ValueError(
                 "Transformer Engine's fused grouped path supports SwiGLU only; "
                 "use the CUTLASS grouped path for SiTU-GLU"
+            )
+        if moe_impl == "liger" and activation != "swiglu":
+            raise ValueError(
+                "LigerExperts 0.8 supports SwiGLU only; use CUTLASS for SiTU-GLU"
             )
         if quantile_bins < 16 or quantile_margin_bound <= 0:
             raise ValueError("invalid Quantile Balancing histogram settings")
@@ -168,6 +179,14 @@ class LatentMoE(nn.Module):
                 num_experts=num_experts,
                 dropout=dropout,
             )
+        elif self.moe_impl == "liger":
+            self._grouped_routed = LigerGroupedRoutedExperts(
+                self.routed,
+                dim=latent_dim,
+                expert_hidden=expert_hidden,
+                num_experts=num_experts,
+                dropout=dropout,
+            )
 
         self.last_aux_loss: torch.Tensor | None = None
         self.last_z_loss: torch.Tensor | None = None
@@ -242,7 +261,7 @@ class LatentMoE(nn.Module):
         top_weight = top_weight / top_weight.sum(dim=-1, keepdim=True).clamp_min(1e-9)
 
         latent = self.down_proj(flat)
-        if self.moe_impl in {"grouped", "cutlass", "torch_grouped"}:
+        if self.moe_impl in {"grouped", "cutlass", "torch_grouped", "liger"}:
             if self._grouped_routed is None:
                 raise RuntimeError("Grouped LatentMoE bridge was not initialized")
             routed_latent = self._grouped_routed(latent, top_idx, top_weight)

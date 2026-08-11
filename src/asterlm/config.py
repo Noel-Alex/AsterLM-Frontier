@@ -350,7 +350,7 @@ class TrainConfig:
     execution_backend: str = "auto"  # auto | aster_local | megatron_core | torchtitan | deepspeed
     execution_autotune: bool = True
     # Physical expert execution only; this never changes routing/model semantics.
-    moe_implementation: str = "auto"  # auto | reference | grouped | cutlass | torch_grouped
+    moe_implementation: str = "auto"  # auto | reference | grouped | cutlass | torch_grouped | liger
     cuda_graphs: bool = False
     precision_backend: str = "amp"  # amp | transformer_engine_fp8
     fp8_format: str = "hybrid"  # hybrid | e4m3
@@ -468,6 +468,7 @@ class TrainConfig:
             "grouped",
             "cutlass",
             "torch_grouped",
+            "liger",
         }:
             raise ValueError("unsupported moe_implementation")
         if self.optimizer not in {

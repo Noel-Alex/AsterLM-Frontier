@@ -113,6 +113,7 @@ _MOE_REGISTRY_NAMES = {
     "grouped": "transformer_engine_grouped",
     "cutlass": "cutlass_grouped",
     "torch_grouped": "torch_grouped",
+    "liger": "liger_experts",
 }
 
 

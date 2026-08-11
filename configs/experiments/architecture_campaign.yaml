@@ -77,6 +77,13 @@ execution_variants:
     model_overrides: {linear_backend: torch, ffn_linear_backend: torch}
     train_overrides: {compile: false, precision_backend: amp, moe_implementation: cutlass}
     environment: {}
+  liger-experts-bf16:
+    description: Liger 0.8 fused Triton grouped-GEMM, SwiGLU and token aggregation with memory-efficient backward.
+    comparison_role: system_recipe
+    numerical_family: bf16-torch
+    model_overrides: {linear_backend: torch, ffn_linear_backend: torch}
+    train_overrides: {compile: false, precision_backend: amp, moe_implementation: liger}
+    environment: {}
   torch-grouped:
     description: GPU-resident native PyTorch grouped experts with jagged offsets and no host expert-size synchronization.
     comparison_role: system_recipe
@@ -430,7 +437,7 @@ candidates:
       moe_num_experts: 4
       moe_top_k: 2
       moe_shared_experts: 0
-    execution_variants: [torch-reference, cutlass-grouped-bf16, transformer-engine-grouped, cutlass-grouped, torch-grouped]
+    execution_variants: [torch-reference, cutlass-grouped-bf16, liger-experts-bf16, transformer-engine-grouped, cutlass-grouped, torch-grouped]
   - id: tier2-moe-e8k2
     tier: 2
     hypothesis: Eight routed experts without shared compute improve capacity at competitive time-to-quality.
@@ -439,7 +446,7 @@ candidates:
       moe_num_experts: 8
       moe_top_k: 2
       moe_shared_experts: 0
-    execution_variants: [torch-reference, cutlass-grouped-bf16, transformer-engine-grouped, cutlass-grouped, torch-grouped]
+    execution_variants: [torch-reference, cutlass-grouped-bf16, liger-experts-bf16, transformer-engine-grouped, cutlass-grouped, torch-grouped]
   - id: tier2-moe-e8k2-shared
     tier: 2
     hypothesis: The shared expert earns its always-on compute through quality per wall time.
@@ -448,7 +455,7 @@ candidates:
       moe_num_experts: 8
       moe_top_k: 2
       moe_shared_experts: 1
-    execution_variants: [torch-reference, cutlass-grouped-bf16, transformer-engine-grouped, cutlass-grouped, torch-grouped]
+    execution_variants: [torch-reference, cutlass-grouped-bf16, liger-experts-bf16, transformer-engine-grouped, cutlass-grouped, torch-grouped]
   - id: tier2-k3-latentmoe-868m-a483m
     tier: 2
     hypothesis: The promoted K3 mechanism scales to the first laptop frontier with matched active compute and practical grouped expert shapes.

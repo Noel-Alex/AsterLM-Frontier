@@ -89,6 +89,7 @@ def _default_registry() -> BackendRegistry:
                 "transformer_engine_grouped",
                 "cutlass_grouped",
                 "torch_grouped",
+                "liger_experts",
                 "custom_triton",
             ),
             notes="Primary laptop backend; every optional path requires sustained full-model evidence.",
@@ -105,6 +106,7 @@ def _default_registry() -> BackendRegistry:
             moe_candidates=(
                 "transformer_engine_grouped",
                 "cutlass_grouped",
+                "liger_experts",
                 "deep_gemm",
                 "tile_kernels",
             ),
@@ -119,7 +121,12 @@ def _default_registry() -> BackendRegistry:
             hardware_family="Blackwell data-center",
             precision_candidates=("bf16", "fp8", "nvfp4"),
             attention_candidates=("torch_sdpa", "flash_mla", "tile_kernels"),
-            moe_candidates=("transformer_engine_grouped", "deep_gemm", "tile_kernels"),
+            moe_candidates=(
+                "transformer_engine_grouped",
+                "liger_experts",
+                "deep_gemm",
+                "tile_kernels",
+            ),
             notes="Distinct from RTX Blackwell; FP4 is quality-gated and never changes canonical weights.",
         )
     )
@@ -131,7 +138,12 @@ def _default_registry() -> BackendRegistry:
             hardware_family="Blackwell RTX",
             precision_candidates=("bf16", "fp8", "nvfp4"),
             attention_candidates=("torch_sdpa", "custom_triton"),
-            moe_candidates=("torch_reference", "transformer_engine_grouped", "custom_triton"),
+            moe_candidates=(
+                "torch_reference",
+                "transformer_engine_grouped",
+                "liger_experts",
+                "custom_triton",
+            ),
             notes="Do not assume SM100 kernels work; DeepGEMM V4 gaps have been observed on SM120.",
         )
     )

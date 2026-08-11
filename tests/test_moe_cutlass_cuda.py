@@ -14,11 +14,13 @@ def _relative_l2(actual: torch.Tensor, expected: torch.Tensor) -> float:
     return float((numerator / denominator).item())
 
 
-@pytest.mark.parametrize("implementation", ["cutlass", "torch_grouped"])
+@pytest.mark.parametrize("implementation", ["cutlass", "torch_grouped", "liger"])
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA parity test")
 def test_grouped_moe_matches_dropless_reference(implementation):
-    if importlib.util.find_spec("grouped_gemm") is None:
+    if implementation != "liger" and importlib.util.find_spec("grouped_gemm") is None:
         pytest.skip("nv_grouped_gemm is not installed")
+    if implementation == "liger" and importlib.util.find_spec("liger_kernel") is None:
+        pytest.skip("liger-kernel is not installed")
 
     kwargs = {
         "dim": 128,
