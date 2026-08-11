@@ -10,6 +10,18 @@ from asterlm.experiments.quality import (
 )
 
 
+def load_runner_module():
+    import importlib.util
+    from pathlib import Path
+
+    path = Path(__file__).parents[1] / "scripts" / "run_architecture_quality_campaign.py"
+    spec = importlib.util.spec_from_file_location("run_architecture_quality_campaign", path)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
 def tiny(**changes) -> AsterConfig:
     values = {
         "vocab_size": 64,
@@ -72,3 +84,19 @@ def test_quality_summary_and_latest_checkpoint(tmp_path):
     assert summary["eval_main_loss"] == 3.5
     assert summary["median_training_tokens_per_second"] == 100.0
     assert latest_complete_checkpoint(run) == checkpoint
+
+
+def test_explicit_execution_matrix_accepts_heterogeneous_matched_pairs():
+    runner = load_runner_module()
+    materialized = {
+        "candidates": {
+            "dense": {"execution_variants": ["bf16"]},
+            "sparse": {"execution_variants": ["reference", "fp8"]},
+        }
+    }
+    candidates, matrix = runner._explicit_execution_matrix(
+        materialized,
+        ("dense=bf16", "sparse=reference", "sparse=fp8"),
+    )
+    assert candidates == ("dense", "sparse")
+    assert matrix == [("dense", "bf16"), ("sparse", "reference"), ("sparse", "fp8")]

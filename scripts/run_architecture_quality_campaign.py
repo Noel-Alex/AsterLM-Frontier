@@ -141,6 +141,35 @@ def _execution_matrix(
     return matrix
 
 
+def _explicit_execution_matrix(
+    materialized: dict[str, Any], requested_runs: tuple[str, ...]
+) -> tuple[tuple[str, ...], list[tuple[str, str]]]:
+    matrix: list[tuple[str, str]] = []
+    candidates: list[str] = []
+    known_candidates = set(materialized["candidates"])
+    for raw in requested_runs:
+        if "=" not in raw:
+            raise ValueError(f"Invalid --run {raw!r}; expected CANDIDATE=EXECUTION_VARIANT")
+        candidate_id, variant_id = (part.strip() for part in raw.split("=", 1))
+        if candidate_id not in known_candidates:
+            raise ValueError(f"Unknown campaign candidate in --run: {candidate_id}")
+        allowed = materialized["candidates"][candidate_id]["execution_variants"]
+        if variant_id not in allowed:
+            raise ValueError(
+                f"Execution variant {variant_id!r} is not allowed for {candidate_id}; "
+                f"choose one of {allowed}"
+            )
+        pair = (candidate_id, variant_id)
+        if pair in matrix:
+            raise ValueError(f"Duplicate --run pair: {raw}")
+        matrix.append(pair)
+        if candidate_id not in candidates:
+            candidates.append(candidate_id)
+    if not matrix:
+        raise ValueError("At least one CANDIDATE=EXECUTION_VARIANT pair is required")
+    return tuple(candidates), matrix
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Run source-pinned, shared-initialization architecture quality comparisons"
@@ -168,6 +197,17 @@ def main() -> None:
         action="append",
         default=[],
         help="Run only this physical execution variant; repeat to select a matched subset.",
+    )
+    parser.add_argument(
+        "--run",
+        action="append",
+        default=[],
+        metavar="CANDIDATE=EXECUTION_VARIANT",
+        help=(
+            "Select an exact architecture/execution pair; repeat for a heterogeneous "
+            "matched matrix such as dense BF16 versus sparse FP8. Cannot be combined "
+            "with --candidate or --execution-variant."
+        ),
     )
     parser.add_argument("--seed", action="append", type=int, default=[])
     parser.add_argument("--tokens", type=int, default=16_777_216)
@@ -205,18 +245,25 @@ def main() -> None:
         raise FileNotFoundError(f"Tokenizer does not exist: {tokenizer}")
     _validate_data(data_path, root)
 
-    candidates = tuple(args.candidate or DEFAULT_CANDIDATES)
     seeds = tuple(args.seed or [1337])
     campaign = load_architecture_campaign(campaign_path, repo_root=root)
     materialized = materialize_architecture_campaign(campaign, output / "configs")
-    unknown = sorted(set(candidates) - set(materialized["candidates"]))
-    if unknown:
-        raise ValueError(f"Unknown campaign candidates: {unknown}")
-    execution_matrix = _execution_matrix(
-        materialized,
-        candidates,
-        tuple(args.execution_variant),
-    )
+    if args.run:
+        if args.candidate or args.execution_variant:
+            raise ValueError("--run cannot be combined with --candidate or --execution-variant")
+        candidates, execution_matrix = _explicit_execution_matrix(
+            materialized, tuple(args.run)
+        )
+    else:
+        candidates = tuple(args.candidate or DEFAULT_CANDIDATES)
+        unknown = sorted(set(candidates) - set(materialized["candidates"]))
+        if unknown:
+            raise ValueError(f"Unknown campaign candidates: {unknown}")
+        execution_matrix = _execution_matrix(
+            materialized,
+            candidates,
+            tuple(args.execution_variant),
+        )
     configs = [
         (
             candidate_id,
