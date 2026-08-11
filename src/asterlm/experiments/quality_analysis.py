@@ -1,0 +1,194 @@
+from __future__ import annotations
+
+import json
+import statistics
+from collections import defaultdict
+from pathlib import Path
+from typing import Any
+
+from asterlm.experiments.quality import summarize_quality_run
+
+
+def _mean(values: list[float]) -> float | None:
+    return statistics.fmean(values) if values else None
+
+
+def _stdev(values: list[float]) -> float | None:
+    return statistics.stdev(values) if len(values) > 1 else None
+
+
+def normalized_curve_auc(curve: list[dict[str, Any]], x_key: str) -> float | None:
+    points = sorted(
+        (
+            (float(row[x_key]), float(row["eval_main_loss"]))
+            for row in curve
+            if isinstance(row.get(x_key), (int, float))
+            and isinstance(row.get("eval_main_loss"), (int, float))
+        ),
+        key=lambda item: item[0],
+    )
+    deduped: list[tuple[float, float]] = []
+    for point in points:
+        if deduped and point[0] == deduped[-1][0]:
+            deduped[-1] = point
+        else:
+            deduped.append(point)
+    if len(deduped) < 2 or deduped[-1][0] <= deduped[0][0]:
+        return None
+    area = sum(
+        0.5 * (left[1] + right[1]) * (right[0] - left[0])
+        for left, right in zip(deduped, deduped[1:], strict=False)
+    )
+    return area / (deduped[-1][0] - deduped[0][0])
+
+
+def interpolate_loss(curve: list[dict[str, Any]], x_key: str, budget: float) -> float | None:
+    points = sorted(
+        (
+            (float(row[x_key]), float(row["eval_main_loss"]))
+            for row in curve
+            if isinstance(row.get(x_key), (int, float))
+            and isinstance(row.get("eval_main_loss"), (int, float))
+        ),
+        key=lambda item: item[0],
+    )
+    if not points or budget < points[0][0] or budget > points[-1][0]:
+        return None
+    for left, right in zip(points, points[1:], strict=False):
+        if left[0] <= budget <= right[0]:
+            if right[0] == left[0]:
+                return right[1]
+            fraction = (budget - left[0]) / (right[0] - left[0])
+            return left[1] + fraction * (right[1] - left[1])
+    return points[-1][1]
+
+
+def analyze_quality_campaign(campaign_path: str | Path) -> dict[str, Any]:
+    campaign_path = Path(campaign_path).resolve()
+    root = campaign_path.parent
+    campaign = json.loads(campaign_path.read_text(encoding="utf-8"))
+    expected = [
+        (int(seed), str(run["candidate_id"]), str(run["execution_variant"]))
+        for seed in campaign.get("seeds", [])
+        for run in campaign.get("execution_matrix", [])
+    ]
+    records: list[dict[str, Any]] = []
+    grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for seed, candidate, variant in expected:
+        run_dir = root / f"seed-{seed}" / candidate / variant
+        summary = summarize_quality_run(run_dir)
+        record = {
+            "seed": seed,
+            "candidate_id": candidate,
+            "execution_variant": variant,
+            "run_dir": run_dir.relative_to(root).as_posix(),
+            **summary,
+        }
+        records.append(record)
+        grouped[f"{candidate}:{variant}"].append(record)
+
+    common_budgets: dict[int, dict[str, float]] = {}
+    for seed in campaign.get("seeds", []):
+        seed_records = [row for row in records if row["seed"] == int(seed)]
+        if len(seed_records) != len(campaign.get("execution_matrix", [])):
+            continue
+        budget: dict[str, float] = {}
+        for key in ("wall_clock_total_seconds", "estimated_cumulative_flops"):
+            maxima = [
+                max(
+                    float(point[key])
+                    for point in row["learning_curve"]
+                    if isinstance(point.get(key), (int, float))
+                )
+                for row in seed_records
+                if any(isinstance(point.get(key), (int, float)) for point in row["learning_curve"])
+            ]
+            if len(maxima) == len(seed_records):
+                budget[key] = min(maxima)
+        common_budgets[int(seed)] = budget
+
+    candidates: dict[str, Any] = {}
+    for identity, items in grouped.items():
+        complete = [item for item in items if item.get("status") == "ok"]
+        losses = [float(item["eval_main_loss"]) for item in complete if item.get("eval_main_loss") is not None]
+        throughput = [
+            float(item["median_training_tokens_per_second"])
+            for item in complete
+            if item.get("median_training_tokens_per_second") is not None
+        ]
+        token_auc = [
+            value
+            for item in complete
+            if (value := normalized_curve_auc(item["learning_curve"], "tokens_seen")) is not None
+        ]
+        wall_auc = [
+            value
+            for item in complete
+            if (
+                value := normalized_curve_auc(
+                    item["learning_curve"], "wall_clock_total_seconds"
+                )
+            )
+            is not None
+        ]
+        equal_wall = []
+        equal_flops = []
+        for item in complete:
+            budgets = common_budgets.get(int(item["seed"]), {})
+            if "wall_clock_total_seconds" in budgets:
+                value = interpolate_loss(
+                    item["learning_curve"],
+                    "wall_clock_total_seconds",
+                    budgets["wall_clock_total_seconds"],
+                )
+                if value is not None:
+                    equal_wall.append(value)
+            if "estimated_cumulative_flops" in budgets:
+                value = interpolate_loss(
+                    item["learning_curve"],
+                    "estimated_cumulative_flops",
+                    budgets["estimated_cumulative_flops"],
+                )
+                if value is not None:
+                    equal_flops.append(value)
+        candidates[identity] = {
+            "candidate_id": items[0]["candidate_id"],
+            "execution_variant": items[0]["execution_variant"],
+            "complete_seed_count": len(complete),
+            "expected_seed_count": len(items),
+            "final_eval_loss_mean": _mean(losses),
+            "final_eval_loss_stdev": _stdev(losses),
+            "token_curve_auc_mean": _mean(token_auc),
+            "wall_curve_auc_mean": _mean(wall_auc),
+            "equal_wall_loss_mean": _mean(equal_wall),
+            "equal_active_flops_loss_mean": _mean(equal_flops),
+            "median_training_tokens_per_second": statistics.median(throughput) if throughput else None,
+            "mean_gpu_util_percent": _mean(
+                [float(item["mean_gpu_util_percent"]) for item in complete if item.get("mean_gpu_util_percent") is not None]
+            ),
+            "peak_vram_gib": max(
+                [float(item["peak_vram_gib"]) for item in complete if item.get("peak_vram_gib") is not None],
+                default=None,
+            ),
+        }
+    expected_runs = len(expected)
+    complete_runs = sum(record.get("status") == "ok" for record in records)
+    return {
+        "schema_version": 1,
+        "campaign": campaign_path.as_posix(),
+        "campaign_status": campaign.get("status"),
+        "analysis_status": "complete" if complete_runs == expected_runs else "partial",
+        "expected_runs": expected_runs,
+        "complete_runs": complete_runs,
+        "common_budgets_by_seed": common_budgets,
+        "candidates": candidates,
+        "runs": records,
+        "selection": {
+            "status": "not_selected",
+            "reason": (
+                "Campaign analysis is incomplete"
+                if complete_runs < expected_runs
+                else "Architecture mechanism still requires long-context and native-scale promotion gates"
+            ),
+        },
+    }

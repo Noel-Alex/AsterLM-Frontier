@@ -23,6 +23,7 @@ from asterlm.experiments.quality import (
     latest_complete_checkpoint,
     summarize_quality_run,
 )
+from asterlm.experiments.quality_analysis import analyze_quality_campaign
 from asterlm.experiments.source_checkout import create_pinned_source_checkout
 from asterlm.source_provenance import assert_expected_checkout_source
 
@@ -39,6 +40,13 @@ def _portable(path: Path, root: Path) -> str:
         return path.resolve().relative_to(root.resolve()).as_posix()
     except ValueError:
         return str(path.resolve())
+
+
+def _refresh_analysis(campaign_path: Path) -> None:
+    atomic_write_json(
+        campaign_path.with_name("quality-analysis.json"),
+        analyze_quality_campaign(campaign_path),
+    )
 
 
 def _validate_data(data_path: Path, root: Path) -> DataConfig:
@@ -355,6 +363,7 @@ def main() -> None:
         data_path, root, output / "execution-data-absolute.yaml"
     )
     atomic_write_json(output / "quality-campaign.json", manifest)
+    _refresh_analysis(output / "quality-campaign.json")
     if args.preflight_only:
         print(json.dumps(manifest, indent=2))
         return
@@ -367,6 +376,7 @@ def main() -> None:
     manifest["execution_checkout"] = pinned.manifest()
     manifest["execution_data"] = str(execution_data_path)
     atomic_write_json(output / "quality-campaign.json", manifest)
+    _refresh_analysis(output / "quality-campaign.json")
     failures = 0
     for seed in seeds:
         for candidate_id, variant_id in execution_matrix:
@@ -375,6 +385,7 @@ def main() -> None:
             if existing["status"] == "ok" and existing["tokens_seen"] >= args.tokens:
                 manifest["runs"][f"{seed}:{candidate_id}:{variant_id}"] = existing
                 atomic_write_json(output / "quality-campaign.json", manifest)
+                _refresh_analysis(output / "quality-campaign.json")
                 continue
             resume = latest_complete_checkpoint(run_dir)
             if (run_dir / "experiment.json").exists() and resume is None:
@@ -464,11 +475,13 @@ def main() -> None:
             failures += int(completed.returncode != 0)
             manifest["status"] = "running" if failures == 0 else "partial_failure"
             atomic_write_json(output / "quality-campaign.json", manifest)
+            _refresh_analysis(output / "quality-campaign.json")
             if completed.returncode and not args.continue_on_error:
                 raise SystemExit(completed.returncode)
 
     manifest["status"] = "complete" if failures == 0 else "partial_failure"
     atomic_write_json(output / "quality-campaign.json", manifest)
+    _refresh_analysis(output / "quality-campaign.json")
     pinned.close()
     print(json.dumps(manifest, indent=2))
 

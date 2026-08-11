@@ -83,6 +83,7 @@ def test_quality_summary_and_latest_checkpoint(tmp_path):
     summary = summarize_quality_run(run)
     assert summary["eval_main_loss"] == 3.5
     assert summary["median_training_tokens_per_second"] == 100.0
+    assert summary["learning_curve"][0]["wall_clock_total_seconds"] == 30.0
     assert latest_complete_checkpoint(run) == checkpoint
 
 

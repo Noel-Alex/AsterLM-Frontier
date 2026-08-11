@@ -139,6 +139,23 @@ def summarize_quality_run(run_dir: str | Path) -> dict[str, Any]:
         for row in training
         if isinstance(row.get("wall_clock_total_seconds"), (int, float))
     ]
+    training_by_step = sorted(
+        training, key=lambda row: (int(row.get("step", 0)), int(row.get("tokens_seen", 0)))
+    )
+
+    def curve_point(row: dict[str, Any]) -> dict[str, Any]:
+        step = int(row.get("step", 0))
+        preceding = [item for item in training_by_step if int(item.get("step", 0)) <= step]
+        system = preceding[-1] if preceding else {}
+        return {
+            "step": row.get("step"),
+            "tokens_seen": row.get("tokens_seen"),
+            "eval_main_loss": row.get("eval_main_loss"),
+            "eval_perplexity": row.get("eval_perplexity"),
+            "milestone_tokens": row.get("milestone_tokens"),
+            "wall_clock_total_seconds": system.get("wall_clock_total_seconds"),
+            "estimated_cumulative_flops": system.get("estimated_cumulative_flops"),
+        }
     return {
         "status": experiment.get("status", "missing"),
         "status_reason": experiment.get("status_reason"),
@@ -151,16 +168,7 @@ def summarize_quality_run(run_dir: str | Path) -> dict[str, Any]:
         "mean_gpu_util_percent": statistics.fmean(utilization) if utilization else None,
         "peak_vram_gib": max(peak_vram) if peak_vram else None,
         "wall_clock_total_seconds": max(wall_seconds) if wall_seconds else None,
-        "learning_curve": [
-            {
-                "step": row.get("step"),
-                "tokens_seen": row.get("tokens_seen"),
-                "eval_main_loss": row.get("eval_main_loss"),
-                "eval_perplexity": row.get("eval_perplexity"),
-                "milestone_tokens": row.get("milestone_tokens"),
-            }
-            for row in evaluations
-        ],
+        "learning_curve": [curve_point(row) for row in evaluations],
     }
 
 
