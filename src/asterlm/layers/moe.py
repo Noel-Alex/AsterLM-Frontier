@@ -10,6 +10,8 @@ from .ffn import SwiGLU
 from .linear import build_linear
 from .moe_grouped_cutlass import CUTLASSGroupedRoutedExperts
 from .moe_grouped_te import TEGroupedRoutedExperts
+from .moe_grouped_torch import TorchGroupedRoutedExperts
+from .routing import fixed_bincount
 
 
 class DeepSeekStyleMoE(nn.Module):
@@ -67,9 +69,10 @@ class DeepSeekStyleMoE(nn.Module):
             [SwiGLU(dim, expert_hidden, dropout, linear_backend, **ffn_kwargs) for _ in range(shared_experts)]
         )
         requested_impl = os.environ.get("ASTER_MOE_IMPL", "reference").strip().lower()
-        if requested_impl not in {"reference", "grouped", "cutlass"}:
+        if requested_impl not in {"reference", "grouped", "cutlass", "torch_grouped"}:
             raise ValueError(
-                "ASTER_MOE_IMPL must be 'reference', 'grouped', or 'cutlass', "
+                "ASTER_MOE_IMPL must be 'reference', 'grouped', 'cutlass', or "
+                "'torch_grouped', "
                 f"got {requested_impl!r}"
             )
         if requested_impl == "grouped" and linear_backend != "transformer_engine":
@@ -89,6 +92,14 @@ class DeepSeekStyleMoE(nn.Module):
             )
         elif self.moe_impl == "cutlass":
             self._grouped_routed = CUTLASSGroupedRoutedExperts(
+                self.routed,
+                dim=dim,
+                expert_hidden=expert_hidden,
+                num_experts=num_experts,
+                dropout=dropout,
+            )
+        elif self.moe_impl == "torch_grouped":
+            self._grouped_routed = TorchGroupedRoutedExperts(
                 self.routed,
                 dim=dim,
                 expert_hidden=expert_hidden,
@@ -126,7 +137,7 @@ class DeepSeekStyleMoE(nn.Module):
         top_weight = affinity.gather(-1, top_idx)
         top_weight = top_weight / top_weight.sum(dim=-1, keepdim=True).clamp_min(1e-9)
 
-        if self.moe_impl in {"grouped", "cutlass"}:
+        if self.moe_impl in {"grouped", "cutlass", "torch_grouped"}:
             if self._grouped_routed is None:
                 raise RuntimeError("Grouped MoE bridge was not initialized")
             routed_out = self._grouped_routed(flat, top_idx, top_weight)
@@ -147,9 +158,7 @@ class DeepSeekStyleMoE(nn.Module):
 
         # Switch-style balancing signal plus router z-loss. The trainer decides the
         # coefficients, so these remain inspectable independently.
-        load = torch.bincount(
-            top_idx.reshape(-1), minlength=self.num_experts
-        ).to(dtype=torch.float32)
+        load = fixed_bincount(top_idx, self.num_experts, dtype=torch.float32)
         load = load / float(top_idx.numel())
         importance = affinity / affinity.sum(dim=-1, keepdim=True).clamp_min(1e-9)
         importance = importance.mean(dim=0)

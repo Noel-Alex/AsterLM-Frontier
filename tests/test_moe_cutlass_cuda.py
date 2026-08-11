@@ -14,8 +14,9 @@ def _relative_l2(actual: torch.Tensor, expected: torch.Tensor) -> float:
     return float((numerator / denominator).item())
 
 
+@pytest.mark.parametrize("implementation", ["cutlass", "torch_grouped"])
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA parity test")
-def test_cutlass_grouped_moe_matches_dropless_reference(monkeypatch):
+def test_grouped_moe_matches_dropless_reference(monkeypatch, implementation):
     if importlib.util.find_spec("grouped_gemm") is None:
         pytest.skip("nv_grouped_gemm is not installed")
 
@@ -32,7 +33,7 @@ def test_cutlass_grouped_moe_matches_dropless_reference(monkeypatch):
     torch.manual_seed(20260810)
     monkeypatch.setenv("ASTER_MOE_IMPL", "reference")
     reference = DeepSeekStyleMoE(**kwargs)
-    monkeypatch.setenv("ASTER_MOE_IMPL", "cutlass")
+    monkeypatch.setenv("ASTER_MOE_IMPL", implementation)
     candidate = DeepSeekStyleMoE(**kwargs)
     candidate.load_state_dict(reference.state_dict(), strict=True)
     assert candidate.state_dict().keys() == reference.state_dict().keys()

@@ -21,6 +21,9 @@ def test_project_architecture_campaign_is_valid_and_materializable(tmp_path):
     assert campaign.execution_variants["cutlass-grouped"].environment == {
         "ASTER_MOE_IMPL": "cutlass"
     }
+    assert campaign.execution_variants["torch-grouped"].environment == {
+        "ASTER_MOE_IMPL": "torch_grouped"
+    }
     manifest = materialize_architecture_campaign(campaign, tmp_path)
     assert len(manifest["candidates"]) == len(campaign.candidates)
     for item in manifest["candidates"].values():

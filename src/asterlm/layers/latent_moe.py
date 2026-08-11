@@ -10,7 +10,9 @@ from .ffn import SiTUGLU, SwiGLU
 from .linear import build_linear, mark_residual
 from .moe_grouped_cutlass import CUTLASSGroupedRoutedExperts
 from .moe_grouped_te import TEGroupedRoutedExperts
+from .moe_grouped_torch import TorchGroupedRoutedExperts
 from .norm import RMSNorm
+from .routing import fixed_bincount
 
 
 class LatentMoE(nn.Module):
@@ -62,8 +64,10 @@ class LatentMoE(nn.Module):
             raise ValueError("LatentMoE latent_dim must be positive and smaller than dim")
         if shared_experts < 0:
             raise ValueError("shared_experts must be non-negative")
-        if moe_impl not in {"reference", "grouped", "cutlass"}:
-            raise ValueError("moe_impl must be reference, grouped, or cutlass")
+        if moe_impl not in {"reference", "grouped", "cutlass", "torch_grouped"}:
+            raise ValueError(
+                "moe_impl must be reference, grouped, cutlass, or torch_grouped"
+            )
         if moe_impl == "grouped" and linear_backend != "transformer_engine":
             raise ValueError("grouped LatentMoE requires Transformer Engine expert linears")
         if activation not in {"swiglu", "situ_glu"}:
@@ -156,6 +160,14 @@ class LatentMoE(nn.Module):
                 num_experts=num_experts,
                 dropout=dropout,
             )
+        elif self.moe_impl == "torch_grouped":
+            self._grouped_routed = TorchGroupedRoutedExperts(
+                self.routed,
+                dim=latent_dim,
+                expert_hidden=expert_hidden,
+                num_experts=num_experts,
+                dropout=dropout,
+            )
 
         self.last_aux_loss: torch.Tensor | None = None
         self.last_z_loss: torch.Tensor | None = None
@@ -178,10 +190,12 @@ class LatentMoE(nn.Module):
             * self.quantile_bins
         )
         flat_bins = (bins + offsets).reshape(-1)
-        histogram = torch.bincount(
-            flat_bins, minlength=self.num_experts * self.quantile_bins
+        histogram = fixed_bincount(
+            flat_bins,
+            self.num_experts * self.quantile_bins,
+            dtype=self.quantile_histogram.dtype,
         ).reshape(self.num_experts, self.quantile_bins)
-        self.quantile_histogram.add_(histogram.to(self.quantile_histogram.dtype))
+        self.quantile_histogram.add_(histogram)
         self.quantile_tokens.add_(float(affinity.shape[0]))
 
     def _run_expert(self, expert: nn.Module, tokens: torch.Tensor) -> torch.Tensor:
@@ -228,7 +242,7 @@ class LatentMoE(nn.Module):
         top_weight = top_weight / top_weight.sum(dim=-1, keepdim=True).clamp_min(1e-9)
 
         latent = self.down_proj(flat)
-        if self.moe_impl in {"grouped", "cutlass"}:
+        if self.moe_impl in {"grouped", "cutlass", "torch_grouped"}:
             if self._grouped_routed is None:
                 raise RuntimeError("Grouped LatentMoE bridge was not initialized")
             routed_latent = self._grouped_routed(latent, top_idx, top_weight)
@@ -248,9 +262,7 @@ class LatentMoE(nn.Module):
         for expert in self.shared:
             shared_out = shared_out + self._run_expert(expert, flat)
 
-        load = torch.bincount(
-            top_idx.reshape(-1), minlength=self.num_experts
-        ).to(dtype=torch.float32)
+        load = fixed_bincount(top_idx, self.num_experts, dtype=torch.float32)
         load = load / float(top_idx.numel())
         importance = affinity / affinity.sum(dim=-1, keepdim=True).clamp_min(1e-9)
         importance = importance.mean(dim=0)

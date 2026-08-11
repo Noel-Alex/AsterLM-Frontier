@@ -44,3 +44,30 @@ bit-identical.
 5. Long-context retrieval/interference tests before extrapolating K3's one-million-token claims.
 6. Scaling the winning recipe through the 0.9B, 1.5B and 1.9B total-parameter tiers, with the final
    laptop target selected from measured fit, throughput and quality rather than proxy size.
+
+## Ada utilization diagnosis and GPU-resident grouped backend
+
+A clean, source-pinned three-repetition matrix on commit `e62f134` used sequence length 2048,
+microbatch 2, accumulation 8, five warm-up steps and twenty measured updates per repetition. The
+reference Stable LatentMoE path reached a median 4,624.9 tok/s at 56% median GPU utilization. The
+cached CUTLASS grouped path reached 7,004.0 tok/s at 53% median utilization and 5.24 GiB peak
+allocated VRAM. Grouped expert GEMMs therefore removed substantial wall time, but did not resolve
+the utilization collapse.
+
+The full PyTorch trace identified 1,029 CUDA stream synchronizations in one profiled APOLLO-Mini
+update. Of these, 706 were scalar synchronizations in the optimizer's inherited AdamW step and 276
+were associated with fixed-cardinality routing histograms and host expert-size metadata. Switching
+the systems probe to fused AdamW reduced the count to 323 and reduced profiled optimizer wall time
+from 357 ms to 41 ms, at the cost of approximately 0.94 GiB additional optimizer memory. Energy was
+recorded but did not participate in this decision.
+
+PyTorch 2.13's public differentiable `torch.nn.functional.grouped_mm` supports BF16 on the laptop's
+SM89 GPU and accepts cumulative jagged offsets resident on CUDA. Aster now exposes this as the
+`torch_grouped` physical backend. Fixed-size expert and quantile histograms use GPU `scatter_add_`
+instead of `torch.bincount`, so their known output cardinality no longer requires host scalar
+discovery. Forward output, input gradient, every expert parameter gradient, cache invalidation and
+checkpoint-key parity pass against the dropless reference path. In the first one-update operator
+profile, native grouped MM plus fused AdamW reduced stream synchronizations from 1,029 to 185 and
+profiled total forward/backward/optimizer wall time from 1.029 s to 0.750 s. This is diagnostic
+evidence only; a clean balanced end-to-end matrix and matched learning curve remain mandatory for
+promotion.

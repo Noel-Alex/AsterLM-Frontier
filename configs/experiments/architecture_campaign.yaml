@@ -52,11 +52,21 @@ execution_variants:
     model_overrides: {linear_backend: transformer_engine, ffn_linear_backend: transformer_engine}
     train_overrides: {compile: false, precision_backend: transformer_engine_fp8}
     environment: {ASTER_MOE_IMPL: cutlass}
+  torch-grouped:
+    description: GPU-resident native PyTorch grouped experts with jagged offsets and no host expert-size synchronization.
+    model_overrides: {linear_backend: transformer_engine, ffn_linear_backend: transformer_engine}
+    train_overrides: {compile: false, precision_backend: transformer_engine_fp8}
+    environment: {ASTER_MOE_IMPL: torch_grouped}
   cutlass-grouped-k3-muon:
     description: Ada CUTLASS grouped experts with Kimi K3 per-head Muon and cosine schedule; requires independent hyperparameter tuning before comparison.
     model_overrides: {linear_backend: transformer_engine, ffn_linear_backend: transformer_engine}
     train_overrides: {compile: false, precision_backend: transformer_engine_fp8, optimizer: muon_adamw, muon_per_head: true, schedule_type: cosine}
     environment: {ASTER_MOE_IMPL: cutlass}
+  torch-grouped-k3-muon:
+    description: GPU-resident native grouped experts with Kimi K3 per-head Muon and independently tuned cosine schedule.
+    model_overrides: {linear_backend: transformer_engine, ffn_linear_backend: transformer_engine}
+    train_overrides: {compile: false, precision_backend: transformer_engine_fp8, optimizer: muon_adamw, muon_per_head: true, schedule_type: cosine}
+    environment: {ASTER_MOE_IMPL: torch_grouped}
 candidates:
   - id: tier0-dense-mla-220m
     tier: 0
@@ -180,7 +190,7 @@ candidates:
       rope_scaling_type: none
       linear_backend: torch
       ffn_linear_backend: torch
-    execution_variants: [torch-reference, cutlass-grouped, cutlass-grouped-k3-muon]
+    execution_variants: [torch-reference, cutlass-grouped, torch-grouped, cutlass-grouped-k3-muon, torch-grouped-k3-muon]
   - id: tier3-k3-composite-220m
     tier: 3
     hypothesis: Stable LatentMoE and eight-block AttnRes compose with the 3:1 KDA/Gated-MLA hybrid after each component clears its isolated gate.
@@ -217,7 +227,7 @@ candidates:
       rope_scaling_type: none
       linear_backend: torch
       ffn_linear_backend: torch
-    execution_variants: [torch-reference, cutlass-grouped, cutlass-grouped-k3-muon]
+    execution_variants: [torch-reference, cutlass-grouped, torch-grouped, cutlass-grouped-k3-muon, torch-grouped-k3-muon]
   - id: tier0-dense-mla-480m
     tier: 0
     hypothesis: Dense MLA is the gold correctness and systems reference.
@@ -330,7 +340,7 @@ candidates:
       moe_num_experts: 4
       moe_top_k: 2
       moe_shared_experts: 0
-    execution_variants: [torch-reference, transformer-engine-grouped, cutlass-grouped]
+    execution_variants: [torch-reference, transformer-engine-grouped, cutlass-grouped, torch-grouped]
   - id: tier2-moe-e8k2
     tier: 2
     hypothesis: Eight routed experts without shared compute improve capacity at competitive time-to-quality.
@@ -339,7 +349,7 @@ candidates:
       moe_num_experts: 8
       moe_top_k: 2
       moe_shared_experts: 0
-    execution_variants: [torch-reference, transformer-engine-grouped, cutlass-grouped]
+    execution_variants: [torch-reference, transformer-engine-grouped, cutlass-grouped, torch-grouped]
   - id: tier2-moe-e8k2-shared
     tier: 2
     hypothesis: The shared expert earns its always-on compute through quality per wall time.
@@ -348,7 +358,7 @@ candidates:
       moe_num_experts: 8
       moe_top_k: 2
       moe_shared_experts: 1
-    execution_variants: [torch-reference, transformer-engine-grouped, cutlass-grouped]
+    execution_variants: [torch-reference, transformer-engine-grouped, cutlass-grouped, torch-grouped]
 research_queue:
   - {tier: 3, id: longcat-zero-compute-expert, prerequisite: tier2_routing_profile}
   - {tier: 4, id: deepseek-v4-csa-hca, prerequisite: semantic_reference_and_retrieval_harness}

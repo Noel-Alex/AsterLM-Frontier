@@ -2,6 +2,7 @@ import torch
 
 from asterlm import AsterConfig, AsterLM, TrainConfig
 from asterlm.layers.moe import DeepSeekStyleMoE
+from asterlm.layers.routing import fixed_bincount
 from asterlm.optim import build_hybrid_optimizer
 
 
@@ -85,3 +86,9 @@ def test_router_stays_out_of_muon_partition():
     assert router_names
     assert all(name not in optimizer.partition.muon_names for name in router_names)
     assert all(name in optimizer.partition.adam_no_decay_names for name in router_names)
+
+
+def test_fixed_bincount_matches_known_extent():
+    values = torch.tensor([[0, 3, 1], [3, 3, 0]])
+    counts = fixed_bincount(values, 5, dtype=torch.float32)
+    torch.testing.assert_close(counts, torch.tensor([2.0, 1.0, 0.0, 3.0, 0.0]))

@@ -140,6 +140,26 @@ def main() -> None:
     parser.add_argument("--batch", type=int, default=1)
     parser.add_argument("--accum", type=int, default=16)
     parser.add_argument("--gpu-sample-interval", type=float, default=0.5)
+    parser.add_argument(
+        "--optimizer",
+        choices=[
+            "adamw",
+            "muon_adamw",
+            "apollo_mini",
+            "apollo",
+            "torchao_adamw8bit",
+            "torchao_adamw4bit",
+            "torchao_cpu_offload_adamw",
+        ],
+        default=None,
+        help="Override the train-config optimizer for a matched execution matrix.",
+    )
+    parser.add_argument(
+        "--precision",
+        choices=["amp", "transformer_engine_fp8"],
+        default=None,
+        help="Override the train-config precision backend for every trial.",
+    )
     parser.add_argument("--cooldown-temperature", type=float, default=72.0)
     parser.add_argument("--idle-utilization", type=float, default=12.0)
     parser.add_argument("--trial-timeout", type=float, default=1800.0)
@@ -169,6 +189,7 @@ def main() -> None:
             "reference",
             "grouped",
             "cutlass",
+            "torch_grouped",
         }:
             raise SystemExit(f"Invalid --variant-spec {raw_spec!r}")
         variants[name] = (filename, implementation)
@@ -199,6 +220,8 @@ def main() -> None:
             "batch": args.batch,
             "accum": args.accum,
             "gpu_sample_interval": args.gpu_sample_interval,
+            "optimizer_override": args.optimizer,
+            "precision_override": args.precision,
             "idle_utilization_ceiling": args.idle_utilization,
             "order": orders,
         },
@@ -257,6 +280,10 @@ def main() -> None:
                 "--json",
                 str(result_path),
             ]
+            if args.optimizer is not None:
+                command.extend(["--optimizer", args.optimizer])
+            if args.precision is not None:
+                command.extend(["--precision", args.precision])
             environment = dict(os.environ)
             environment["ASTER_MOE_IMPL"] = implementation
             started = time.monotonic()
