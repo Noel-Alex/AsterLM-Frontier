@@ -14,6 +14,7 @@ from torch.utils.checkpoint import checkpoint
 from .cache import AsterCache
 from .config import AsterConfig
 from .layers.attnres_vnext import AttnResMix
+from .layers.compressed_sparse_attention import CompressedSparseAttentionReference
 from .layers.ffn import SwiGLU
 from .layers.gdn2 import GDN2
 from .layers.kda import KDA
@@ -99,6 +100,26 @@ class AsterBlock(nn.Module):
             self.mixer = GDN2(config, kda_idx)
         elif kind == "latent":
             self.mixer = LatentAttention(config, layer_idx)
+        elif kind in {"csa", "hca"}:
+            self.mixer = CompressedSparseAttentionReference(
+                input_dim=config.d_model,
+                n_heads=config.n_heads,
+                head_dim=config.head_dim,
+                rope_dim=config.rope_dim,
+                max_seq_len=config.max_seq_len,
+                local_window=config.compressed_attention_local_window,
+                compress_ratio=(
+                    4 if kind == "csa" else config.compressed_attention_hca_ratio
+                ),
+                index_topk=config.compressed_attention_index_topk,
+                q_lora_rank=config.q_lora_rank,
+                index_n_heads=config.compressed_attention_index_n_heads,
+                index_head_dim=config.compressed_attention_index_head_dim,
+                output_groups=config.compressed_attention_output_groups,
+                output_lora_rank=config.compressed_attention_output_lora_rank,
+                norm_eps=config.rms_eps,
+                rope_theta=config.compressed_attention_rope_theta,
+            )
         else:
             raise ValueError(f"Unknown block kind: {kind}")
         use_moe = (
@@ -180,6 +201,13 @@ class AsterBlock(nn.Module):
         normed = self.norm_mixer(hidden)
         if self.kind in {"kda", "gdn2"}:
             mixed = self.mixer(normed, cache=cache, use_cache=use_cache)
+        elif self.kind in {"csa", "hca"}:
+            if cache is not None or use_cache:
+                raise RuntimeError(
+                    "CSA/HCA cached decoding is unavailable until the optimized "
+                    "backend passes reference parity"
+                )
+            mixed = self.mixer(normed)
         else:
             layer_cache = None if cache is None else cache.latent_layer(self.layer_idx)
             mixed = self.mixer(normed, position_ids, cache=layer_cache, use_cache=use_cache)
@@ -223,6 +251,13 @@ class AsterBlock(nn.Module):
 
         if self.kind in {"kda", "gdn2"}:
             mixed = self.mixer(attn_input, cache=cache, use_cache=use_cache)
+        elif self.kind in {"csa", "hca"}:
+            if cache is not None or use_cache:
+                raise RuntimeError(
+                    "CSA/HCA cached decoding is unavailable until the optimized "
+                    "backend passes reference parity"
+                )
+            mixed = self.mixer(attn_input)
         else:
             layer_cache = None if cache is None else cache.latent_layer(self.layer_idx)
             mixed = self.mixer(attn_input, position_ids, cache=layer_cache, use_cache=use_cache)

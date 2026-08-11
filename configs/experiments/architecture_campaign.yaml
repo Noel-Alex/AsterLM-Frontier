@@ -98,6 +98,13 @@ execution_variants:
     model_overrides: {linear_backend: transformer_engine, ffn_linear_backend: transformer_engine}
     train_overrides: {compile: false, precision_backend: transformer_engine_fp8, moe_implementation: torch_grouped, optimizer: muon_adamw, muon_per_head: true, schedule_type: cosine}
     environment: {}
+  compressed-reference-bf16:
+    description: Portable full-precision CSA/HCA correctness path; never a production throughput result.
+    comparison_role: numerical_control
+    numerical_family: bf16-torch
+    model_overrides: {linear_backend: torch, ffn_linear_backend: torch}
+    train_overrides: {compile: false, precision_backend: amp}
+    environment: {}
 candidates:
   - id: tier0-dense-mla-220m
     tier: 0
@@ -259,6 +266,30 @@ candidates:
       linear_backend: torch
       ffn_linear_backend: torch
     execution_variants: [torch-reference, cutlass-grouped-bf16, cutlass-grouped, torch-grouped, cutlass-grouped-k3-muon, torch-grouped-k3-muon]
+  - id: tier4-dense-csa-hca-220m
+    tier: 4
+    hypothesis: A scale-adapted V4 CSA/HCA alternation improves native long-context retrieval and quality per active FLOP after its optimized sparse backend crosses over.
+    base_model: configs/model/aster_220m.yaml
+    model_overrides:
+      ffn_type: dense
+      layer_pattern: [hca, hca, csa, hca, csa, hca, csa, hca, csa, hca, csa, hca, csa, hca, csa, hca, csa, hca, csa, hca, csa, hca, csa, hca]
+      q_lora_rank: 192
+      compressed_attention_local_window: 128
+      compressed_attention_hca_ratio: 128
+      compressed_attention_index_topk: 1024
+      compressed_attention_index_n_heads: 64
+      compressed_attention_index_head_dim: 128
+      compressed_attention_output_groups: 4
+      compressed_attention_output_lora_rank: 208
+      compressed_attention_rope_theta: 160000.0
+      mtp_depth: 0
+      norm_type: rmsnorm
+      embedding_projection: false
+      use_block_attnres: false
+      rope_scaling_type: none
+      linear_backend: torch
+      ffn_linear_backend: torch
+    execution_variants: [compressed-reference-bf16]
   - id: tier0-dense-mla-480m
     tier: 0
     hypothesis: Dense MLA is the gold correctness and systems reference.

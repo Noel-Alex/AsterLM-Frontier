@@ -7,6 +7,7 @@ import pytest
 import torch
 import yaml
 
+from asterlm import AsterLM
 from asterlm.config import AsterConfig
 from asterlm.experiments import load_architecture_campaign, materialize_architecture_campaign
 from scripts.run_architecture_quality_campaign import (
@@ -174,10 +175,24 @@ def test_smoke_train_payload_is_metrics_only_by_default(tmp_path):
     ],
 )
 def test_k3_scale_frontier_parameter_geometry(path, expected_total, expected_active):
-    from asterlm import AsterLM
-
     config = AsterConfig.from_yaml(ROOT / "configs" / "model" / path)
     with torch.device("meta"):
         model = AsterLM(config)
     assert model.effective_parameter_count() == pytest.approx(expected_total, rel=5e-4)
     assert model.active_parameter_count() == pytest.approx(expected_active, rel=5e-4)
+
+
+def test_csa_hca_proxy_is_parameter_matched_to_dense_mla(tmp_path):
+    campaign = load_architecture_campaign(CAMPAIGN, repo_root=ROOT)
+    manifest = materialize_architecture_campaign(campaign, tmp_path)
+    configs = {}
+    for candidate_id in ("tier0-dense-mla-220m", "tier4-dense-csa-hca-220m"):
+        materialized = Path(manifest["candidates"][candidate_id]["materialized_config"])
+        configs[candidate_id] = AsterConfig.from_yaml(materialized)
+
+    with torch.device("meta"):
+        dense = AsterLM(configs["tier0-dense-mla-220m"])
+        compressed = AsterLM(configs["tier4-dense-csa-hca-220m"])
+    assert compressed.active_parameter_count() == pytest.approx(
+        dense.active_parameter_count(), rel=3e-3
+    )

@@ -55,9 +55,10 @@ Action:
 1. [done] implement a portable semantic gated-compression, causal index-selection
    and mHC/Sinkhorn oracle with forward/backward tests in
    `src/asterlm/layers/deepseek_v4_reference.py`;
-2. [in progress] integrate the local attention branch and reproduce end-to-end
-   CSA/HCA causal visibility against the pinned oracle;
-3. benchmark dense reference crossover by sequence length;
+2. [done] integrate explicit `csa`/`hca` model-layer kinds with the local branch,
+   attention sink, grouped low-rank output and end-to-end causal visibility tests;
+3. [in progress] build the physical sparse backend, then benchmark its dense
+   reference crossover by sequence length;
 4. evaluate an Ada-capable Triton/TileLang/CUDA route only after the reference and
    retrieval tests pass;
 5. reuse upstream SM90/SM100 kernels through a backend adapter where parity and full
@@ -68,6 +69,14 @@ DeepSeek's ReLU/head-weighted compressed top-k rule, invalid early-query indices
 the 4-stream split, and all 20 Sinkhorn row/column normalization passes. This is
 correctness infrastructure, not a throughput claim: the portable PyTorch code must
 not be selected as the production long-context backend.
+
+The scale-adapted 24-layer proxy is registered as
+`tier4-dense-csa-hca-220m`: two initial HCA layers followed by the V4 CSA/HCA
+alternation, 128-token local windows, ratio 4/128 compression, the published
+64-by-128 indexer and top-k 1024, and a grouped output rank chosen to match the
+dense-MLA proxy within 0.3% active parameters. Cached decoding fails closed on this
+reference implementation; this prevents its gather-heavy PyTorch path from being
+mistaken for the eventual inference backend.
 
 ### Kimi Linear: 3:1 KDA/MLA
 

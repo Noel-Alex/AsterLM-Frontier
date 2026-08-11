@@ -11,6 +11,11 @@ def test_explicit_pattern_validation():
     assert config.pattern == ["latent", "kda"]
 
 
+def test_explicit_compressed_attention_pattern_validation():
+    config = AsterConfig(n_layers=2, layer_pattern=["csa", "hca"])
+    assert config.pattern == ["csa", "hca"]
+
+
 def test_invalid_backend_rejected():
     import pytest
 
@@ -20,6 +25,7 @@ def test_invalid_backend_rejected():
 
 def test_all_repository_yaml_configs_load():
     from pathlib import Path
+
     from asterlm import TrainConfig
     from asterlm.config import DataConfig
 

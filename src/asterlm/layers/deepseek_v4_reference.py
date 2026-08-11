@@ -75,17 +75,22 @@ class GatedKVCompressor(nn.Module):
         if complete_tokens == 0:
             return hidden.new_empty(hidden.shape[0], 0, self.head_dim)
 
-        source = hidden[:, :complete_tokens].float()
-        kv = self.kv_proj(source).unflatten(1, (-1, ratio))
-        scores = (
-            self.gate_proj(source).unflatten(1, (-1, ratio))
-            + self.ape.view(1, 1, ratio, -1)
-        )
-        if self.overlap:
-            kv = self._overlap_transform(kv, 0.0)
-            scores = self._overlap_transform(scores, float("-inf"))
-        compressed = (kv * scores.softmax(dim=2)).sum(dim=2)
-        return self.norm(compressed).to(output_dtype)
+        # V4 explicitly keeps compression in FP32. Disable any surrounding AMP
+        # region so this oracle remains FP32 even when the parent model trains in
+        # BF16 autocast.
+        with torch.autocast(device_type=hidden.device.type, enabled=False):
+            source = hidden[:, :complete_tokens].float()
+            kv = F.linear(source, self.kv_proj.weight.float()).unflatten(1, (-1, ratio))
+            scores = (
+                F.linear(source, self.gate_proj.weight.float()).unflatten(1, (-1, ratio))
+                + self.ape.float().view(1, 1, ratio, -1)
+            )
+            if self.overlap:
+                kv = self._overlap_transform(kv, 0.0)
+                scores = self._overlap_transform(scores, float("-inf"))
+            compressed = (kv * scores.softmax(dim=2)).sum(dim=2)
+            compressed = self.norm(compressed)
+        return compressed.to(output_dtype)
 
 
 def compressed_sparse_topk(
@@ -229,11 +234,11 @@ class MHCResidualMixer(nn.Module):
         inverse_rms = torch.rsqrt(
             flat.square().mean(dim=-1, keepdim=True) + self.norm_eps
         )
-        mixes = F.linear(flat, self.mix_weight) * inverse_rms
+        mixes = F.linear(flat, self.mix_weight.float()) * inverse_rms
         pre, post, combination = mhc_split_sinkhorn(
             mixes,
-            self.scales,
-            self.base,
+            self.scales.float(),
+            self.base.float(),
             streams=self.streams,
             iterations=self.iterations,
             eps=self.sinkhorn_eps,
@@ -255,4 +260,3 @@ class MHCResidualMixer(nn.Module):
             "bstu,bsud->bstd", combination.float(), residual.float()
         )
         return (expanded + mixed_residual).to(sublayer_output.dtype)
-

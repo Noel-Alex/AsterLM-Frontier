@@ -96,6 +96,19 @@ class AsterConfig:
     attention_train_global_stride: int = 0
     attention_flex_block_size: int = 128
 
+    # DeepSeek-V4-style compressed attention research geometry. ``csa`` and
+    # ``hca`` are explicit layer_pattern kinds so they cannot silently replace
+    # MLA. The portable implementation is a training/reference oracle until an
+    # optimized cached backend passes parity.
+    compressed_attention_local_window: int = 128
+    compressed_attention_hca_ratio: int = 128
+    compressed_attention_index_topk: int = 1024
+    compressed_attention_index_n_heads: int = 64
+    compressed_attention_index_head_dim: int = 128
+    compressed_attention_output_groups: int = 1
+    compressed_attention_output_lora_rank: int | None = None
+    compressed_attention_rope_theta: float = 160_000.0
+
     # Inference cache storage. KDA layers use fixed recurrent states; these options
     # apply to the latent/global-attention layers only. `hadamard_int4` is a
     # TurboQuant-inspired, training-free rotated INT4 reference path. It saves VRAM
@@ -190,7 +203,7 @@ class AsterConfig:
         if self.kda_ratio < 0:
             raise ValueError("kda_ratio must be non-negative")
         if self.layer_pattern is not None:
-            bad = set(self.layer_pattern) - {"kda", "gdn2", "latent"}
+            bad = set(self.layer_pattern) - {"kda", "gdn2", "latent", "csa", "hca"}
             if bad:
                 raise ValueError(f"Unsupported layer kinds: {sorted(bad)}")
             if len(self.layer_pattern) != self.n_layers:
@@ -215,6 +228,26 @@ class AsterConfig:
             raise ValueError("attention_train_global_stride must be non-negative")
         if self.attention_train_backend == "flex_window" and self.attention_dropout != 0.0:
             raise ValueError("vNext flex_window currently requires attention_dropout=0")
+        if self.compressed_attention_local_window <= 0:
+            raise ValueError("compressed attention local window must be positive")
+        if self.compressed_attention_hca_ratio <= 1:
+            raise ValueError("compressed HCA ratio must exceed one")
+        if self.compressed_attention_rope_theta <= 0:
+            raise ValueError("compressed attention RoPE theta must be positive")
+        if self.compressed_attention_index_topk <= 0:
+            raise ValueError("compressed attention index top-k must be positive")
+        if (
+            self.compressed_attention_index_n_heads <= 0
+            or self.compressed_attention_index_head_dim < self.rope_dim
+        ):
+            raise ValueError("compressed attention index geometry is invalid")
+        if self.n_heads % self.compressed_attention_output_groups:
+            raise ValueError("compressed attention output groups must divide n_heads")
+        if (
+            self.compressed_attention_output_lora_rank is not None
+            and self.compressed_attention_output_lora_rank <= 0
+        ):
+            raise ValueError("compressed attention output LoRA rank must be positive")
         if self.norm_type not in {"rmsnorm", "ssnorm"}:
             raise ValueError("norm_type must be rmsnorm or ssnorm")
         if not 0.0 <= self.residual_dropout < 1.0 or not 0.0 <= self.ffn_dropout < 1.0:
