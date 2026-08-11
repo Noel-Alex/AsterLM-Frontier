@@ -17,6 +17,28 @@ dense long-range paths while retaining a local uncompressed window.
 
 Source: https://huggingface.co/deepseek-ai/DeepSeek-V4-Pro
 
+The official source is locally pinned at revision
+`b5968e9190ef611bbf34a7229255be88a0e937c1` under
+`C:\Users\noela\.cache\aster-research\DeepSeek-V4`. Only the 78.1 KiB
+config/inference reference was downloaded; no model-weight shard was requested.
+The released configuration makes the research gate concrete:
+
+- every layer keeps a 128-token uncompressed local window;
+- CSA uses compression ratio 4 plus a learned 64-head, 128-dimensional indexer
+  selecting at most 1,024 compressed positions;
+- HCA uses compression ratio 128 and densely attends to its much smaller compressed
+  history;
+- compression ratios alternate 4/128 after two initial ratio-128 layers;
+- mHC uses four residual streams and 20 Sinkhorn iterations.
+
+At 2K sequence length CSA's `min(topk, sequence/ratio)` selects all 512 compressed
+positions, so a 2K proxy cannot test sparse retrieval or the claimed long-context
+crossover. Aster's semantic and optimized gates must therefore include 8K, 16K and
+32K before any conclusion. The highest-value composition candidate replaces K3's
+periodic global MLA layers with an ablatable CSA/HCA alternation while retaining KDA
+in the recurrent layers; this is an Aster hypothesis, not a published Kimi or
+DeepSeek architecture.
+
 This changes AsterLM's status from “deferred mixer” to “Tier-4 research candidate.”
 It does not make V4's exact settings a laptop default. The reported comparison is
 at 1M and at vastly larger model scale; our principal pretraining length is 8K.
@@ -108,4 +130,3 @@ No paper headline is transferable evidence by itself. Every candidate must recor
 If the optimized implementation remains model-agnostic and independently valuable
 after these gates, extract it to a dedicated repository with AsterLM consuming a
 pinned version. Do not split early and create two unfinished integration surfaces.
-

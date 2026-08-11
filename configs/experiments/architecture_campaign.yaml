@@ -411,6 +411,7 @@ candidates:
 research_queue:
   - {tier: 3, id: longcat-zero-compute-expert, prerequisite: tier2_routing_profile}
   - {tier: 4, id: deepseek-v4-csa-hca, prerequisite: semantic_reference_and_retrieval_harness}
+  - {tier: 4, id: kda3-csa-hca-composition, prerequisite: isolated_csa_hca_and_kda3_promotion}
   - {tier: 4, id: deepseek-dsa-nsa-index-reuse, prerequisite: physical_sparse_kernel}
   - {tier: 5, id: mhc-residual, prerequisite: standard_residual_fixed_loss_baseline}
   - {tier: 3, id: kimi-k3-per-head-muon, prerequisite: stable_latentmoe_adamw_control}
