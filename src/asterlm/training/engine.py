@@ -869,7 +869,7 @@ class Trainer:
                     print("evaluation:", format_evaluation_metrics(metrics))
                     window_excluded_s += time.perf_counter() - excluded_started
 
-                if self.step % cfg.save_interval == 0:
+                if cfg.checkpoint_policy == "full" and self.step % cfg.save_interval == 0:
                     excluded_started = time.perf_counter()
                     path = self._save("periodic")
                     print(f"saved {path}")
@@ -891,17 +891,28 @@ class Trainer:
                             last_eval_step = self.step
                             milestone_metrics.update(last_eval_metrics)
                     self._log(milestone_metrics)
-                    path = self._save(
-                        f"milestone-{milestone}",
-                        permanent=True,
-                        tag=f"tok-{milestone}",
-                    )
-                    print(f"permanent token milestone saved: {path}")
+                    if cfg.checkpoint_policy == "full":
+                        path = self._save(
+                            f"milestone-{milestone}",
+                            permanent=True,
+                            tag=f"tok-{milestone}",
+                        )
+                        print(f"permanent token milestone saved: {path}")
+                    else:
+                        print(
+                            f"token milestone recorded without checkpoint: {milestone:,} "
+                            f"(checkpoint_policy={cfg.checkpoint_policy})"
+                        )
                     window_excluded_s += time.perf_counter() - excluded_started
 
-            path = self._save("complete", permanent=True, tag="final")
+            path = None
+            if cfg.checkpoint_policy in {"full", "final_only"}:
+                path = self._save("complete", permanent=True, tag="final")
             self.registry.finish("ok", tokens_seen=self.tokens_seen)
-            print(f"training complete; final checkpoint: {path}")
+            if path is None:
+                print("training complete; metrics-only run saved no model checkpoint")
+            else:
+                print(f"training complete; final checkpoint: {path}")
         except BaseException as exc:
             declared_status = getattr(exc, "asterlm_status", None)
             if declared_status:

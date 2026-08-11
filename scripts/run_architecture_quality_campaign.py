@@ -234,13 +234,23 @@ def main() -> None:
     )
     parser.add_argument("--seed", action="append", type=int, default=[])
     parser.add_argument("--tokens", type=int, default=16_777_216)
+    parser.add_argument(
+        "--checkpoint-policy",
+        choices=("none", "final_only", "full"),
+        default="none",
+        help=(
+            "Checkpoint retention for candidate training. The default keeps complete "
+            "metrics/evaluations but no multi-gigabyte model states."
+        ),
+    )
     parser.add_argument("--preflight-only", action="store_true")
     parser.add_argument(
         "--smoke",
         action="store_true",
         help=(
             "Run a storage-bounded execution gate: one evaluation batch, no periodic or "
-            "permanent milestone checkpoint, and one final resumable checkpoint."
+            "permanent milestone checkpoint. A final checkpoint is written only when "
+            "--checkpoint-policy is final_only or full."
         ),
     )
     parser.add_argument("--continue-on-error", action="store_true")
@@ -350,6 +360,8 @@ def main() -> None:
         return
 
     base_train = yaml.safe_load(train_path.read_text(encoding="utf-8")) or {}
+    base_train_section = base_train["train"] if "train" in base_train else base_train
+    base_train_section["checkpoint_policy"] = args.checkpoint_policy
     pinned = create_pinned_source_checkout(root, str(source["git_commit"]))
     atexit.register(pinned.close)
     manifest["execution_checkout"] = pinned.manifest()

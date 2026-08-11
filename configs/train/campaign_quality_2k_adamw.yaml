@@ -38,6 +38,9 @@ train:
   eval_batches: 32
   save_interval: 512
   keep_last_checkpoints: 2
+  # Architecture selection is metrics-first. Multi-gigabyte weights are retained
+  # only when a candidate is explicitly promoted for downstream evaluation.
+  checkpoint_policy: none
   milestone_tokens: [4194304, 8388608, 16777216]
   milestone_eval: true
 

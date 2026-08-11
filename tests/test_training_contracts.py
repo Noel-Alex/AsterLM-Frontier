@@ -129,6 +129,24 @@ def test_final_contract_is_mechanically_promotion_locked(tmp_path: Path) -> None
     assert report.promotion_ready is True
 
 
+def test_final_contract_rejects_metrics_only_checkpoint_policy(tmp_path: Path) -> None:
+    _, data = _sealed_data(tmp_path)
+    gates = tmp_path / "gates.yaml"
+    _passed_gates(gates)
+    train = TrainConfig(
+        run_class="final",
+        promotion_gates_path=str(gates),
+        checkpoint_policy="none",
+        wandb_project="asterlm-frontier",
+        hub_repo_id="owner/private-checkpoints",
+        hub_private=True,
+        hub_include_optimizer=True,
+        num_workers=0,
+    )
+    with pytest.raises(TrainingContractError, match="checkpoint_policy=full"):
+        validate_training_contract(train, data, source_provenance={"dirty": False})
+
+
 def test_shared_dedup_database_removes_cross_source_duplicate(tmp_path: Path) -> None:
     duplicate = "same globally duplicated training document " * 8
     source_a = tmp_path / "raw-a.jsonl"

@@ -159,6 +159,10 @@ def validate_training_contract(
     promotion_ready: bool | None = None
 
     if train.run_class == "final":
+        if train.checkpoint_policy != "full":
+            raise TrainingContractError(
+                "Final training requires checkpoint_policy=full for crash recovery and milestones"
+            )
         promotion_path = _resolved(train.promotion_gates_path)
         decision = evaluate_promotion_gates(promotion_path)
         promotion_ready = decision.ready

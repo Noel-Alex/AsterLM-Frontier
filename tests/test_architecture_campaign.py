@@ -140,7 +140,7 @@ def test_execution_matrix_rejects_variant_not_used_by_selected_candidate(tmp_pat
         )
 
 
-def test_smoke_train_payload_avoids_duplicate_full_state_milestone(tmp_path):
+def test_smoke_train_payload_is_metrics_only_by_default(tmp_path):
     base = yaml.safe_load(
         (ROOT / "configs/train/campaign_quality_2k_adamw.yaml").read_text(encoding="utf-8")
     )
@@ -161,3 +161,4 @@ def test_smoke_train_payload_avoids_duplicate_full_state_milestone(tmp_path):
     assert train["milestone_eval"] is False
     assert train["save_interval"] > 2
     assert train["keep_last_checkpoints"] == 1
+    assert train["checkpoint_policy"] == "none"

@@ -358,6 +358,10 @@ class TrainConfig:
     eval_batches: int = 32
     save_interval: int = 1_000
     keep_last_checkpoints: int = 3
+    # Exploratory architecture campaigns can be metrics-only to avoid retaining
+    # multi-gigabyte model/optimizer states. `final_only` keeps one terminal
+    # recovery point; `full` enables periodic, milestone, and final checkpoints.
+    checkpoint_policy: str = "full"  # none | final_only | full
     # Retain one additional full-state checkpoint in exponentially older bands.
     # This keeps dense recent recovery points plus a logarithmic historical spine.
     checkpoint_pyramid_levels: int = 0
@@ -456,6 +460,8 @@ class TrainConfig:
             raise ValueError("milestone_tokens must contain only positive integers")
         if self.keep_last_checkpoints < 0 or self.checkpoint_pyramid_levels < 0:
             raise ValueError("checkpoint retention values must be non-negative")
+        if self.checkpoint_policy not in {"none", "final_only", "full"}:
+            raise ValueError("checkpoint_policy must be none, final_only, or full")
         if self.milestone_tokens != sorted(set(self.milestone_tokens)):
             raise ValueError("milestone_tokens must be sorted and unique")
         if self.max_tokens is not None and any(token > self.max_tokens for token in self.milestone_tokens):
