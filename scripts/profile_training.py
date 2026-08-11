@@ -224,6 +224,12 @@ def main() -> None:
     )
     parser.add_argument("--precision", choices=["amp", "transformer_engine_fp8"], default=None)
     parser.add_argument(
+        "--moe-implementation",
+        choices=["reference", "grouped", "cutlass", "torch_grouped"],
+        default=None,
+        help="Select and record the physical expert implementation explicitly.",
+    )
+    parser.add_argument(
         "--apollo-disable-norm-limiter",
         action="store_true",
         help="Diagnostic only: disable APOLLO's norm-growth limiter for an explicit causal screen.",
@@ -292,6 +298,9 @@ def main() -> None:
         "train_config": args.train_config,
         "resolved_model": config.to_dict(),
         "resolved_train": train.to_dict(),
+        "moe_implementation": args.moe_implementation or os.environ.get(
+            "ASTER_MOE_IMPL", "reference"
+        ),
         "source_provenance": source,
         "steps": [],
     }
@@ -319,7 +328,7 @@ def main() -> None:
             else None
         )
 
-        model = AsterLM(config)
+        model = AsterLM(config, moe_implementation=args.moe_implementation)
         dtype = {"bfloat16": torch.bfloat16, "float32": torch.float32}[train.dtype]
         if device.type == "cuda" and dtype != torch.float32:
             model = model.to(device=device, dtype=dtype)
