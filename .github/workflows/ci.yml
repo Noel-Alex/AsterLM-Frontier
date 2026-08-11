@@ -31,8 +31,8 @@ jobs:
         run: uv venv --python 3.12
       - name: Install Aster and validation dependencies
         run: uv pip install --python .venv/bin/python -e ".[dev,reasoning]"
-      - name: Lint Python
-        run: uv run --no-sync ruff check src scripts studio tests
+      - name: Reject fatal Python errors across the repository
+        run: uv run --no-sync ruff check --select E9,F63,F7,F82 src scripts studio tests
       - name: Validate Studio JavaScript
         run: node --check studio/static/app.js
       - name: Run canonical CPU suite
