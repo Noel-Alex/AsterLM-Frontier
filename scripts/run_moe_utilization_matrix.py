@@ -165,7 +165,11 @@ def main() -> None:
             name, filename, implementation = raw_spec.split("=", 2)
         except ValueError as exc:
             raise SystemExit(f"Invalid --variant-spec {raw_spec!r}; expected NAME=FILENAME=IMPLEMENTATION") from exc
-        if not name or not filename or implementation not in {"reference", "grouped"}:
+        if not name or not filename or implementation not in {
+            "reference",
+            "grouped",
+            "cutlass",
+        }:
             raise SystemExit(f"Invalid --variant-spec {raw_spec!r}")
         variants[name] = (filename, implementation)
         custom_names.append(name)
