@@ -352,6 +352,9 @@ class TrainConfig:
     eval_batches: int = 32
     save_interval: int = 1_000
     keep_last_checkpoints: int = 3
+    # Retain one additional full-state checkpoint in exponentially older bands.
+    # This keeps dense recent recovery points plus a logarithmic historical spine.
+    checkpoint_pyramid_levels: int = 0
     # Permanent, token-addressed checkpoints for scaling/grokking analysis. These
     # survive ordinary rolling-checkpoint retention and can be uploaded to the Hub.
     milestone_tokens: list[int] = field(default_factory=list)
@@ -435,6 +438,8 @@ class TrainConfig:
             raise ValueError("max_steps and max_tokens must be positive")
         if any(token <= 0 for token in self.milestone_tokens):
             raise ValueError("milestone_tokens must contain only positive integers")
+        if self.keep_last_checkpoints < 0 or self.checkpoint_pyramid_levels < 0:
+            raise ValueError("checkpoint retention values must be non-negative")
         if self.milestone_tokens != sorted(set(self.milestone_tokens)):
             raise ValueError("milestone_tokens must be sorted and unique")
         if self.max_tokens is not None and any(token > self.max_tokens for token in self.milestone_tokens):

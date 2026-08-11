@@ -254,6 +254,7 @@ class StudioTrainer(Trainer):
             prune_rolling_checkpoints(
                 self.train_config.output_dir,
                 keep_last=self.train_config.keep_last_checkpoints,
+                pyramid_levels=self.train_config.checkpoint_pyramid_levels,
             )
         return path
 

@@ -163,3 +163,19 @@ def test_deferred_pruning_preserves_checkpoints_until_explicit_commit(tmp_path):
     removed = prune_rolling_checkpoints(tmp_path, keep_last=1)
     assert removed == [first]
     assert not first.exists() and second.exists()
+
+
+def test_checkpoint_pyramid_keeps_dense_recent_and_sparse_history(tmp_path):
+    checkpoints = []
+    for step in range(1, 31):
+        path = tmp_path / f"checkpoint-{step:08d}"
+        path.mkdir()
+        checkpoints.append(path)
+
+    prune_rolling_checkpoints(tmp_path, keep_last=6, pyramid_levels=3)
+
+    retained_steps = {
+        int(path.name.removeprefix("checkpoint-"))
+        for path in tmp_path.glob("checkpoint-*")
+    }
+    assert retained_steps == {6, 18, 24, 25, 26, 27, 28, 29, 30}

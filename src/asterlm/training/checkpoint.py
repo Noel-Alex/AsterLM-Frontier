@@ -183,6 +183,7 @@ def prune_rolling_checkpoints(
     output_dir: str | Path,
     *,
     keep_last: int,
+    pyramid_levels: int = 0,
     protected: set[Path] | None = None,
 ) -> list[Path]:
     """Prune transient checkpoints only after their durability policy is satisfied.
@@ -192,8 +193,8 @@ def prune_rolling_checkpoints(
     and hash-verify the checkpoint, and only then invoke this function.
     """
 
-    if keep_last < 0:
-        raise ValueError("keep_last must be non-negative")
+    if keep_last < 0 or pyramid_levels < 0:
+        raise ValueError("checkpoint retention values must be non-negative")
     root = Path(output_dir)
     protected_resolved = {path.resolve() for path in (protected or set())}
     # Permanent token milestones and final checkpoints are never removed by rolling
@@ -203,7 +204,20 @@ def prune_rolling_checkpoints(
         for checkpoint in sorted(root.glob("checkpoint-*"))
         if not (checkpoint / "KEEP").exists()
     ]
-    candidates = rolling[:-keep_last] if keep_last > 0 else []
+    recent_start = max(0, len(rolling) - keep_last) if keep_last > 0 else len(rolling)
+    keep = {path.resolve() for path in rolling[recent_start:]}
+    cursor = recent_start
+    width = max(1, keep_last)
+    for _ in range(pyramid_levels):
+        if cursor <= 0:
+            break
+        start = max(0, cursor - width)
+        # The newest checkpoint in each exponentially widening age band gives a
+        # monotonic history: dense near the run head, increasingly sparse behind it.
+        keep.add(rolling[cursor - 1].resolve())
+        cursor = start
+        width *= 2
+    candidates = [path for path in rolling if path.resolve() not in keep]
     removed: list[Path] = []
     for old in candidates:
         if old.resolve() in protected_resolved:
