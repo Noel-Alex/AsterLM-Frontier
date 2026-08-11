@@ -76,3 +76,4 @@ downloads/
 .cache/
 target/
 cython_debug/
+/tmp/
