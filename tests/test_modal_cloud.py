@@ -4,6 +4,7 @@ import asyncio
 import json
 import subprocess
 import sys
+import types
 from pathlib import Path
 
 import pytest
@@ -146,7 +147,20 @@ def test_modal_submit_never_reaches_image_or_sandbox_when_cache_gate_fails(
 ):
     import hashlib
 
-    import modal
+    modal = types.ModuleType("modal")
+    modal.Volume = types.SimpleNamespace(from_name=None)
+    modal.Image = types.SimpleNamespace(from_registry=None)
+    modal.Sandbox = types.SimpleNamespace(create=None)
+    modal.App = types.SimpleNamespace()
+    modal.Secret = types.SimpleNamespace()
+    modal_exception = types.ModuleType("modal.exception")
+
+    class FakeModalError(Exception):
+        pass
+
+    modal_exception.Error = FakeModalError
+    monkeypatch.setitem(sys.modules, "modal", modal)
+    monkeypatch.setitem(sys.modules, "modal.exception", modal_exception)
 
     payload = tmp_path / "contract.json"
     payload.write_text("{}", encoding="utf-8")
