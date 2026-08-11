@@ -1,6 +1,8 @@
 -r base.txt
 # FLA supplies the optimized Kimi Delta Attention kernels.
-fla-core>=0.4.0
+# Aster imports fla.layers, which is provided by the full distribution rather
+# than the reduced fla-core package. Decision campaigns pin this exact backend.
+flash-linear-attention==0.5.2
 transformers>=4.53.3
 accelerate>=1.7
 # Optional: install a matching torchao build for weight-only inference quantization.
