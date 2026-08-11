@@ -52,6 +52,7 @@ def _aster_activation_checkpoint(
     config: AsterConfig,
     function,
     *args: torch.Tensor,
+    use_reentrant: bool = False,
 ):
     # Use TE-aware activation recomputation when Transformer Engine is active.
     uses_te = (
@@ -69,9 +70,9 @@ def _aster_activation_checkpoint(
         return te.distributed.checkpoint(
             function,
             *args,
-            use_reentrant=False,
+            use_reentrant=use_reentrant,
         )
-    return checkpoint(function, *args, use_reentrant=False)
+    return checkpoint(function, *args, use_reentrant=use_reentrant)
 
 
 class AsterBlock(nn.Module):
@@ -485,8 +486,19 @@ class AsterLM(nn.Module):
                 h = segment_block(h, p, cache=None, use_cache=False)
             return h
 
+        # TE's non-reentrant path records saved-tensor hooks throughout the whole
+        # callable and cannot early-stop recomputation. Across multiple FP8 blocks
+        # that path can retain enough state to oversubscribe a laptop GPU. The
+        # reentrant path saves only the segment inputs and is valid here because
+        # hidden requires gradients and the segment returns one gradient-bearing
+        # tensor. Per-block and tuple-valued AttnRes checkpoints remain
+        # non-reentrant.
         return _aster_activation_checkpoint(
-            self.config, custom_forward, hidden, position_ids
+            self.config,
+            custom_forward,
+            hidden,
+            position_ids,
+            use_reentrant=True,
         )
 
     def _projected_cross_entropy(
