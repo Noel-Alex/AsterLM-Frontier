@@ -60,7 +60,7 @@ def _validate_data(data_path: Path, root: Path) -> DataConfig:
 
 def _absolute_data_config(data_path: Path, root: Path, target: Path) -> Path:
     payload = yaml.safe_load(data_path.read_text(encoding="utf-8")) or {}
-    data = payload["data"] if "data" in payload else payload
+    data = payload.get("data", payload)
     for key in ("sources", "validation_sources"):
         for source in data.get(key, []):
             candidate = Path(str(source["path"]))
@@ -438,6 +438,12 @@ def main() -> None:
                     "train_config": _portable(generated, root),
                     "train_overrides": materialized["execution_variants"][variant_id][
                         "train_overrides"
+                    ],
+                    "comparison_role": materialized["execution_variants"][variant_id][
+                        "comparison_role"
+                    ],
+                    "numerical_family": materialized["execution_variants"][variant_id][
+                        "numerical_family"
                     ],
                     "environment": environment_delta,
                 }

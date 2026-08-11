@@ -26,6 +26,14 @@ def test_project_architecture_campaign_is_valid_and_materializable(tmp_path):
         "moe_implementation"
     ] == "cutlass"
     assert campaign.execution_variants["cutlass-grouped"].environment == {}
+    assert campaign.execution_variants["cutlass-grouped"].comparison_role == "system_recipe"
+    assert campaign.execution_variants["cutlass-grouped-bf16"].train_overrides[
+        "precision_backend"
+    ] == "amp"
+    assert (
+        campaign.execution_variants["cutlass-grouped-bf16"].numerical_family
+        == campaign.execution_variants["torch-reference"].numerical_family
+    )
     assert campaign.execution_variants["torch-grouped"].train_overrides[
         "moe_implementation"
     ] == "torch_grouped"

@@ -21,6 +21,8 @@ _ENV_PATTERN = re.compile(r"^[A-Z_][A-Z0-9_]*$")
 class ExecutionVariant:
     variant_id: str
     description: str
+    comparison_role: str
+    numerical_family: str
     model_overrides: dict[str, Any]
     train_overrides: dict[str, Any]
     environment: dict[str, str]
@@ -74,6 +76,16 @@ def load_architecture_campaign(
         description = str(raw.get("description", "")).strip()
         if not description:
             raise ValueError(f"Execution variant {variant_id} has no description")
+        comparison_role = str(raw.get("comparison_role", "")).strip()
+        allowed_roles = {"numerical_control", "system_recipe", "recipe_research"}
+        if comparison_role not in allowed_roles:
+            raise ValueError(
+                f"Execution variant {variant_id} has invalid comparison_role "
+                f"{comparison_role!r}; choose from {sorted(allowed_roles)}"
+            )
+        numerical_family = str(raw.get("numerical_family", "")).strip()
+        if not numerical_family:
+            raise ValueError(f"Execution variant {variant_id} has no numerical_family")
         model_overrides = dict(raw.get("model_overrides", {}))
         train_overrides = dict(raw.get("train_overrides", {}))
         raw_environment = dict(raw.get("environment", {}))
@@ -86,6 +98,8 @@ def load_architecture_campaign(
         execution_variants[variant_id] = ExecutionVariant(
             variant_id=variant_id,
             description=description,
+            comparison_role=comparison_role,
+            numerical_family=numerical_family,
             model_overrides=model_overrides,
             train_overrides=train_overrides,
             environment=environment,
@@ -177,6 +191,8 @@ def materialize_architecture_campaign(
         "execution_variants": {
             variant_id: {
                 "description": variant.description,
+                "comparison_role": variant.comparison_role,
+                "numerical_family": variant.numerical_family,
                 "model_overrides": variant.model_overrides,
                 "train_overrides": variant.train_overrides,
                 "environment": variant.environment,

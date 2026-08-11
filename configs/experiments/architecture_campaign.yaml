@@ -9,61 +9,92 @@ size_frontier:
 execution_variants:
   torch-sdpa-bf16:
     description: Eager PyTorch SDPA and BF16 control.
+    comparison_role: numerical_control
+    numerical_family: bf16-torch
     model_overrides: {attention_train_backend: sdpa, linear_backend: torch, ffn_linear_backend: torch}
     train_overrides: {compile: false, precision_backend: amp}
     environment: {}
   torch-compile-bf16:
     description: Static-shape torch.compile SDPA and BF16 path.
+    comparison_role: system_recipe
+    numerical_family: bf16-torch
     model_overrides: {attention_train_backend: sdpa, linear_backend: torch, ffn_linear_backend: torch}
     train_overrides: {compile: true, precision_backend: amp}
     environment: {}
   fla-kda-bf16:
     description: Source-pinned FLA KDA in eager BF16 execution.
+    comparison_role: numerical_control
+    numerical_family: bf16-torch
     model_overrides: {kda_backend: fla, linear_backend: torch, ffn_linear_backend: torch}
     train_overrides: {compile: false, precision_backend: amp}
     environment: {}
   fla-kda-compile-bf16:
     description: Source-pinned FLA KDA with static-shape torch.compile.
+    comparison_role: system_recipe
+    numerical_family: bf16-torch
     model_overrides: {kda_backend: fla, linear_backend: torch, ffn_linear_backend: torch}
     train_overrides: {compile: true, precision_backend: amp}
     environment: {}
   fla-gdn2-bf16:
     description: Source-pinned FLA GDN2 in eager BF16 execution.
+    comparison_role: numerical_control
+    numerical_family: bf16-torch
     model_overrides: {linear_backend: torch, ffn_linear_backend: torch}
     train_overrides: {compile: false, precision_backend: amp}
     environment: {}
   fla-gdn2-compile-bf16:
     description: Source-pinned FLA GDN2 with static-shape torch.compile.
+    comparison_role: system_recipe
+    numerical_family: bf16-torch
     model_overrides: {linear_backend: torch, ffn_linear_backend: torch}
     train_overrides: {compile: true, precision_backend: amp}
     environment: {}
   torch-reference:
     description: Reference per-expert PyTorch MoE execution in BF16.
+    comparison_role: numerical_control
+    numerical_family: bf16-torch
     model_overrides: {linear_backend: torch, ffn_linear_backend: torch}
     train_overrides: {compile: false, precision_backend: amp, moe_implementation: reference}
     environment: {}
   transformer-engine-grouped:
     description: Transformer Engine grouped experts with the validated FP8 surroundings.
+    comparison_role: system_recipe
+    numerical_family: fp8-transformer-engine
     model_overrides: {linear_backend: transformer_engine, ffn_linear_backend: transformer_engine}
     train_overrides: {compile: false, precision_backend: transformer_engine_fp8, moe_implementation: grouped}
     environment: {}
   cutlass-grouped:
     description: Current Ada winner using cached CUTLASS grouped expert GEMMs and BF16 expert weights.
+    comparison_role: system_recipe
+    numerical_family: fp8-transformer-engine
     model_overrides: {linear_backend: transformer_engine, ffn_linear_backend: transformer_engine}
     train_overrides: {compile: false, precision_backend: transformer_engine_fp8, moe_implementation: cutlass}
     environment: {}
+  cutlass-grouped-bf16:
+    description: CUTLASS grouped expert GEMMs with the same BF16 PyTorch surroundings as torch-reference for numerical parity.
+    comparison_role: numerical_control
+    numerical_family: bf16-torch
+    model_overrides: {linear_backend: torch, ffn_linear_backend: torch}
+    train_overrides: {compile: false, precision_backend: amp, moe_implementation: cutlass}
+    environment: {}
   torch-grouped:
     description: GPU-resident native PyTorch grouped experts with jagged offsets and no host expert-size synchronization.
+    comparison_role: system_recipe
+    numerical_family: fp8-transformer-engine
     model_overrides: {linear_backend: transformer_engine, ffn_linear_backend: transformer_engine}
     train_overrides: {compile: false, precision_backend: transformer_engine_fp8, moe_implementation: torch_grouped}
     environment: {}
   cutlass-grouped-k3-muon:
     description: Ada CUTLASS grouped experts with Kimi K3 per-head Muon and cosine schedule; requires independent hyperparameter tuning before comparison.
+    comparison_role: recipe_research
+    numerical_family: fp8-transformer-engine
     model_overrides: {linear_backend: transformer_engine, ffn_linear_backend: transformer_engine}
     train_overrides: {compile: false, precision_backend: transformer_engine_fp8, moe_implementation: cutlass, optimizer: muon_adamw, muon_per_head: true, schedule_type: cosine}
     environment: {}
   torch-grouped-k3-muon:
     description: GPU-resident native grouped experts with Kimi K3 per-head Muon and independently tuned cosine schedule.
+    comparison_role: recipe_research
+    numerical_family: fp8-transformer-engine
     model_overrides: {linear_backend: transformer_engine, ffn_linear_backend: transformer_engine}
     train_overrides: {compile: false, precision_backend: transformer_engine_fp8, moe_implementation: torch_grouped, optimizer: muon_adamw, muon_per_head: true, schedule_type: cosine}
     environment: {}
@@ -190,7 +221,7 @@ candidates:
       rope_scaling_type: none
       linear_backend: torch
       ffn_linear_backend: torch
-    execution_variants: [torch-reference, cutlass-grouped, torch-grouped, cutlass-grouped-k3-muon, torch-grouped-k3-muon]
+    execution_variants: [torch-reference, cutlass-grouped-bf16, cutlass-grouped, torch-grouped, cutlass-grouped-k3-muon, torch-grouped-k3-muon]
   - id: tier3-k3-composite-220m
     tier: 3
     hypothesis: Stable LatentMoE and eight-block AttnRes compose with the 3:1 KDA/Gated-MLA hybrid after each component clears its isolated gate.
@@ -227,7 +258,7 @@ candidates:
       rope_scaling_type: none
       linear_backend: torch
       ffn_linear_backend: torch
-    execution_variants: [torch-reference, cutlass-grouped, torch-grouped, cutlass-grouped-k3-muon, torch-grouped-k3-muon]
+    execution_variants: [torch-reference, cutlass-grouped-bf16, cutlass-grouped, torch-grouped, cutlass-grouped-k3-muon, torch-grouped-k3-muon]
   - id: tier0-dense-mla-480m
     tier: 0
     hypothesis: Dense MLA is the gold correctness and systems reference.
@@ -340,7 +371,7 @@ candidates:
       moe_num_experts: 4
       moe_top_k: 2
       moe_shared_experts: 0
-    execution_variants: [torch-reference, transformer-engine-grouped, cutlass-grouped, torch-grouped]
+    execution_variants: [torch-reference, cutlass-grouped-bf16, transformer-engine-grouped, cutlass-grouped, torch-grouped]
   - id: tier2-moe-e8k2
     tier: 2
     hypothesis: Eight routed experts without shared compute improve capacity at competitive time-to-quality.
@@ -349,7 +380,7 @@ candidates:
       moe_num_experts: 8
       moe_top_k: 2
       moe_shared_experts: 0
-    execution_variants: [torch-reference, transformer-engine-grouped, cutlass-grouped, torch-grouped]
+    execution_variants: [torch-reference, cutlass-grouped-bf16, transformer-engine-grouped, cutlass-grouped, torch-grouped]
   - id: tier2-moe-e8k2-shared
     tier: 2
     hypothesis: The shared expert earns its always-on compute through quality per wall time.
@@ -358,7 +389,7 @@ candidates:
       moe_num_experts: 8
       moe_top_k: 2
       moe_shared_experts: 1
-    execution_variants: [torch-reference, transformer-engine-grouped, cutlass-grouped, torch-grouped]
+    execution_variants: [torch-reference, cutlass-grouped-bf16, transformer-engine-grouped, cutlass-grouped, torch-grouped]
 research_queue:
   - {tier: 3, id: longcat-zero-compute-expert, prerequisite: tier2_routing_profile}
   - {tier: 4, id: deepseek-v4-csa-hca, prerequisite: semantic_reference_and_retrieval_harness}
