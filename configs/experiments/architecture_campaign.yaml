@@ -390,6 +390,24 @@ candidates:
       moe_top_k: 2
       moe_shared_experts: 1
     execution_variants: [torch-reference, cutlass-grouped-bf16, transformer-engine-grouped, cutlass-grouped, torch-grouped]
+  - id: tier2-k3-latentmoe-868m-a483m
+    tier: 2
+    hypothesis: The promoted K3 mechanism scales to the first laptop frontier with matched active compute and practical grouped expert shapes.
+    base_model: configs/model/aster_k3_latentmoe_868m_a483m.yaml
+    model_overrides: {}
+    execution_variants: [torch-reference, cutlass-grouped-bf16, cutlass-grouped, torch-grouped, cutlass-grouped-k3-muon, torch-grouped-k3-muon]
+  - id: tier2-k3-latentmoe-1p45b-a568m
+    tier: 2
+    hypothesis: Additional sparse capacity at 1.45B total improves quality enough to repay reduced laptop update rate.
+    base_model: configs/model/aster_k3_latentmoe_1p45b_a568m.yaml
+    model_overrides: {}
+    execution_variants: [torch-reference, cutlass-grouped-bf16, cutlass-grouped, torch-grouped, cutlass-grouped-k3-muon, torch-grouped-k3-muon]
+  - id: tier2-k3-latentmoe-1p95b-a766m
+    tier: 2
+    hypothesis: The 1.95B stretch tier is the maximum-quality candidate if its full training state fits and its time-to-quality beats smaller tiers.
+    base_model: configs/model/aster_k3_latentmoe_1p95b_a766m.yaml
+    model_overrides: {}
+    execution_variants: [torch-reference, cutlass-grouped-bf16, cutlass-grouped, torch-grouped, cutlass-grouped-k3-muon, torch-grouped-k3-muon]
 research_queue:
   - {tier: 3, id: longcat-zero-compute-expert, prerequisite: tier2_routing_profile}
   - {tier: 4, id: deepseek-v4-csa-hca, prerequisite: semantic_reference_and_retrieval_harness}

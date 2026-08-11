@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 
 import pytest
+import torch
 import yaml
 
 from asterlm.config import AsterConfig
@@ -162,3 +163,21 @@ def test_smoke_train_payload_is_metrics_only_by_default(tmp_path):
     assert train["save_interval"] > 2
     assert train["keep_last_checkpoints"] == 1
     assert train["checkpoint_policy"] == "none"
+
+
+@pytest.mark.parametrize(
+    ("path", "expected_total", "expected_active"),
+    [
+        ("aster_k3_latentmoe_868m_a483m.yaml", 868_300_000, 483_400_000),
+        ("aster_k3_latentmoe_1p45b_a568m.yaml", 1_448_100_000, 568_200_000),
+        ("aster_k3_latentmoe_1p95b_a766m.yaml", 1_954_400_000, 765_900_000),
+    ],
+)
+def test_k3_scale_frontier_parameter_geometry(path, expected_total, expected_active):
+    from asterlm import AsterLM
+
+    config = AsterConfig.from_yaml(ROOT / "configs" / "model" / path)
+    with torch.device("meta"):
+        model = AsterLM(config)
+    assert model.effective_parameter_count() == pytest.approx(expected_total, rel=5e-4)
+    assert model.active_parameter_count() == pytest.approx(expected_active, rel=5e-4)

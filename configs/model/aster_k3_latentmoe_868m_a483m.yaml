@@ -1,0 +1,66 @@
+model:
+  # Meta-device count on source commit bad468f: 868.3M total / 483.4M active.
+  vocab_size: 32768
+  d_model: 1152
+  n_layers: 30
+  n_heads: 18
+  head_dim: 64
+  ffn_hidden: 3072
+  max_seq_len: 131072
+  tie_embeddings: true
+
+  ffn_type: latent_moe
+  moe_first_dense_layers: 1
+  moe_every: 1
+  moe_num_experts: 12
+  moe_top_k: 2
+  moe_shared_experts: 2
+  moe_expert_hidden: 768
+  latent_moe_dim: 576
+  latent_moe_post_norm: true
+  moe_activation: situ_glu
+  moe_situ_beta_gate: 4.0
+  moe_situ_beta_up: 25.0
+  moe_router_score: sigmoid
+  moe_balance_strategy: quantile
+  moe_aux_loss_weight: 0.0
+  moe_router_z_loss_weight: 0.00001
+
+  kda_ratio: 3
+  kda_backend: auto
+  kda_num_heads: 9
+  kda_head_dim: 128
+  kda_expand_v: 1.0
+  kda_short_conv: true
+  kda_conv_size: 4
+  kda_safe_gate: true
+  kda_lower_bound: -5.0
+  kda_allow_negative_eigenvalues: false
+
+  q_lora_rank: 384
+  latent_rms_norm: true
+  latent_rank: 96
+  rope_dim: 32
+  attention_window: 131072
+  sink_tokens: 64
+  attention_gate: true
+  qk_stat_tokens: 24
+
+  cache_dtype: bfloat16
+  rope_theta: 1000000.0
+  rope_scaling_type: yarn
+  rope_scaling_factor: 16.0
+  rope_original_max_position: 8192
+  yarn_beta_fast: 32.0
+  yarn_beta_slow: 1.0
+
+  norm_type: rmsnorm
+  rms_eps: 1.0e-6
+  embedding_projection: false
+  use_block_attnres: false
+  mtp_depth: 0
+  lm_loss_chunk_size: 96
+  qk_clip_tau: 100.0
+  init_std: 0.02
+  gradient_checkpointing: true
+

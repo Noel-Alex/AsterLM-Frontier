@@ -45,6 +45,22 @@ bit-identical.
 6. Scaling the winning recipe through the 0.9B, 1.5B and 1.9B total-parameter tiers, with the final
    laptop target selected from measured fit, throughput and quality rather than proxy size.
 
+## Prepared scale frontier
+
+The required scale candidates are now explicit configs rather than extrapolated names. Meta-device
+construction verifies the following logical/active parameter geometry on commit `bad468f`:
+
+| Candidate | Total | Active/token | Routed geometry |
+| --- | ---: | ---: | --- |
+| `aster_k3_latentmoe_868m_a483m` | 868.3M | 483.4M | 12 experts, top-2, 2 shared, 576 latent |
+| `aster_k3_latentmoe_1p45b_a568m` | 1.448B | 568.2M | 16 experts, top-2, 1 shared, 704 latent |
+| `aster_k3_latentmoe_1p95b_a766m` | 1.954B | 765.9M | 18 experts, top-3, 1 shared, 832 latent |
+
+Each retains Stable LatentMoE, SiTU-GLU, Quantile Balancing and a 3:1 KDA/MLA pattern with
+128-dimensional KDA heads. They are scale-gate candidates, not promoted final models. Promotion
+still requires full training-state fit, stable optimized execution, matched learning curves and
+long-context validation at the native scale.
+
 ## Ada utilization diagnosis and GPU-resident grouped backend
 
 A clean, source-pinned three-repetition matrix on commit `e62f134` used sequence length 2048,
