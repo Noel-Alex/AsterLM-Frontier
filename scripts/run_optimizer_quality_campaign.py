@@ -41,6 +41,16 @@ except ModuleNotFoundError:
     )
 
 
+OPTIMIZER_COMPARISON_CONTRACT = {
+    "treatment_fields": ["optimizer", "warmup_steps"],
+    "description": (
+        "Optimizer family, schedule, and their independently tuned learning-rate "
+        "settings are the intended treatments; model, data, seed, token budget, "
+        "precision, batch geometry, and hardware remain controlled."
+    ),
+}
+
+
 def _sha256(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as handle:
@@ -248,6 +258,9 @@ def main() -> None:
             raise ValueError(f"Optimizer resume input hash mismatch: {changed_inputs}")
         manifest = copy.deepcopy(existing_manifest)
         manifest["status"] = "preflight_ok"
+        manifest.setdefault(
+            "comparison_contract", copy.deepcopy(OPTIMIZER_COMPARISON_CONTRACT)
+        )
         manifest["resume_orchestrator_provenance"] = source
         manifest["cuda_toolchain_resume_check"] = cuda_toolchain
         manifest.setdefault("interrupted_attempts", [])
@@ -257,6 +270,7 @@ def main() -> None:
         manifest = {
             "schema_version": 2,
             "campaign_type": "optimizer_quality",
+            "comparison_contract": copy.deepcopy(OPTIMIZER_COMPARISON_CONTRACT),
             "status": "preflight_ok",
             "source_provenance": source,
             "campaign": _portable(campaign_path, root),

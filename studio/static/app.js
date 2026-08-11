@@ -563,7 +563,8 @@ function comparisonBar(row,key,max,label,unit) {
 async function loadResearchComparison() {
   const ids=[...S.researchSelected];if(ids.length<2)return;
   const result=await api(`/api/research/compare?ids=${encodeURIComponent(ids.join(","))}`);
-  const mismatches=result.dimensions.filter(x=>!x.match),holder=$("#research-comparison");
+  const mismatches=result.dimensions.filter(x=>!x.match&&x.role!=="treatment");
+  const treatments=result.dimensions.filter(x=>!x.match&&x.role==="treatment"),holder=$("#research-comparison");
   const metrics=[
     ["tokens_per_second","tokens/s (higher is better)",""],
     ["eval_loss","eval loss (lower is better)",""],
@@ -578,9 +579,16 @@ async function loadResearchComparison() {
     const max=Math.max(0,...result.trials.map(x=>Number(x[key])||0));
     return `<section><h4>${esc(label)}</h4>${result.trials.map(row=>comparisonBar(row,key,max,label,unit)).join("")}</section>`;
   }).join("");
+  const comparisonKind=result.comparison_kind||(result.strictly_comparable?"matched_protocol":"protocol_mismatch");
+  const verdict={
+    matched_protocol:"Matched systems protocol",
+    controlled_treatment:"Controlled treatment comparison",
+    protocol_mismatch:"Protocol mismatch detected",
+  }[comparisonKind]||"Comparison status unavailable";
   holder.className="research-comparison";
-  holder.innerHTML=`<div class="comparison-verdict ${result.strictly_comparable?"matched":"mismatch"}"><strong>${result.strictly_comparable?"Matched systems protocol":"Protocol mismatch detected"}</strong><span>${result.same_model?"same model fingerprint":"different model fingerprints"}</span></div>
-    ${mismatches.length?`<div class="compatibility-chips">${mismatches.map(x=>`<span>${esc(x.label)} differs</span>`).join("")}</div>`:""}${charts}<p class="muted">${esc(result.note)}</p>`;
+  holder.innerHTML=`<div class="comparison-verdict ${comparisonKind==="protocol_mismatch"?"mismatch":"matched"}"><strong>${esc(verdict)}</strong><span>${result.same_model?"same model fingerprint":"different model fingerprints"}</span></div>
+    ${treatments.length?`<div class="compatibility-chips">${treatments.map(x=>`<span>${esc(x.label)} is the treatment</span>`).join("")}</div>`:""}
+    ${mismatches.length?`<div class="compatibility-chips">${mismatches.map(x=>`<span>${esc(x.label)} differs unexpectedly</span>`).join("")}</div>`:""}${charts}<p class="muted">${esc(result.note)}</p>`;
 }
 
 function renderRuns() {

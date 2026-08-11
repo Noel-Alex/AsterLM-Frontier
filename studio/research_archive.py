@@ -612,6 +612,7 @@ class ResearchArchive:
         raw = {
             "analysis": matrix_relative,
             "campaign_type": campaign.get("campaign_type", "architecture_quality"),
+            "comparison_contract": campaign.get("comparison_contract"),
             "candidate": candidate,
             "variant": variant,
             "seed": seed,
@@ -868,6 +869,30 @@ class ResearchArchive:
             rows = db.execute(f"SELECT * FROM trials WHERE id IN ({placeholders})", unique_ids).fetchall()
         by_id = {row["id"]: row for row in rows}
         ordered = [by_id[item] for item in unique_ids if item in by_id]
+        campaign_types: set[str] = set()
+        declared_treatments: set[str] = set()
+        matrix_paths = {row["matrix_path"] for row in ordered}
+        for row in ordered:
+            try:
+                raw = json.loads(row["raw_json"])
+            except (TypeError, json.JSONDecodeError):
+                continue
+            if not isinstance(raw, dict):
+                continue
+            campaign_type = raw.get("campaign_type")
+            if campaign_type:
+                campaign_types.add(str(campaign_type))
+            contract = raw.get("comparison_contract")
+            if isinstance(contract, dict):
+                treatments = contract.get("treatment_fields")
+                if isinstance(treatments, list):
+                    declared_treatments.update(str(field) for field in treatments)
+        same_campaign = len(matrix_paths) == 1 and len(campaign_types) <= 1
+        treatment_fields = declared_treatments if same_campaign else set()
+        if same_campaign and campaign_types == {"optimizer_quality"}:
+            # Backwards-compatible interpretation for optimizer campaigns created
+            # before the explicit comparison contract was added.
+            treatment_fields.update({"optimizer", "warmup_steps"})
         dimensions = []
         strict_fields = [
             ("sequence_length", "sequence length"),
@@ -881,13 +906,41 @@ class ResearchArchive:
         ]
         for field, label in strict_fields:
             values = [row[field] for row in ordered]
-            dimensions.append({"field": field, "label": label, "match": len(set(values)) <= 1, "values": values})
+            dimensions.append(
+                {
+                    "field": field,
+                    "label": label,
+                    "match": len(set(values)) <= 1,
+                    "values": values,
+                    "role": "treatment" if field in treatment_fields else "control",
+                }
+            )
+        control_dimensions = [item for item in dimensions if item["role"] == "control"]
+        treatment_dimensions = [
+            item for item in dimensions if item["role"] == "treatment" and not item["match"]
+        ]
+        controls_match = len(ordered) > 1 and all(
+            item["match"] for item in control_dimensions
+        )
+        comparison_kind = (
+            "protocol_mismatch"
+            if not controls_match
+            else "controlled_treatment"
+            if treatment_dimensions
+            else "matched_protocol"
+        )
         return {
             "trials": [self._public_trial(row) for row in ordered],
             "dimensions": dimensions,
-            "strictly_comparable": len(ordered) > 1 and all(item["match"] for item in dimensions),
+            "strictly_comparable": controls_match,
+            "comparison_kind": comparison_kind,
+            "campaign_type": next(iter(campaign_types), None),
+            "treatment_fields": sorted(treatment_fields),
             "same_model": len({row["model_sha256"] for row in ordered}) <= 1,
-            "note": "Energy is displayed for analysis only and never participates in candidate ranking.",
+            "note": (
+                "Intentional treatment differences are separated from fixed protocol controls. "
+                "Energy is displayed for analysis only and never participates in candidate ranking."
+            ),
         }
 
     def findings(self, *, limit: int = 100, offset: int = 0) -> dict[str, Any]:
