@@ -54,17 +54,29 @@ gates:
   status: not_run
 - id: repeated_warm_throughput
   required: true
-  status: not_run
+  status: passed
+  evidence:
+  - path: docs/promotion-evidence/30e0cdd22875/native-8k-canary/repeated_warm_throughput-proof.json
+    sha256: 131fa77dacb0f50216737ccadaedca71638ef281f3ac165cf677ba68454e6da7
 - id: gpu_utilization_root_cause
   required: true
-  status: not_run
+  status: passed
+  evidence:
+  - path: docs/promotion-evidence/30e0cdd22875/native-8k-canary/gpu_utilization_root_cause-proof.json
+    sha256: cc61da21744b36b64ab1d1241ffa791646a0d6ebb74de4c659714799eb34deb7
 # Observational telemetry only. Energy never blocks or ranks a training candidate.
 - id: energy_and_power
   required: false
-  status: not_run
+  status: passed
+  evidence:
+  - path: docs/promotion-evidence/30e0cdd22875/native-8k-canary/energy_and_power-proof.json
+    sha256: 59a5c91844dae4dff3e705fb39682d2ed1dae3aa83eee17851ec91de39fad1bd
 - id: vram
   required: true
-  status: not_run
+  status: passed
+  evidence:
+  - path: docs/promotion-evidence/30e0cdd22875/native-8k-canary/vram-proof.json
+    sha256: d7e61a50f218e964ee595c136b8b3b4fa7361a2d389cd185a6dff3d758c908d9
 - id: checkpoint_round_trip
   required: true
   status: passed
