@@ -35,6 +35,13 @@ def sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def load_json(path: Path) -> dict[str, Any]:
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict):
+        raise TypeError(f"Expected JSON object: {path}")
+    return payload
+
+
 def atomic_yaml(path: Path, payload: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     descriptor, temporary = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
@@ -133,6 +140,8 @@ def main() -> None:
     parser.add_argument("--final-step", type=int, default=3)
     parser.add_argument("--timeout", type=float, default=900.0)
     parser.add_argument("--keep-checkpoints", action="store_true")
+    parser.add_argument("--wandb-project", default=None)
+    parser.add_argument("--wandb-entity", default=None)
     args = parser.parse_args()
     if args.interrupt_after_step <= 0 or args.final_step <= args.interrupt_after_step:
         raise ValueError("final step must be greater than the positive interruption step")
@@ -205,7 +214,11 @@ def main() -> None:
                 "system_metrics_interval": 1.0,
                 "diagnostic_interval": 100,
                 "save_diagnostic_bundle": True,
-                "wandb_project": None,
+                "wandb_project": args.wandb_project,
+                "wandb_entity": args.wandb_entity,
+                "wandb_run_name": (
+                    f"{output.name}-signal-resume" if args.wandb_project else None
+                ),
                 "hub_repo_id": None,
                 "hub_upload_every_save": False,
             }
@@ -273,6 +286,13 @@ def main() -> None:
         raise RuntimeError("Resumed trainer did not advance beyond the stop checkpoint")
 
     rows = metric_rows(run_dir / "metrics.jsonl")
+    experiment = load_json(run_dir / "experiment.json")
+    wandb_identity = experiment.get("metrics") or {}
+    if args.wandb_project:
+        if wandb_identity.get("wandb_project") != args.wandb_project:
+            raise RuntimeError("Experiment registry lost the W&B project identity")
+        if not wandb_identity.get("wandb_run_id") or not wandb_identity.get("wandb_url"):
+            raise RuntimeError("W&B did not return a durable run identity and URL")
     result = {
         "schema_version": 1,
         "status": "passed",
@@ -304,6 +324,13 @@ def main() -> None:
             "resume_restored_data_cursor": "restored packed buffer + source/RNG state" in log_resume.read_text(
                 encoding="utf-8", errors="replace"
             ),
+        },
+        "wandb": {
+            "entity": wandb_identity.get("wandb_entity"),
+            "project": wandb_identity.get("wandb_project"),
+            "run_id": wandb_identity.get("wandb_run_id"),
+            "url": wandb_identity.get("wandb_url"),
+            "enabled": bool(args.wandb_project),
         },
         "cleanup": {"checkpoints_removed": []},
     }
