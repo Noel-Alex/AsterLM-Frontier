@@ -163,6 +163,19 @@ def validate_training_contract(
             raise TrainingContractError(
                 "Final training requires checkpoint_policy=full for crash recovery and milestones"
             )
+        if train.activation_offload:
+            raise TrainingContractError(
+                "Final pretraining forbids CPU activation offload; use segmented GPU "
+                "recomputation so PCIe transfer cannot become the training bottleneck"
+            )
+        if train.optimizer == "torchao_cpu_offload_adamw":
+            raise TrainingContractError(
+                "Final pretraining forbids CPU-offloaded optimizer state"
+            )
+        if train.loqt_merge_interval > 0 and train.loqt_merge_on_cpu:
+            raise TrainingContractError(
+                "Final pretraining forbids CPU LoQT merge work; select an all-GPU recipe"
+            )
         promotion_path = _resolved(train.promotion_gates_path)
         decision = evaluate_promotion_gates(promotion_path)
         promotion_ready = decision.ready

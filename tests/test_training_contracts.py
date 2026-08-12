@@ -232,6 +232,29 @@ def test_final_contract_rejects_metrics_only_checkpoint_policy(tmp_path: Path) -
         validate_training_contract(train, data, source_provenance={"dirty": False})
 
 
+@pytest.mark.parametrize(
+    ("overrides", "message"),
+    [
+        ({"activation_offload": True}, "activation offload"),
+        ({"optimizer": "torchao_cpu_offload_adamw"}, "optimizer state"),
+        ({"loqt_merge_interval": 10, "loqt_merge_on_cpu": True}, "LoQT"),
+    ],
+)
+def test_final_contract_rejects_host_offload_paths(
+    tmp_path: Path, overrides: dict[str, object], message: str
+) -> None:
+    _, data = _sealed_data(tmp_path)
+    gates = tmp_path / "gates.yaml"
+    _passed_gates(gates)
+    train = TrainConfig(
+        run_class="final",
+        promotion_gates_path=str(gates),
+        **overrides,
+    )
+    with pytest.raises(TrainingContractError, match=message):
+        validate_training_contract(train, data, source_provenance={"dirty": False})
+
+
 def test_shared_dedup_database_removes_cross_source_duplicate(tmp_path: Path) -> None:
     duplicate = "same globally duplicated training document " * 8
     source_a = tmp_path / "raw-a.jsonl"
