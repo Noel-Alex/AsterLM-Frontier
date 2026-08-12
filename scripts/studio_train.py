@@ -30,6 +30,16 @@ class StudioStopRequested(BaseException):
     asterlm_status = "interrupted_user"
 
 
+def normalize_studio_data_state(state: dict[str, Any]) -> dict[str, Any]:
+    """Translate the short-lived Studio envelope to the canonical trainer schema."""
+
+    if "schema_version" in state:
+        return state
+    if int(state.get("version", -1)) == 1:
+        return {"schema_version": 1, **{key: value for key, value in state.items() if key != "version"}}
+    return state
+
+
 class StudioTrainer(Trainer):
     """Trainer overlay with fast local data cursors and graceful stop checkpoints."""
 
@@ -111,9 +121,11 @@ class StudioTrainer(Trainer):
         import torch
 
         state = torch.load(cursor_path, map_location="cpu", weights_only=False)
-        if int(state.get("version", -1)) != 1:
+        state = normalize_studio_data_state(state)
+        if int(state.get("schema_version", -1)) != 1:
             raise RuntimeError(
-                f"Unsupported studio_data_state version={state.get('version')}"
+                "Unsupported studio_data_state schema_version="
+                f"{state.get('schema_version')}"
             )
         if int(state.get("tokens_seen", -1)) != int(self.tokens_seen):
             raise RuntimeError(
@@ -150,11 +162,28 @@ class StudioTrainer(Trainer):
             flush=True,
         )
 
+    def _restore_training_data_state(self, state: dict[str, Any]) -> None:
+        """Restore both canonical and legacy Studio cursor envelopes exactly."""
+
+        normalized = normalize_studio_data_state(state)
+        super()._restore_training_data_state(normalized)
+        train_state = normalized.get("train") or {}
+        cursors = train_state.get("cursors", [])
+        cursor_summary = ", ".join(
+            f"s{i}:file={item.get('file_index')} row={int(item.get('record_index', 0)):,}"
+            for i, item in enumerate(cursors)
+        )
+        print(
+            "Studio fast data resume restored packed buffer + source/RNG state; "
+            + cursor_summary,
+            flush=True,
+        )
+
     def _studio_data_state(self) -> dict[str, Any] | None:
         if not self._studio_fast_data or self._studio_train_dataset is None:
             return None
         return {
-            "version": 1,
+            "schema_version": 1,
             "step": int(self.step),
             "tokens_seen": int(self.tokens_seen),
             "train": self._studio_train_dataset.state_dict(),
