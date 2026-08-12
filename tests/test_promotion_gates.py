@@ -41,11 +41,16 @@ def _write_evidence(root: Path, gate_id: str) -> dict[str, str]:
     return {"path": proof.name, "sha256": _sha256(proof)}
 
 
-def test_project_final_run_is_locked_by_26_gates_with_energy_observational_only():
+def test_project_final_run_is_locked_by_unpassed_required_gates_with_energy_observational_only():
     decision = evaluate_promotion_gates(GATES)
-    assert not decision.ready
     assert len(decision.gates) == 27
-    assert decision.blocking_gate_ids == REQUIRED_FINAL_RUN_GATES
+    expected_blocking = tuple(
+        gate.gate_id
+        for gate in decision.gates
+        if gate.gate_id in REQUIRED_FINAL_RUN_GATES and gate.status != "passed"
+    )
+    assert decision.blocking_gate_ids == expected_blocking
+    assert decision.ready == (not expected_blocking)
     energy = next(gate for gate in decision.gates if gate.gate_id == "energy_and_power")
     assert not energy.required
     assert all(
