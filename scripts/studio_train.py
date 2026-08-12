@@ -24,6 +24,31 @@ from asterlm.training.checkpoint import resolve_checkpoint
 from studio.stateful_data import StatefulLocalPackedDataset
 
 
+def apply_remote_durable_policy(
+    train_config: TrainConfig,
+    *,
+    hub_repo: str | None,
+    remote_run_root: Path,
+) -> None:
+    """Apply the provider-ephemeral five-minute recovery contract."""
+
+    if not hub_repo:
+        raise ValueError("--remote-durable requires --hub-repo")
+    train_config.hub_repo_id = hub_repo
+    train_config.output_dir = str(remote_run_root / Path(train_config.output_dir).name)
+    train_config.checkpoint_interval_minutes = 5.0
+    train_config.hub_private = True
+    train_config.hub_upload_every_save = True
+    train_config.hub_upload_milestones = True
+    train_config.hub_upload_final = True
+    train_config.hub_upload_on_stop = True
+    train_config.hub_auto_resume_latest = True
+    train_config.hub_include_optimizer = True
+    train_config.hub_fail_on_error = True
+    train_config.hub_async_upload = True
+    train_config.hub_max_pending_uploads = 2
+
+
 class StudioStopRequested(BaseException):
     """Raised only at a safe training-update boundary."""
 
@@ -243,21 +268,12 @@ def main() -> None:
     if args.hub_repo:
         train_config.hub_repo_id = args.hub_repo
     if args.remote_durable:
-        if not args.hub_repo:
-            raise ValueError("--remote-durable requires --hub-repo")
         remote_run_root = Path(os.environ.get("ASTERLM_REMOTE_RUN_ROOT", "/opt/aster/runs"))
-        train_config.output_dir = str(remote_run_root / Path(train_config.output_dir).name)
-        train_config.checkpoint_interval_minutes = 5.0
-        train_config.hub_private = True
-        train_config.hub_upload_every_save = True
-        train_config.hub_upload_milestones = True
-        train_config.hub_upload_final = True
-        train_config.hub_upload_on_stop = True
-        train_config.hub_auto_resume_latest = True
-        train_config.hub_include_optimizer = True
-        train_config.hub_fail_on_error = True
-        train_config.hub_async_upload = True
-        train_config.hub_max_pending_uploads = 2
+        apply_remote_durable_policy(
+            train_config,
+            hub_repo=args.hub_repo,
+            remote_run_root=remote_run_root,
+        )
 
     if (
         train_config.hub_auto_resume_latest
