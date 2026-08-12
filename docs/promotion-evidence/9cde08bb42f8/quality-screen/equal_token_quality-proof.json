@@ -1,0 +1,34 @@
+{
+  "schema_version": 1,
+  "gate_id": "equal_token_quality",
+  "status": "passed",
+  "created_at_utc": "2026-08-12T03:11:26.330346+00:00",
+  "evaluator": {
+    "name": "asterlm-quality-campaign-importer",
+    "version": "1",
+    "git_commit": "9cde08bb42f80e20dbba2096a3ae3448f1751e4c"
+  },
+  "experiment_ids": [
+    "architecture-screen-two-seed-16m8-20260811",
+    "torch-sdpa-bf16-20260811T090629Z-67100bdb",
+    "fla-kda-bf16-20260811T092956Z-47144c9b",
+    "cutlass-grouped-bf16-20260811T095341Z-deaefa21",
+    "torch-sdpa-bf16-20260811T102304Z-6b5124d9",
+    "fla-kda-bf16-20260811T113708Z-d7913cf7",
+    "cutlass-grouped-bf16-20260811T120059Z-de355dd1"
+  ],
+  "artifacts": [
+    {
+      "path": "docs/promotion-evidence/9cde08bb42f8/quality-screen/quality-campaign.json",
+      "sha256": "6716cc9f81be1342c2b717254b43c8897f2874732f7cfad8e2faa283a59acbc4"
+    },
+    {
+      "path": "docs/promotion-evidence/9cde08bb42f8/quality-screen/quality-analysis.json",
+      "sha256": "265aced8b142af3760c6436e3328818d58d589cf3bb779edcc2bc7e17336605a"
+    },
+    {
+      "path": "docs/promotion-evidence/9cde08bb42f8/quality-screen/quality-screen-result.json",
+      "sha256": "b508a9f097eca5fba96edf271990cd36543278b814196f52a3d721fabaefafdc"
+    }
+  ]
+}

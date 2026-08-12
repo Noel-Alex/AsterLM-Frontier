@@ -34,10 +34,17 @@ gates:
     sha256: f13d0c129de54ee1ca5a7abe3f1e1bdf32772e6e7f672984c4f187a8f22d3f0e
 - id: equal_token_quality
   required: true
-  status: not_run
+  status: passed
+  evidence:
+  - path: docs/promotion-evidence/9cde08bb42f8/quality-screen/equal_token_quality-proof.json
+    sha256: 76180996674ee822e21b143723cb89166e1410ca34f305dcb9cda612bc5da3a0
 - id: equal_wall_clock
   required: true
-  status: not_run
+  status: failed
+  note: K3 regressed at the common wall-clock budget in the completed two-seed screen;
+    see docs/promotion-evidence/9cde08bb42f8/quality-screen/quality-screen-result.json
+    (b508a9f097eca5fba96edf271990cd36543278b814196f52a3d721fabaefafdc). Requires the
+    final optimized native-context canary.
 - id: modal_cost_to_quality
   required: false
   status: not_run
@@ -116,7 +123,10 @@ gates:
   note: required by Modal dispatch
 - id: dense_baseline_regression
   required: true
-  status: not_run
+  status: passed
+  evidence:
+  - path: docs/promotion-evidence/9cde08bb42f8/quality-screen/dense_baseline_regression-proof.json
+    sha256: f81763b8cce32c01686b64dddfbaceffd0b3d5eacf9b21fcf94db6fe694f9a78
 - id: correctness_and_data_quality_clear
   required: true
   status: not_run
