@@ -59,3 +59,23 @@ expert weights remained BF16.
 No evidence in this probe supports replacing BF16 master training parameters with
 FP8 on this Ada GPU. FP8 compute remains an optional backend to retest on cloud
 hardware with native high-throughput FP8 support.
+
+## Long-context correction
+
+The first source-pinned 4K and 8K attempts failed during backward near the WSL/WDDM
+memory ceiling because the scale candidate still used per-block checkpoint
+boundaries (`checkpoint_segment_size: 1`). This is not KDA state growth: each layer
+was retaining another full `[batch, context, d_model]` checkpoint input.
+
+Using four-block checkpoint segments, with identical model equations and no host
+offload, produced:
+
+| Context | Peak allocated | Peak reserved | Measured throughput | GPU utilization |
+|---|---:|---:|---:|---:|
+| 4K | 5.88 GiB | 7.17 GiB | 4.29k tok/s | 85% sampled |
+| 8K | 7.40 GiB | 8.68 GiB | 4.04–4.09k tok/s | 91–97% sampled |
+
+The successful 8K run retains about 2.5 GiB of process-memory headroom on the 12
+GiB laptop GPU. Segment size four is therefore the current 868M laptop execution
+candidate; a clean source-pinned repeat is required after committing the model
+config and campaign protocol.

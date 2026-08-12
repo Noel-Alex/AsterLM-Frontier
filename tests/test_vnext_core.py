@@ -189,3 +189,40 @@ def test_segment_checkpoint_saves_only_segment_boundaries_without_double_forward
     assert all(1 <= c <= 2 for c in counts)
     for h in handles:
         h.remove()
+
+
+def test_segment_checkpoint_matches_per_block_loss_and_gradients():
+    """Segment recomputation changes storage boundaries, never model equations."""
+    torch.manual_seed(31)
+    per_block = AsterLM(
+        tiny_config(
+            n_layers=4,
+            checkpoint_segment_size=1,
+            gradient_checkpointing=True,
+        )
+    ).train()
+    segmented = AsterLM(
+        tiny_config(
+            n_layers=4,
+            checkpoint_segment_size=2,
+            gradient_checkpointing=True,
+        )
+    ).train()
+    segmented.load_state_dict(per_block.state_dict())
+    ids = torch.randint(0, per_block.config.vocab_size, (1, 24))
+    labels = torch.randint(0, per_block.config.vocab_size, (1, 24))
+
+    reference = per_block(ids, labels=labels, return_logits=False)
+    candidate = segmented(ids, labels=labels, return_logits=False)
+    assert reference.loss is not None and candidate.loss is not None
+    torch.testing.assert_close(candidate.loss, reference.loss, rtol=0, atol=0)
+    reference.loss.backward()
+    candidate.loss.backward()
+    reference_grads = dict(per_block.named_parameters())
+    candidate_grads = dict(segmented.named_parameters())
+    for name, parameter in reference_grads.items():
+        candidate_parameter = candidate_grads[name]
+        assert parameter.grad is not None and candidate_parameter.grad is not None
+        torch.testing.assert_close(
+            candidate_parameter.grad, parameter.grad, rtol=1e-5, atol=1e-6
+        )

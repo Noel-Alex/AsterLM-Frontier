@@ -63,4 +63,7 @@ model:
   qk_clip_tau: 100.0
   init_std: 0.02
   gradient_checkpointing: true
-
+  # Four-block reentrant recomputation stores segment boundaries instead of one
+  # full [batch, context, width] activation per layer. This is GPU recomputation,
+  # not CPU/NVMe offload, and is required for laptop long-context training.
+  checkpoint_segment_size: 4

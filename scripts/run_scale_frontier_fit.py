@@ -35,6 +35,7 @@ class FitTrial:
     accumulation: int
     optimizer: str
     moe_implementation: str
+    checkpoint_segment_size: int
 
     @property
     def trial_id(self) -> str:
@@ -42,6 +43,7 @@ class FitTrial:
         return (
             f"{model}-s{self.sequence}-b{self.micro_batch}-a{self.accumulation}-"
             f"{self.optimizer}-{self.moe_implementation}"
+            f"-seg{self.checkpoint_segment_size}"
         )
 
 
@@ -53,6 +55,7 @@ def build_trial_plan(
     optimizers: list[str],
     target_update_tokens: int,
     moe_implementation: str,
+    checkpoint_segment_size: int = 1,
 ) -> list[FitTrial]:
     trials: list[FitTrial] = []
     for model in models:
@@ -68,6 +71,7 @@ def build_trial_plan(
                             accumulation=accumulation,
                             optimizer=optimizer,
                             moe_implementation=moe_implementation,
+                            checkpoint_segment_size=checkpoint_segment_size,
                         )
                     )
     return trials
@@ -94,6 +98,7 @@ def main() -> None:
     )
     parser.add_argument("--target-update-tokens", type=int, default=16_384)
     parser.add_argument("--no-muon-per-head", action="store_true")
+    parser.add_argument("--checkpoint-segment-size", type=int, default=1)
     parser.add_argument(
         "--precision",
         choices=("amp", "transformer_engine_fp8"),
@@ -120,7 +125,15 @@ def main() -> None:
     sequences = list(args.sequence or [2048])
     batches = list(args.batch or [4, 2, 1])
     optimizers = list(args.optimizer or ["adamw", "torchao_adamw8bit"])
-    if any(value <= 0 for value in [*sequences, *batches, args.target_update_tokens]):
+    if any(
+        value <= 0
+        for value in [
+            *sequences,
+            *batches,
+            args.target_update_tokens,
+            args.checkpoint_segment_size,
+        ]
+    ):
         raise ValueError("sequence, batch, and target-update-tokens must be positive")
     model_records: dict[str, dict[str, Any]] = {}
     for relative in models:
@@ -136,6 +149,7 @@ def main() -> None:
         optimizers=optimizers,
         target_update_tokens=args.target_update_tokens,
         moe_implementation=args.moe_implementation,
+        checkpoint_segment_size=args.checkpoint_segment_size,
     )
     manifest: dict[str, Any] = {
         "schema_version": 1,
@@ -153,6 +167,7 @@ def main() -> None:
             "moe_implementation": args.moe_implementation,
             "muon_per_head": not args.no_muon_per_head,
             "precision": args.precision,
+            "checkpoint_segment_size": args.checkpoint_segment_size,
             "trial_timeout_seconds": args.trial_timeout,
         },
         "planned_trials": [asdict(trial) | {"trial_id": trial.trial_id} for trial in trials],
@@ -191,6 +206,8 @@ def main() -> None:
                 args.precision,
                 "--moe-implementation",
                 trial.moe_implementation,
+                "--checkpoint-segment-size",
+                str(trial.checkpoint_segment_size),
             ]
             if trial.optimizer in {"muon_adamw", "muon_adamw8bit"} and not args.no_muon_per_head:
                 command.append("--muon-per-head")
