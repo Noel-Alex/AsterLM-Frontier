@@ -1,0 +1,42 @@
+{
+  "schema_version": 1,
+  "status": "passed",
+  "imported_at_utc": "2026-08-12T03:37:25.935753+00:00",
+  "importer_git_commit": "5b3868a8979c4513168024d19977b45146c62602",
+  "source_result": {
+    "path": "docs/promotion-evidence/5b3868a8979c/interrupted-recovery/result.json",
+    "sha256": "33bc4d63e2a303e87bce8649d453a66ec6973f93166b8c6f0ed48c0d7aebe57d"
+  },
+  "assertions": {
+    "source_execution_commit": "c540972ffd0e2cea3a51fa892ab6e9c174747915",
+    "signal": "SIGTERM",
+    "interrupted_returncode": 130,
+    "stop_step": 2,
+    "stop_tokens_seen": 32768,
+    "final_step": 3,
+    "final_tokens_seen": 49152,
+    "stop_manifest_sha256": "eae5c521eea03be8b9bc627c1dd2bebd132c4f3a7dd42ec793ed605ef17f7233",
+    "final_manifest_sha256": "f2b7ccac39c1efd7fa213a88ce87a1e01990fdac6af13009cb92448a92991ddc",
+    "stop_artifact_hashes": {
+      "model.safetensors": "e2d6bc9f79f6afe1fd75626d75e44cdbab698b567963670c6c1dc1b1d5018399",
+      "trainer_state.pt": "86b1eaef41542c99229d7fe0a3337bd3c2c5aecad10079908ca9a9f583a48c04",
+      "model_config.yaml": "e6c3b4d61114658805d8dacbb8ddd15f7216b2ec537de333d11354d1af321aa0",
+      "train_config.yaml": "3e00d6bb9fb263d1233b92e915b04f6d9b61e556e9de95a03f2b9a83d78314cc",
+      "tokenizer.json": "d6ca2150f7262de6d1339db6e7501ff55ee969a6f4009a21101f9762fb443673",
+      "data_state.pt": "c5d12f0174683dde7970befd8eaa3856ec73309507a4afa5bba41c4e0cf2bed3"
+    },
+    "final_artifact_hashes": {
+      "model.safetensors": "7c7479bb5b03e892443f58331f698d6a87bd4b15c752dcbbf84177f14e551e83",
+      "trainer_state.pt": "2ce32dc25828390a4b3973b61ecfc3f0dbe654e946efe407d4ce16980837ffed",
+      "model_config.yaml": "e6c3b4d61114658805d8dacbb8ddd15f7216b2ec537de333d11354d1af321aa0",
+      "train_config.yaml": "ae5203d3568c6f6722d7d3b1aefc3df9d8bb42488cb708d3d7e654a158d01a8c",
+      "tokenizer.json": "d6ca2150f7262de6d1339db6e7501ff55ee969a6f4009a21101f9762fb443673",
+      "data_state.pt": "80b17f2682ac0e565fb0142b164561d549aaca526d4d239c3c1e9dd723f143cd"
+    },
+    "resume_restored_data_cursor": true,
+    "checkpoint_payloads_removed_after_audit": [
+      "checkpoint-00000002-studio-stop",
+      "checkpoint-00000003-final"
+    ]
+  }
+}

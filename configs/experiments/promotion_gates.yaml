@@ -64,7 +64,6 @@ gates:
   evidence:
   - path: docs/promotion-evidence/30e0cdd22875/native-8k-canary/gpu_utilization_root_cause-proof.json
     sha256: cc61da21744b36b64ab1d1241ffa791646a0d6ebb74de4c659714799eb34deb7
-# Observational telemetry only. Energy never blocks or ranks a training candidate.
 - id: energy_and_power
   required: false
   status: passed
@@ -103,7 +102,10 @@ gates:
     sha256: f3146ce083adc0751c2618d7a7389c34665d2d0cf45082e8d08d381b09d12e60
 - id: interrupted_laptop_recovery
   required: true
-  status: not_run
+  status: passed
+  evidence:
+  - path: docs/promotion-evidence/5b3868a8979c/interrupted-recovery/interrupted_laptop_recovery-proof.json
+    sha256: 2471636575643ed63774257ec5e74f609c9a5b366b93b11091557901e1820686
 - id: modal_preemption_recovery
   required: false
   status: not_run

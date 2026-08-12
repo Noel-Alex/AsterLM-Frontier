@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "gate_id": "interrupted_laptop_recovery",
+  "status": "passed",
+  "created_at_utc": "2026-08-12T03:37:25.985355+00:00",
+  "evaluator": {
+    "name": "asterlm-recovery-canary-importer",
+    "version": "1",
+    "git_commit": "5b3868a8979c4513168024d19977b45146c62602"
+  },
+  "experiment_ids": [
+    "k3-interrupted-recovery-c540972"
+  ],
+  "artifacts": [
+    {
+      "path": "docs/promotion-evidence/5b3868a8979c/interrupted-recovery/result.json",
+      "sha256": "33bc4d63e2a303e87bce8649d453a66ec6973f93166b8c6f0ed48c0d7aebe57d"
+    },
+    {
+      "path": "docs/promotion-evidence/5b3868a8979c/interrupted-recovery/recovery-summary.json",
+      "sha256": "01b9502b590be032493b302d109c0c72825c68a911be67becd61f78f9034db03"
+    }
+  ]
+}
