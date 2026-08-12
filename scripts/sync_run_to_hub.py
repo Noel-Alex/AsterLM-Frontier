@@ -16,6 +16,8 @@ def main() -> None:
     parser.add_argument("--revision", default="main")
     parser.add_argument("--public", action="store_true")
     parser.add_argument("--reason", default="manual-sync")
+    parser.add_argument("--storage-guard-tb", type=float, default=7.0)
+    parser.add_argument("--storage-hard-cap-tb", type=float, default=7.5)
     args = parser.parse_args()
 
     root = Path(args.run)
@@ -31,6 +33,8 @@ def main() -> None:
         private=not args.public,
         revision=args.revision,
         include_optimizer=True,
+        storage_guard_bytes=int(args.storage_guard_tb * 1_000_000_000_000),
+        storage_hard_cap_bytes=int(args.storage_hard_cap_tb * 1_000_000_000_000),
     )
     result = sync.sync(
         output_dir=root,

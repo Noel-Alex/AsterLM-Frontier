@@ -1,9 +1,9 @@
 selection:
-  status: frozen_for_launch_readiness
+  status: reopened_scale_gate_required
   frozen_utc: "2026-08-11T16:15:00Z"
-  model: configs/model/aster_k3_latentmoe_270m_a188m.yaml
-  total_parameters: 269677164
-  active_parameters_per_token: 188272620
+  model: null
+  total_parameters: null
+  active_parameters_per_token: null
   laptop:
     execution_backend: aster_local
     moe_implementation: cutlass
@@ -22,7 +22,13 @@ selection:
     architecture_quality: runs/architecture-campaign/quality-mb4-rejection-16m8-two-seed-metrics-v2-20260811/quality-analysis.json
     optimizer_screen: runs/optimizer-campaign/k3-tuning-4m-fused-0fbda28-20260811/quality-analysis.json
     moe_backend_matrix: runs/architecture-campaign/k3-packed-moe-utilization-e8acb30-20260811/matrix.json
+  mechanism_proxy: configs/model/aster_k3_latentmoe_270m_a188m.yaml
+  scale_finalists:
+    - {model: configs/model/aster_k3_latentmoe_868m_a483m.yaml, total_parameters: 868300000, active_parameters_per_token: 483400000}
+    - {model: configs/model/aster_k3_latentmoe_1p45b_a568m.yaml, total_parameters: 1448000000, active_parameters_per_token: 568200000}
+    - {model: configs/model/aster_k3_latentmoe_1p95b_a766m.yaml, total_parameters: 1954000000, active_parameters_per_token: 765900000}
   broad_screening_enabled: false
+  correction: The 270M proxy evidence selects K3 mechanisms and the Ada backend, not final model scale.
   reopen_only_on:
     - nonfinite_training
     - exact_resume_failure

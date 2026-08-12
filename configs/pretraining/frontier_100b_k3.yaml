@@ -1,11 +1,13 @@
 schema_version: 1
-status: frozen_launch_candidate
-name: aster-k3-100b
+status: blocked_pending_scale_selection
+name: aster-k3-100b-draft
 goal_tokens: 100000000000
 architecture:
-  base_model: configs/model/aster_k3_latentmoe_270m_a188m.yaml
-  total_parameters: 269677164
-  active_parameters_per_token: 188272620
+  base_model: null
+  mechanism_proxy: configs/model/aster_k3_latentmoe_270m_a188m.yaml
+  total_parameters: null
+  active_parameters_per_token: null
+  scale_selection: configs/experiments/pretraining_selection.yaml
   layers: 24
   attention:
     pattern: [KDA, KDA, KDA, MLA]
@@ -56,8 +58,19 @@ stages:
     init_from: runs/aster-frontier-100b-stage2-16k
 checkpointing:
   local_budget_gib: 150
-  policy: dense recent recovery plus logarithmic rolling history plus remote permanent token milestones
+  recovery_interval_minutes: 30
+  recovery_interval_steps: 250
+  maximum_uncheckpointed_tokens_by_step: 32768000
+  recent_full_state_checkpoints: 6
+  logarithmic_history_levels: 8
+  huggingface_hard_cap_tb_decimal: 7.5
+  huggingface_operational_guard_tb_decimal: 7.0
+  estimated_full_state_checkpoint_gib: 1.06
+  permanent_checkpoint_count: 24
+  projected_permanent_checkpoint_gib: 25.44
+  policy: whichever comes first of 30 wall-clock minutes or 250 updates; six dense recent recovery points plus eight logarithmic history bands plus remote permanent token milestones
   remote: private Hugging Face full-state, synchronous and hash-verified
+  remote_quota_policy: refuse any planned upload whose pessimistic projected repository usage exceeds 7.0 TB; never cross the 7.5 TB hard ceiling
   portable_inference: scripts/infer.py --hub-repo REPO --hub-run RUN --hub-selector tokens:N
 observability:
   local: append-only metrics.jsonl plus run, analysis, checkpoint and diagnostic manifests

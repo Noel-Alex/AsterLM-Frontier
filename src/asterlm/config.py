@@ -409,6 +409,9 @@ class TrainConfig:
     eval_interval: int = 1_000
     eval_batches: int = 32
     save_interval: int = 1_000
+    # Wall-clock safety trigger for machines/providers whose step durations differ.
+    # A periodic checkpoint fires when either this timer or save_interval is due.
+    checkpoint_interval_minutes: float | None = None
     keep_last_checkpoints: int = 3
     # Exploratory architecture campaigns can be metrics-only to avoid retaining
     # multi-gigabyte model/optimizer states. `final_only` keeps one terminal
@@ -458,8 +461,14 @@ class TrainConfig:
     hub_upload_every_save: bool = False
     hub_upload_milestones: bool = True
     hub_upload_final: bool = True
+    hub_upload_on_stop: bool = True
+    hub_auto_resume_latest: bool = False
     hub_include_optimizer: bool = True
     hub_fail_on_error: bool = False
+    # Decimal TB, matching provider quota displays. The lower operational guard
+    # is a fail-closed review point; the hard cap may never be exceeded.
+    hub_storage_guard_tb_decimal: float | None = None
+    hub_storage_hard_cap_tb_decimal: float | None = None
 
     def __post_init__(self) -> None:
         if self.run_class not in {"exploratory", "decision_grade", "final"}:
@@ -519,6 +528,8 @@ class TrainConfig:
             raise ValueError("milestone_tokens must contain only positive integers")
         if self.keep_last_checkpoints < 0 or self.checkpoint_pyramid_levels < 0:
             raise ValueError("checkpoint retention values must be non-negative")
+        if self.checkpoint_interval_minutes is not None and self.checkpoint_interval_minutes <= 0:
+            raise ValueError("checkpoint_interval_minutes must be positive when configured")
         if self.checkpoint_local_budget_gib is not None and self.checkpoint_local_budget_gib <= 0:
             raise ValueError("checkpoint_local_budget_gib must be positive when configured")
         if self.checkpoint_policy not in {"none", "final_only", "full"}:
@@ -529,6 +540,18 @@ class TrainConfig:
             raise ValueError("milestone_tokens cannot exceed max_tokens")
         if not self.hub_revision.strip():
             raise ValueError("hub_revision cannot be empty")
+        for name, value in (
+            ("hub_storage_guard_tb_decimal", self.hub_storage_guard_tb_decimal),
+            ("hub_storage_hard_cap_tb_decimal", self.hub_storage_hard_cap_tb_decimal),
+        ):
+            if value is not None and value <= 0:
+                raise ValueError(f"{name} must be positive when configured")
+        if (
+            self.hub_storage_guard_tb_decimal is not None
+            and self.hub_storage_hard_cap_tb_decimal is not None
+            and self.hub_storage_guard_tb_decimal > self.hub_storage_hard_cap_tb_decimal
+        ):
+            raise ValueError("Hub storage guard cannot exceed the hard cap")
         if self.warmup_steps < 0:
             raise ValueError("warmup_steps must be non-negative")
         if self.dtype not in {"bfloat16", "float16", "float32"}:

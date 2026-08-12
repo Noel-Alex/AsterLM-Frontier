@@ -246,6 +246,10 @@ class StudioTrainer(Trainer):
                 reason == "complete"
                 and self.train_config.hub_upload_final
             )
+            or (
+                reason == "studio-stop"
+                and self.train_config.hub_upload_on_stop
+            )
         )
         upload_verified = False
         if should_upload and self.hub is not None:
@@ -331,10 +335,13 @@ def main() -> None:
             raise ValueError("--remote-durable requires --hub-repo")
         remote_run_root = Path(os.environ.get("ASTERLM_REMOTE_RUN_ROOT", "/opt/aster/runs"))
         train_config.output_dir = str(remote_run_root / Path(train_config.output_dir).name)
+        train_config.checkpoint_interval_minutes = 5.0
         train_config.hub_private = True
         train_config.hub_upload_every_save = True
         train_config.hub_upload_milestones = True
         train_config.hub_upload_final = True
+        train_config.hub_upload_on_stop = True
+        train_config.hub_auto_resume_latest = True
         train_config.hub_include_optimizer = True
         train_config.hub_fail_on_error = True
 

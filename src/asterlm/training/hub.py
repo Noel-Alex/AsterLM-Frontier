@@ -44,6 +44,8 @@ class HubRunSync:
     private: bool = True
     revision: str = "main"
     include_optimizer: bool = True
+    storage_guard_bytes: int | None = None
+    storage_hard_cap_bytes: int | None = None
     api: Any = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
@@ -56,6 +58,63 @@ class HubRunSync:
             private=self.private,
             exist_ok=True,
         )
+
+    def remote_logical_bytes(self) -> int:
+        """Return the repository's logical file size, including LFS/Xet files."""
+
+        entries = self.api.list_repo_tree(
+            repo_id=self.repo_id,
+            repo_type="model",
+            revision=self.revision,
+            recursive=True,
+            expand=True,
+        )
+        return sum(int(getattr(entry, "size", 0) or 0) for entry in entries)
+
+    @staticmethod
+    def _planned_upload_bytes(root: Path, checkpoint: Path) -> int:
+        """Pessimistic upload forecast; replacements are deliberately counted again."""
+
+        files: set[Path] = set(path for path in checkpoint.rglob("*") if path.is_file())
+        for path in (
+            root / "run_manifest.json",
+            root / "analysis_manifest.json",
+            root / "experiment.json",
+            root / "metrics.jsonl",
+            root / "latest.txt",
+            root / "hub_sync_state.json",
+        ):
+            if path.is_file():
+                files.add(path)
+        for artifact_dir in (root / "tensorboard", root / "diagnostics"):
+            if artifact_dir.is_dir():
+                files.update(path for path in artifact_dir.rglob("*") if path.is_file())
+        return sum(path.stat().st_size for path in files)
+
+    def storage_preflight(self, *, root: Path, checkpoint: Path) -> dict[str, Any]:
+        remote_bytes = self.remote_logical_bytes()
+        planned_bytes = self._planned_upload_bytes(root, checkpoint)
+        projected_bytes = remote_bytes + planned_bytes
+        if self.storage_hard_cap_bytes is not None and projected_bytes > self.storage_hard_cap_bytes:
+            raise RuntimeError(
+                "Hugging Face storage hard cap would be exceeded: "
+                f"remote={remote_bytes:,}, planned={planned_bytes:,}, "
+                f"projected={projected_bytes:,}, cap={self.storage_hard_cap_bytes:,} bytes"
+            )
+        if self.storage_guard_bytes is not None and projected_bytes > self.storage_guard_bytes:
+            raise RuntimeError(
+                "Hugging Face operational storage guard would be exceeded: "
+                f"remote={remote_bytes:,}, planned={planned_bytes:,}, "
+                f"projected={projected_bytes:,}, guard={self.storage_guard_bytes:,} bytes. "
+                "Raise the explicit guard only after reviewing retention."
+            )
+        return {
+            "remote_logical_bytes_before": remote_bytes,
+            "planned_upload_bytes_pessimistic": planned_bytes,
+            "projected_logical_bytes_pessimistic": projected_bytes,
+            "storage_guard_bytes": self.storage_guard_bytes,
+            "storage_hard_cap_bytes": self.storage_hard_cap_bytes,
+        }
 
     @staticmethod
     def _run_prefix(output_dir: Path) -> str:
@@ -96,6 +155,11 @@ class HubRunSync:
             ),
         }
         state_path = root / "hub_sync_state.json"
+        atomic_write_json(state_path, metadata)
+        metadata["storage_preflight"] = self.storage_preflight(
+            root=root,
+            checkpoint=checkpoint,
+        )
         atomic_write_json(state_path, metadata)
 
         for path in (

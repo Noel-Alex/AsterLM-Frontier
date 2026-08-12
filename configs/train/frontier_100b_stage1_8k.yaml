@@ -35,7 +35,8 @@ train:
   log_interval: 10
   eval_interval: 1000
   eval_batches: 32
-  save_interval: 2000
+  save_interval: 250
+  checkpoint_interval_minutes: 30.0
   keep_last_checkpoints: 6
   checkpoint_policy: full
   checkpoint_pyramid_levels: 8
@@ -60,5 +61,9 @@ train:
   hub_upload_every_save: false
   hub_upload_milestones: true
   hub_upload_final: true
+  hub_upload_on_stop: true
+  hub_auto_resume_latest: true
   hub_include_optimizer: true
   hub_fail_on_error: true
+  hub_storage_guard_tb_decimal: 7.0
+  hub_storage_hard_cap_tb_decimal: 7.5

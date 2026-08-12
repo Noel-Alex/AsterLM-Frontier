@@ -1,6 +1,11 @@
 # AsterLM 100B-token research campaign
 
-This is the authoritative research plan for the frozen Aster K3 model over **100B training tokens**. The machine-readable source of truth is `configs/pretraining/frontier_100b_k3.yaml`: 269,677,164 total parameters, approximately 188,272,620 active per token, 18 KDA layers, 6 MLA layers, and Stable LatentMoE.
+This is the draft research plan for the Aster K3 family over **100B training
+tokens**. The 270M mechanism proxy is not the final scale. Stage launch is blocked
+until the mandated 868M/1.45B/1.95B K3 scale gate chooses the strongest model that
+fits and wins time-to-quality. The machine-readable sources of truth are
+`configs/pretraining/frontier_100b_k3.yaml` and
+`configs/experiments/pretraining_selection.yaml`.
 
 ## Scientific position
 
@@ -112,6 +117,17 @@ python scripts/train_pretrain.py \
   --hub-repo YOUR_HF_USERNAME/AsterLM-Frontier-100B
 ```
 
+Crash recovery is deliberately much denser than the permanent history. Every
+stage writes a complete local recovery checkpoint after **30 wall-clock minutes
+or 250 optimizer updates, whichever happens first**. At the campaign's fixed
+131,072 tokens/update, the step trigger caps exposure at 32,768,000 tokens; the
+timer gives the tighter bound on slower hardware. The newest six recovery
+checkpoints remain dense and eight exponentially older bands form a logarithmic
+history. With the measured ~1.055 GiB full-state checkpoint, that rolling spine
+is roughly 14.8 GiB. The exact 150 GiB local budget remains authoritative as
+checkpoint size evolves. Periodic recovery points are not all uploaded, avoiding
+transfer stalls; SIGTERM/controlled-stop checkpoints are written immediately.
+
 Stage 1 creates 13 permanent checkpoints at 0.5B, 1B, 2B, 4B, 8B, 12B,
 18.4B, 25B, 35B, 50B, 65B, 80B and 92B tokens. Stages 2 and 3 add six and
 five context-continuation milestones respectively, for 24 permanent research
@@ -119,6 +135,17 @@ checkpoints across the campaign. They are protected from rolling local retention
 and uploaded to Hugging Face. The learning-rate decay occurs only near the end of
 the 92B stage, so intermediate checkpoints remain useful continuation points rather
 than prematurely cooled models.
+
+The private Hugging Face repository has a user-declared **7.5 TB decimal hard
+ceiling**. Aster uses **7.0 TB** as the operational refusal threshold so an
+in-flight upload, metadata, or later artifact cannot cross the hard ceiling.
+The measured three-step K3 full-state canary is about 1.055 GiB; pessimistically
+projecting that size over all 24 permanent pretraining milestones is about
+25.3 GiB (before Xet deduplication), far below the guard. This estimate is
+displayed and must be recalculated from real checkpoint manifests as the run
+evolves. Nothing is automatically deleted from Hugging Face merely to save
+space; the user will explicitly authorize later remote cleanup. New uploads
+must fail closed if their projected total would exceed the operational guard.
 
 ### Stage 2
 

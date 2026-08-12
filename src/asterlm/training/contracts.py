@@ -187,6 +187,13 @@ def validate_training_contract(
                 "Final training requires hub_fail_on_error=true so a milestone is never "
                 "reported durable after a failed upload"
             )
+        if (
+            train.hub_storage_guard_tb_decimal is None
+            or train.hub_storage_hard_cap_tb_decimal is None
+        ):
+            raise TrainingContractError(
+                "Final training requires explicit Hub storage guard and hard-cap limits"
+            )
         if train.checkpoint_local_budget_gib is None:
             raise TrainingContractError(
                 "Final training requires an explicit checkpoint_local_budget_gib"

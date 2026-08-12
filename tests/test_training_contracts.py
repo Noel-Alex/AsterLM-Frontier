@@ -179,10 +179,14 @@ def test_final_contract_is_mechanically_promotion_locked(tmp_path: Path) -> None
     _, data = _sealed_data(tmp_path)
     tokenizer, tokenizer_manifest = _sealed_tokenizer(tmp_path, data)
     gates = tmp_path / "gates.yaml"
-    gates.write_text(
-        (Path("configs/experiments/promotion_gates.yaml")).read_text(encoding="utf-8"),
-        encoding="utf-8",
+    locked = yaml.safe_load(
+        Path("configs/experiments/promotion_gates.yaml").read_text(encoding="utf-8")
     )
+    locked["repo_root"] = "."
+    for gate in locked["gates"]:
+        gate["status"] = "not_run"
+        gate["evidence"] = []
+    gates.write_text(yaml.safe_dump(locked, sort_keys=False), encoding="utf-8")
     train = TrainConfig(
         run_class="final",
         promotion_gates_path=str(gates),
@@ -191,6 +195,8 @@ def test_final_contract_is_mechanically_promotion_locked(tmp_path: Path) -> None
         hub_private=True,
         hub_include_optimizer=True,
         hub_fail_on_error=True,
+        hub_storage_guard_tb_decimal=7.0,
+        hub_storage_hard_cap_tb_decimal=7.5,
         checkpoint_local_budget_gib=150.0,
         tokenizer_path=str(tokenizer),
         tokenizer_manifest_path=str(tokenizer_manifest),

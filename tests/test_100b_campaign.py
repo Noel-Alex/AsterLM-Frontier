@@ -44,7 +44,38 @@ def test_100b_train_configs_sum_to_campaign_budget() -> None:
     assert sum(len(config.milestone_tokens) for config in configs) == 24
     assert all(config.checkpoint_policy == "full" for config in configs)
     assert all(config.checkpoint_pyramid_levels == 8 for config in configs)
+    assert all(config.checkpoint_interval_minutes == 30.0 for config in configs)
+    assert all(config.save_interval == 250 for config in configs)
+    assert all(
+        config.sequence_length
+        * config.micro_batch_size
+        * config.gradient_accumulation_steps
+        * config.save_interval
+        == 32_768_000
+        for config in configs
+    )
     assert all(config.hub_upload_milestones for config in configs)
+
+    campaign = yaml.safe_load(
+        (ROOT / "configs/pretraining/frontier_100b_k3.yaml").read_text(encoding="utf-8")
+    )
+    assert campaign["status"] == "blocked_pending_scale_selection"
+    assert campaign["architecture"]["base_model"] is None
+    assert campaign["architecture"]["mechanism_proxy"].endswith("270m_a188m.yaml")
+    selection = yaml.safe_load(
+        (ROOT / "configs/experiments/pretraining_selection.yaml").read_text(encoding="utf-8")
+    )["selection"]
+    assert selection["status"] == "reopened_scale_gate_required"
+    assert selection["model"] is None
+    assert len(selection["scale_finalists"]) == 3
+    checkpointing = campaign["checkpointing"]
+    assert checkpointing["huggingface_hard_cap_tb_decimal"] == 7.5
+    assert checkpointing["huggingface_operational_guard_tb_decimal"] == 7.0
+    assert checkpointing["permanent_checkpoint_count"] == 24
+    assert checkpointing["projected_permanent_checkpoint_gib"] < 100.0
+    assert "refuse" in checkpointing["remote_quota_policy"]
+    assert checkpointing["recovery_interval_minutes"] == 30
+    assert checkpointing["maximum_uncheckpointed_tokens_by_step"] == 32_768_000
 
 
 def test_moe_pathway_telemetry_is_finite() -> None:

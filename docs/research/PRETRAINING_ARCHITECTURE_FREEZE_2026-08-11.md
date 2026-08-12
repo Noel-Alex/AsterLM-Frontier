@@ -1,5 +1,10 @@
 # Pretraining architecture freeze — 2026-08-11
 
+> **Superseded for model scale.** The mechanism/backend evidence remains useful,
+> but the 270M scale conclusion was revoked by
+> `PRETRAINING_SCALE_FREEZE_CORRECTION_2026-08-12.md` because the mandated
+> 868M/1.45B/1.95B scale gate had not been completed.
+
 This document ends the broad AsterLM laptop architecture search. The remaining pretraining work is
 launch readiness for one model, not another open-ended sweep.
 

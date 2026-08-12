@@ -170,6 +170,7 @@ class Trainer:
             token for token in train_config.milestone_tokens if token > self.tokens_seen
         ]
         self._training_started_monotonic = time.perf_counter()
+        self._last_checkpoint_monotonic = self._training_started_monotonic
         self._logical_parameters = self.model.effective_parameter_count()
         self._active_parameters = self.model.active_parameter_count()
 
@@ -364,6 +365,16 @@ class Trainer:
                     private=train_config.hub_private,
                     revision=train_config.hub_revision,
                     include_optimizer=train_config.hub_include_optimizer,
+                    storage_guard_bytes=(
+                        int(train_config.hub_storage_guard_tb_decimal * 1_000_000_000_000)
+                        if train_config.hub_storage_guard_tb_decimal is not None
+                        else None
+                    ),
+                    storage_hard_cap_bytes=(
+                        int(train_config.hub_storage_hard_cap_tb_decimal * 1_000_000_000_000)
+                        if train_config.hub_storage_hard_cap_tb_decimal is not None
+                        else None
+                    ),
                 )
                 print(f"Hugging Face experiment backup enabled: {hub_repo_id}")
             except Exception as exc:
@@ -669,6 +680,7 @@ class Trainer:
             self.train_config.hub_upload_every_save
             or (reason.startswith("milestone-") and self.train_config.hub_upload_milestones)
             or (reason == "complete" and self.train_config.hub_upload_final)
+            or (reason == "studio-stop" and self.train_config.hub_upload_on_stop)
         )
         path = save_checkpoint(
             self.train_config.output_dir,
@@ -757,6 +769,7 @@ class Trainer:
                 ),
             }
         )
+        self._last_checkpoint_monotonic = time.perf_counter()
         if budget_result is not None and not budget_result["within_budget"]:
             print(
                 "WARNING: local checkpoint budget cannot be met without deleting a "
@@ -1019,9 +1032,18 @@ class Trainer:
                     print("evaluation:", format_evaluation_metrics(metrics))
                     window_excluded_s += time.perf_counter() - excluded_started
 
-                if cfg.checkpoint_policy == "full" and self.step % cfg.save_interval == 0:
+                checkpoint_due_by_step = self.step % cfg.save_interval == 0
+                checkpoint_due_by_time = (
+                    cfg.checkpoint_interval_minutes is not None
+                    and time.perf_counter() - self._last_checkpoint_monotonic
+                    >= cfg.checkpoint_interval_minutes * 60.0
+                )
+                if cfg.checkpoint_policy == "full" and (
+                    checkpoint_due_by_step or checkpoint_due_by_time
+                ):
                     excluded_started = time.perf_counter()
-                    path = self._save("periodic")
+                    trigger = "step" if checkpoint_due_by_step else "wall-clock"
+                    path = self._save(f"periodic-{trigger}")
                     print(f"saved {path}")
                     window_excluded_s += time.perf_counter() - excluded_started
 
