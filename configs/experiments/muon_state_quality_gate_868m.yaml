@@ -1,0 +1,49 @@
+schema_version: 1
+model: configs/model/aster_k3_latentmoe_868m_a483m.yaml
+train: configs/train/campaign_quality_2k_adamw.yaml
+data: runs/architecture-campaign/quality-data-100m-stackfree/data-proxy.yaml
+tokenizer: artifacts/tokenizer_quality_stackfree.json
+candidate_id: k3-latentmoe-868m-a483m
+
+# Isolate persistent state representation. Both arms use the same per-head Muon
+# equations, learning rates, schedule, named initialization, data order, token
+# budget, batch geometry, precision, and physical execution backend.
+arms:
+  muon-perhead-fp32-state:
+    family: muon-perhead-fp32-state
+    warmup_fraction: 0.01
+    train_overrides:
+      optimizer: muon_adamw
+      muon_state_dtype: float32
+      muon_per_head: true
+      muon_lr: 0.01
+      adam_lr: 0.0003
+      schedule_type: cosine
+  muon-perhead-int8-state:
+    family: muon-perhead-int8-state
+    warmup_fraction: 0.01
+    train_overrides:
+      optimizer: muon_adamw8bit
+      muon_state_dtype: int8_blockwise
+      muon_quant_block_size: 2048
+      muon_per_head: true
+      muon_lr: 0.01
+      adam_lr: 0.0003
+      schedule_type: cosine
+
+common_train_overrides:
+  compile: false
+  precision_backend: amp
+  moe_implementation: cutlass
+  sequence_length: 2048
+  micro_batch_size: 1
+  gradient_accumulation_steps: 8
+  weight_decay: 0.1
+  qk_clip_interval: 16
+  log_interval: 1
+  eval_interval: 16
+  eval_batches: 8
+  diagnostic_interval: 8
+  checkpoint_policy: none
+  tensorboard: true
+  jsonl_metrics: true

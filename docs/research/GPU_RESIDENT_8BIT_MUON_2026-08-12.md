@@ -79,3 +79,13 @@ The successful 8K run retains about 2.5 GiB of process-memory headroom on the 12
 GiB laptop GPU. Segment size four is therefore the current 868M laptop execution
 candidate; a clean source-pinned repeat is required after committing the model
 config and campaign protocol.
+
+That clean repeat on commit `48afd600824e0d792f96d1e91d55292448a43cab`
+completed at 4,105.5 tok/s median, 97% median GPU utilization, 7.30 GiB peak
+allocated, 7.64 GiB peak reserved, and 8,432 MiB median process memory. The
+source-pinned evidence is under
+`runs/architecture-campaign/k3-scale-frontier-int8-8k-seg4-48afd60`.
+
+A bounded segment-size-two comparison completed at 4,042.6 tok/s median and 6.29
+GiB peak allocated. Segment four is about 1.6% faster and remains the 8K default;
+segment two is the lower-memory fallback for later context-extension stages.

@@ -34,6 +34,31 @@ def test_optimizer_campaign_has_independent_family_searches():
     assert model.active_parameter_count() == pytest.approx(188_272_620, rel=5e-5)
 
 
+def test_868m_muon_state_gate_is_a_matched_two_arm_treatment():
+    campaign = load_optimizer_campaign(
+        "configs/experiments/muon_state_quality_gate_868m.yaml"
+    )
+    assert campaign["model"].endswith("aster_k3_latentmoe_868m_a483m.yaml")
+    assert set(campaign["arms"]) == {
+        "muon-perhead-fp32-state",
+        "muon-perhead-int8-state",
+    }
+    control = campaign["arms"]["muon-perhead-fp32-state"]["train_overrides"]
+    candidate = campaign["arms"]["muon-perhead-int8-state"]["train_overrides"]
+    assert control["optimizer"] == "muon_adamw"
+    assert candidate["optimizer"] == "muon_adamw8bit"
+    for field in ("muon_per_head", "muon_lr", "adam_lr", "schedule_type"):
+        assert candidate[field] == control[field]
+    common = campaign["common_train_overrides"]
+    assert (
+        common["sequence_length"]
+        * common["micro_batch_size"]
+        * common["gradient_accumulation_steps"]
+        == 16_384
+    )
+    assert common["checkpoint_policy"] == "none"
+
+
 def test_arm_payload_uses_fractional_warmup_and_metrics_only(tmp_path):
     base = yaml.safe_load(
         Path("configs/train/campaign_quality_2k_adamw.yaml").read_text(encoding="utf-8")
