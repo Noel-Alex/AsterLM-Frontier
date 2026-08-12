@@ -63,6 +63,7 @@ def test_passed_gate_requires_evidence(tmp_path):
     payload = yaml.safe_load(GATES.read_text(encoding="utf-8"))
     payload["repo_root"] = "."
     payload["gates"][0]["status"] = "passed"
+    payload["gates"][0]["evidence"] = []
     path = tmp_path / "gates.yaml"
     path.write_text(yaml.safe_dump(payload), encoding="utf-8")
     with pytest.raises(ValueError, match="durable evidence"):
