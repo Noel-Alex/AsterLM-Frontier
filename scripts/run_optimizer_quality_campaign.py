@@ -20,6 +20,7 @@ from asterlm.cuda_allocator import cuda_allocator_environment
 from asterlm.cuda_toolchain import require_compatible_cuda_toolchain
 from asterlm.experiments.quality import (
     archive_incomplete_quality_run,
+    audit_identical_model_initialization,
     summarize_quality_run,
 )
 from asterlm.experiments.quality_analysis import analyze_quality_campaign
@@ -43,7 +44,7 @@ except ModuleNotFoundError:
 
 
 OPTIMIZER_COMPARISON_CONTRACT = {
-    "treatment_fields": ["optimizer", "warmup_steps"],
+    "treatment_fields": ["arm.train_overrides", "derived_warmup_steps"],
     "description": (
         "Optimizer family, schedule, and their independently tuned learning-rate "
         "settings are the intended treatments; model, data, seed, token budget, "
@@ -268,6 +269,13 @@ def main() -> None:
         manifest.setdefault("runs", {})
         execution_commit = str(manifest["source_provenance"]["git_commit"])
     else:
+        model_config = AsterConfig.from_yaml(model_path)
+        initialization_audits = {
+            str(seed): audit_identical_model_initialization(
+                arm_ids, model_config, seed
+            )
+            for seed in seeds
+        }
         manifest = {
             "schema_version": 2,
             "campaign_type": "optimizer_quality",
@@ -294,6 +302,7 @@ def main() -> None:
             "checkpoint_policy": args.checkpoint_policy,
             "cuda_toolchain": cuda_toolchain,
             "arms": selected_arms,
+            "initialization_audits": initialization_audits,
             "interrupted_attempts": [],
             "runs": {},
         }

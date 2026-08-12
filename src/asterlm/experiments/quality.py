@@ -50,6 +50,94 @@ def initialized_projection_fingerprints(model: AsterLM) -> dict[str, dict[str, A
     return fingerprints
 
 
+def initialized_parameter_fingerprints(model: AsterLM) -> dict[str, dict[str, Any]]:
+    """Hash every unique trainable tensor in an initialized model."""
+
+    return {
+        name: {
+            "shape": list(parameter.shape),
+            "dtype": str(parameter.dtype).removeprefix("torch."),
+            "numel": parameter.numel(),
+            "sha256": _tensor_sha256(parameter),
+        }
+        for name, parameter in model.named_parameters()
+    }
+
+
+def _fingerprint_set_sha256(fingerprints: dict[str, dict[str, Any]]) -> str:
+    digest = hashlib.sha256()
+    for name in sorted(fingerprints):
+        record = fingerprints[name]
+        digest.update(name.encode("utf-8"))
+        digest.update(json.dumps(record, sort_keys=True).encode("utf-8"))
+    return digest.hexdigest()
+
+
+def audit_identical_model_initialization(
+    variants: Iterable[str],
+    config: AsterConfig,
+    seed: int,
+) -> dict[str, Any]:
+    """Cryptographically prove identical arms start from identical full models."""
+
+    ids = list(variants)
+    if len(ids) < 2:
+        raise ValueError("Full initialization audit requires at least two variants")
+    records: dict[str, dict[str, Any]] = {}
+    reference: dict[str, dict[str, Any]] | None = None
+    reference_id = ids[0]
+    for variant_id in ids:
+        # Aster's named pass covers ordinary projections. Forking and reseeding also
+        # makes specialized recurrence/router tensors reproducible for this exact
+        # same-architecture optimizer comparison.
+        with torch.random.fork_rng(devices=[]):
+            torch.manual_seed(seed)
+            model = AsterLM(config, named_initialization_seed=seed)
+        current = initialized_parameter_fingerprints(model)
+        del model
+        if reference is None:
+            reference = current
+        names = set(reference) | set(current)
+        mismatches = sorted(
+            name
+            for name in names
+            if name not in reference
+            or name not in current
+            or reference[name]["shape"] != current[name]["shape"]
+            or reference[name]["sha256"] != current[name]["sha256"]
+        )
+        records[variant_id] = {
+            "tensor_count": len(current),
+            "parameter_count": sum(value["numel"] for value in current.values()),
+            "fingerprint_sha256": _fingerprint_set_sha256(current),
+            "mismatches_vs_reference": mismatches,
+        }
+    status = (
+        "ok"
+        if all(not value["mismatches_vs_reference"] for value in records.values())
+        else "failed"
+    )
+    result = {
+        "seed": seed,
+        "reference": reference_id,
+        "scope": "all_unique_named_parameters",
+        "status": status,
+        "variants": records,
+    }
+    if status != "ok":
+        raise RuntimeError(
+            "Full initialization parity failed: "
+            + str(
+                {
+                    name: record["mismatches_vs_reference"][:12]
+                    for name, record in records.items()
+                    if record["mismatches_vs_reference"]
+                }
+            )
+        )
+    return result
+
+
 def audit_named_initialization(
     candidates: Iterable[tuple[str, AsterConfig]], seed: int
 ) -> dict[str, Any]:

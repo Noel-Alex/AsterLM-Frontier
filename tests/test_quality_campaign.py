@@ -7,6 +7,7 @@ import pytest
 from asterlm import AsterConfig
 from asterlm.experiments.quality import (
     archive_incomplete_quality_run,
+    audit_identical_model_initialization,
     audit_named_initialization,
     latest_complete_checkpoint,
     summarize_quality_run,
@@ -56,6 +57,19 @@ def test_named_initialization_audit_accepts_shared_projection_parity():
     assert report["status"] == "ok"
     assert report["candidates"]["wide-state"]["shared_parameter_count"] > 0
     assert report["candidates"]["wide-state"]["mismatches"] == []
+
+
+def test_full_initialization_audit_matches_optimizer_arms():
+    report = audit_identical_model_initialization(
+        ["fp32-state", "int8-state"], tiny(), 1337
+    )
+    assert report["status"] == "ok"
+    assert report["scope"] == "all_unique_named_parameters"
+    control = report["variants"]["fp32-state"]
+    candidate = report["variants"]["int8-state"]
+    assert control["tensor_count"] > 0
+    assert candidate["fingerprint_sha256"] == control["fingerprint_sha256"]
+    assert candidate["mismatches_vs_reference"] == []
 
 
 def test_quality_summary_and_latest_checkpoint(tmp_path):
