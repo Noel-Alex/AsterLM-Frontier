@@ -1,33 +1,122 @@
 schema_version: 2
 repo_root: ../..
 policy: all_required_gates_must_pass_before_final_full_scale_training
-allowed_statuses: [not_run, running, passed, failed, blocked]
+allowed_statuses:
+- not_run
+- running
+- passed
+- failed
+- blocked
 gates:
-  - {id: reference_correctness, required: true, status: not_run}
-  - {id: optimized_kernel_numerical_parity, required: true, status: not_run}
-  - {id: unit_and_integration_tests, required: true, status: not_run}
-  - {id: deterministic_reproducibility, required: true, status: not_run}
-  - {id: equal_token_quality, required: true, status: not_run}
-  - {id: equal_wall_clock, required: true, status: not_run}
-  - {id: modal_cost_to_quality, required: false, status: not_run, note: required by Modal dispatch, not local stage 1}
-  - {id: long_context_retrieval, required: true, status: not_run}
-  - {id: repeated_warm_throughput, required: true, status: not_run}
-  - {id: gpu_utilization_root_cause, required: true, status: not_run}
-  # Observational telemetry only. Energy never blocks or ranks a training candidate.
-  - {id: energy_and_power, required: false, status: not_run}
-  - {id: vram, required: true, status: not_run}
-  - {id: checkpoint_round_trip, required: true, status: not_run}
-  - {id: optimizer_scheduler_exact_resume, required: true, status: not_run}
-  - {id: data_cursor_exact_resume, required: true, status: not_run}
-  - {id: rng_state_resume, required: true, status: not_run}
-  - {id: interrupted_laptop_recovery, required: true, status: not_run}
-  - {id: modal_preemption_recovery, required: false, status: not_run, note: required by Modal dispatch}
-  - {id: local_to_modal_resume, required: false, status: not_run, note: required by Modal dispatch}
-  - {id: modal_to_local_resume, required: false, status: not_run, note: required by Modal dispatch}
-  - {id: modal_workspace_cross_resume, required: false, status: not_run, note: required by Modal dispatch}
-  - {id: huggingface_round_trip_hash, required: true, status: not_run}
-  - {id: wandb_history_resume, required: true, status: not_run}
-  - {id: laptop_inference, required: true, status: not_run}
-  - {id: modal_server_inference, required: false, status: not_run, note: required by Modal dispatch}
-  - {id: dense_baseline_regression, required: true, status: not_run}
-  - {id: correctness_and_data_quality_clear, required: true, status: not_run}
+- id: reference_correctness
+  required: true
+  status: passed
+  evidence:
+  - path: docs/promotion-evidence/749db298bfbe/reference_correctness-proof.json
+    sha256: e52cf8eb129b7c4fa9ccd22f0c855bf87ace2569338b5859a4af9a33d1586cfb
+- id: optimized_kernel_numerical_parity
+  required: true
+  status: passed
+  evidence:
+  - path: docs/promotion-evidence/749db298bfbe/optimized_kernel_numerical_parity-proof.json
+    sha256: 89f835f86785e65273047672946cd23f86f2b7a159659f5a50723734a60cef58
+- id: unit_and_integration_tests
+  required: true
+  status: passed
+  evidence:
+  - path: docs/promotion-evidence/749db298bfbe/unit_and_integration_tests-proof.json
+    sha256: 896ee55b81d4fc7cf0d749c9874df0cfbb1a3eab7d315244f9dba48eb9eb8786
+- id: deterministic_reproducibility
+  required: true
+  status: passed
+  evidence:
+  - path: docs/promotion-evidence/749db298bfbe/deterministic_reproducibility-proof.json
+    sha256: f13d0c129de54ee1ca5a7abe3f1e1bdf32772e6e7f672984c4f187a8f22d3f0e
+- id: equal_token_quality
+  required: true
+  status: not_run
+- id: equal_wall_clock
+  required: true
+  status: not_run
+- id: modal_cost_to_quality
+  required: false
+  status: not_run
+  note: required by Modal dispatch, not local stage 1
+- id: long_context_retrieval
+  required: true
+  status: not_run
+- id: repeated_warm_throughput
+  required: true
+  status: not_run
+- id: gpu_utilization_root_cause
+  required: true
+  status: not_run
+# Observational telemetry only. Energy never blocks or ranks a training candidate.
+- id: energy_and_power
+  required: false
+  status: not_run
+- id: vram
+  required: true
+  status: not_run
+- id: checkpoint_round_trip
+  required: true
+  status: passed
+  evidence:
+  - path: docs/promotion-evidence/749db298bfbe/checkpoint_round_trip-proof.json
+    sha256: 76cda2dd7f843e2f8114082979f474313a4bd193e7844466fddf5999ac795e6d
+- id: optimizer_scheduler_exact_resume
+  required: true
+  status: passed
+  evidence:
+  - path: docs/promotion-evidence/749db298bfbe/optimizer_scheduler_exact_resume-proof.json
+    sha256: 4a26cd3f38b4c5d3b24905fb4da605203fdb5a15cdc7fd94ace1d4a0c4c96dc1
+- id: data_cursor_exact_resume
+  required: true
+  status: passed
+  evidence:
+  - path: docs/promotion-evidence/749db298bfbe/data_cursor_exact_resume-proof.json
+    sha256: 8f197b12a8ae09a03b903deb5c326c40f304920e4022df9c0bb9bb7d23e6e592
+- id: rng_state_resume
+  required: true
+  status: passed
+  evidence:
+  - path: docs/promotion-evidence/749db298bfbe/rng_state_resume-proof.json
+    sha256: f3146ce083adc0751c2618d7a7389c34665d2d0cf45082e8d08d381b09d12e60
+- id: interrupted_laptop_recovery
+  required: true
+  status: not_run
+- id: modal_preemption_recovery
+  required: false
+  status: not_run
+  note: required by Modal dispatch
+- id: local_to_modal_resume
+  required: false
+  status: not_run
+  note: required by Modal dispatch
+- id: modal_to_local_resume
+  required: false
+  status: not_run
+  note: required by Modal dispatch
+- id: modal_workspace_cross_resume
+  required: false
+  status: not_run
+  note: required by Modal dispatch
+- id: huggingface_round_trip_hash
+  required: true
+  status: not_run
+- id: wandb_history_resume
+  required: true
+  status: not_run
+- id: laptop_inference
+  required: true
+  status: not_run
+- id: modal_server_inference
+  required: false
+  status: not_run
+  note: required by Modal dispatch
+- id: dense_baseline_regression
+  required: true
+  status: not_run
+- id: correctness_and_data_quality_clear
+  required: true
+  status: not_run
