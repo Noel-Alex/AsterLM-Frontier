@@ -4,9 +4,77 @@ from asterlm import AsterConfig, AsterLM, TrainConfig
 from asterlm.optim import build_hybrid_optimizer, build_optimizer
 from asterlm.optim.muon import (
     Muon,
+    dequantize_blockwise_int8,
+    quantize_blockwise_int8_,
     zeropower_via_newton_schulz5,
     zeropower_via_newton_schulz5_batched,
 )
+
+
+def test_blockwise_int8_muon_state_round_trip_and_tail():
+    torch.manual_seed(11)
+    source = torch.randn(3, 11, dtype=torch.float32)
+    quantized, scales = quantize_blockwise_int8_(source.clone(), block_size=16)
+    restored = dequantize_blockwise_int8(quantized, scales, block_size=16)
+    assert quantized.dtype == torch.int8
+    assert scales.shape == (3,)
+    assert restored.shape == source.shape
+    error = (restored - source).abs()
+    expanded_scale = torch.cat(
+        (scales[0].expand(16), scales[1].expand(16), scales[2].expand(1))
+    ).reshape_as(source)
+    assert torch.all(error <= expanded_scale.mul(0.501).add(1e-7))
+
+
+def test_int8_muon_keeps_only_quantized_persistent_momentum():
+    torch.manual_seed(13)
+    parameter = torch.nn.Parameter(torch.randn(9, 17))
+    parameter.grad = torch.randn_like(parameter)
+    optimizer = Muon(
+        [parameter], megabatch=True, state_dtype="int8_blockwise", quant_block_size=32
+    )
+    optimizer.step()
+    state = optimizer.state[parameter]
+    assert "momentum_buffer" not in state
+    assert state["momentum_q"].dtype == torch.int8
+    assert state["momentum_q"].shape == parameter.shape
+    assert state["momentum_scale"].shape == (5,)
+
+
+def test_int8_muon_checkpoint_resume_preserves_next_update():
+    torch.manual_seed(23)
+    reference = torch.nn.Parameter(torch.randn(9, 17, dtype=torch.bfloat16))
+    resumed = torch.nn.Parameter(reference.detach().clone())
+    optimizer = Muon(
+        [reference], megabatch=True, state_dtype="int8_blockwise", quant_block_size=32
+    )
+    first_gradient = torch.randn_like(reference)
+    reference.grad = first_gradient
+    optimizer.step()
+    resumed.data.copy_(reference)
+
+    resumed_optimizer = Muon(
+        [resumed], megabatch=True, state_dtype="int8_blockwise", quant_block_size=32
+    )
+    resumed_optimizer.load_state_dict(optimizer.state_dict())
+    second_gradient = torch.randn_like(reference)
+    reference.grad = second_gradient.clone()
+    resumed.grad = second_gradient.clone()
+    optimizer.step()
+    resumed_optimizer.step()
+
+    torch.testing.assert_close(resumed, reference, rtol=0, atol=0)
+    original_state = optimizer.state[reference]
+    restored_state = resumed_optimizer.state[resumed]
+    torch.testing.assert_close(
+        restored_state["momentum_q"], original_state["momentum_q"], rtol=0, atol=0
+    )
+    torch.testing.assert_close(
+        restored_state["momentum_scale"],
+        original_state["momentum_scale"],
+        rtol=0,
+        atol=0,
+    )
 
 
 def test_newton_schulz_shape_and_finiteness():
@@ -34,14 +102,14 @@ def test_megabatched_muon_matches_parameterwise_state_and_updates():
         parameter.grad = gradient.clone()
     for parameter, gradient in zip(candidate, gradients, strict=True):
         parameter.grad = gradient.clone()
-    common = dict(
-        lr=0.01,
-        momentum=0.95,
-        weight_decay=0.1,
-        ns_steps=5,
-        nesterov=True,
-        update_rms=0.2,
-    )
+    common = {
+        "lr": 0.01,
+        "momentum": 0.95,
+        "weight_decay": 0.1,
+        "ns_steps": 5,
+        "nesterov": True,
+        "update_rms": 0.2,
+    }
     legacy = Muon(reference, megabatch=False, **common)
     batched = Muon(candidate, megabatch=True, megabatch_max_gib=0.001, **common)
     batched.set_diagnostics_enabled(True)

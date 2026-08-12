@@ -192,7 +192,7 @@ def main() -> None:
                 "--moe-implementation",
                 trial.moe_implementation,
             ]
-            if trial.optimizer == "muon_adamw" and not args.no_muon_per_head:
+            if trial.optimizer in {"muon_adamw", "muon_adamw8bit"} and not args.no_muon_per_head:
                 command.append("--muon-per-head")
             command += [
                 "--json",

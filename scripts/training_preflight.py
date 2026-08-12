@@ -97,7 +97,11 @@ def inspect_dependencies(model: AsterConfig, train: TrainConfig, checks: list[Ch
     requirements: list[tuple[str, str]] = []
     if train.optimizer in {"apollo", "apollo_mini"}:
         requirements.append(("apollo_torch", "APOLLO optimizer"))
-    if train.optimizer.startswith("torchao_") or model.ffn_backend == "loqt_int4":
+    if (
+        train.optimizer.startswith("torchao_")
+        or train.optimizer == "muon_adamw8bit"
+        or model.ffn_backend == "loqt_int4"
+    ):
         requirements.append(("torchao", "torchao optimizer/LoQT path"))
     if train.precision_backend == "transformer_engine_fp8" or model.linear_backend == "transformer_engine":
         requirements.append(("transformer_engine", "Transformer Engine FP8 path"))

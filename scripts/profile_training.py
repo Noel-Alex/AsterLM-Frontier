@@ -266,6 +266,7 @@ def main() -> None:
         choices=[
             "adamw",
             "muon_adamw",
+            "muon_adamw8bit",
             "apollo_mini",
             "apollo",
             "torchao_adamw8bit",
@@ -343,8 +344,8 @@ def main() -> None:
     if args.optimizer is not None:
         train.optimizer = args.optimizer
     if args.muon_per_head:
-        if train.optimizer != "muon_adamw":
-            raise ValueError("--muon-per-head requires --optimizer muon_adamw")
+        if train.optimizer not in {"muon_adamw", "muon_adamw8bit"}:
+            raise ValueError("--muon-per-head requires a Muon hybrid optimizer")
         train.muon_per_head = True
     if args.precision is not None:
         train.precision_backend = args.precision

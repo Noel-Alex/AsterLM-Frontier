@@ -22,7 +22,7 @@ class OptimizerPartition:
 class HybridOptimizer:
     """Small wrapper that presents Muon and AdamW as one optimizer."""
 
-    def __init__(self, muon: Muon | None, adamw: torch.optim.AdamW | None, partition: OptimizerPartition) -> None:
+    def __init__(self, muon: Muon | None, adamw: torch.optim.Optimizer | None, partition: OptimizerPartition) -> None:
         self.muon = muon
         self.adamw = adamw
         self.partition = partition
@@ -170,6 +170,12 @@ def build_hybrid_optimizer(model: nn.Module, config: TrainConfig) -> HybridOptim
             update_rms=config.muon_update_rms,
             megabatch=config.muon_megabatch,
             megabatch_max_gib=config.muon_megabatch_max_gib,
+            state_dtype=(
+                "int8_blockwise"
+                if config.optimizer == "muon_adamw8bit"
+                else config.muon_state_dtype
+            ),
+            quant_block_size=config.muon_quant_block_size,
         )
         if muon_groups
         else None
@@ -179,17 +185,30 @@ def build_hybrid_optimizer(model: nn.Module, config: TrainConfig) -> HybridOptim
         adam_groups.append({"params": adam_decay, "weight_decay": config.weight_decay})
     if adam_no_decay:
         adam_groups.append({"params": adam_no_decay, "weight_decay": 0.0})
-    adam_optim = (
-        torch.optim.AdamW(
+    if adam_groups and config.optimizer == "muon_adamw8bit":
+        try:
+            from torchao.optim import AdamW8bit
+        except ImportError as exc:
+            raise ImportError(
+                "muon_adamw8bit requires a torch/CUDA-matched torchao wheel"
+            ) from exc
+        adam_optim = AdamW8bit(
+            adam_groups,
+            lr=config.adam_lr,
+            betas=config.adam_betas,
+            eps=config.adam_eps,
+            weight_decay=0.0,
+        )
+    elif adam_groups:
+        adam_optim = torch.optim.AdamW(
             adam_groups,
             lr=config.adam_lr,
             betas=config.adam_betas,
             eps=config.adam_eps,
             fused=any(param.is_cuda for group in adam_groups for param in group["params"]),
         )
-        if adam_groups
-        else None
-    )
+    else:
+        adam_optim = None
     partition = OptimizerPartition(
         muon_names,
         adam_decay_names,
@@ -403,7 +422,7 @@ def build_adamw_optimizer(model: nn.Module, config: TrainConfig) -> SingleOptimi
 def build_optimizer(model: nn.Module, config: TrainConfig) -> HybridOptimizer | SingleOptimizerAdapter:
     if config.optimizer == "adamw":
         return build_adamw_optimizer(model, config)
-    if config.optimizer == "muon_adamw":
+    if config.optimizer in {"muon_adamw", "muon_adamw8bit"}:
         return build_hybrid_optimizer(model, config)
     if config.optimizer in {"apollo_mini", "apollo"}:
         return build_apollo_optimizer(model, config)

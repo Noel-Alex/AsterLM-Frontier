@@ -371,7 +371,7 @@ class TrainConfig:
 
     # `adamw` is the mandatory dense/control optimizer. Other methods must beat it
     # rather than borrowing an AdamW result from a differently partitioned hybrid.
-    optimizer: str = "muon_adamw"  # adamw | muon_adamw | apollo* | torchao_adamw*
+    optimizer: str = "muon_adamw"  # adamw | muon_adamw* | apollo* | torchao_adamw*
     muon_lr: float = 0.01
     adam_lr: float = 3e-4
     min_lr_ratio: float = 0.1
@@ -392,6 +392,10 @@ class TrainConfig:
     # bound prevents routed-expert mega-batches from consuming all spare VRAM.
     muon_megabatch: bool = True
     muon_megabatch_max_gib: float = 0.5
+    # GPU-resident Muon momentum. INT8 uses blockwise abs-max quantization; it is
+    # optimizer-state compression, never CPU/NVMe offload.
+    muon_state_dtype: str = "float32"  # float32 | int8_blockwise
+    muon_quant_block_size: int = 2048
     max_grad_norm: float = 1.0
 
     # APOLLO/APOLLO-Mini: low-rank optimizer states for VRAM-constrained full pretraining.
@@ -493,6 +497,7 @@ class TrainConfig:
         if self.optimizer not in {
             "adamw",
             "muon_adamw",
+            "muon_adamw8bit",
             "apollo_mini",
             "apollo",
             "torchao_adamw8bit",
@@ -562,6 +567,10 @@ class TrainConfig:
             raise ValueError("Muon update RMS and Newton-Schulz steps must be positive")
         if self.muon_megabatch_max_gib <= 0:
             raise ValueError("Muon mega-batch workspace must be positive")
+        if self.muon_state_dtype not in {"float32", "int8_blockwise"}:
+            raise ValueError("muon_state_dtype must be float32 or int8_blockwise")
+        if self.muon_quant_block_size <= 0:
+            raise ValueError("muon_quant_block_size must be positive")
         if self.apollo_rank <= 0 or self.apollo_scale <= 0 or self.apollo_update_proj_gap <= 0:
             raise ValueError("APOLLO rank, scale, and update gap must be positive")
         if self.apollo_scale_type not in {"tensor", "channel"}:
