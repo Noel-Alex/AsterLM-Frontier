@@ -10,6 +10,7 @@ from .moe_grouped_cutlass import CUTLASSGroupedRoutedExperts
 from .moe_grouped_liger import LigerGroupedRoutedExperts
 from .moe_grouped_te import TEGroupedRoutedExperts
 from .moe_grouped_torch import TorchGroupedRoutedExperts
+from .moe_grouped_torchao_fp8 import TorchAOFP8GroupedRoutedExperts
 from .routing import fixed_bincount
 
 
@@ -74,11 +75,12 @@ class DeepSeekStyleMoE(nn.Module):
             "grouped",
             "cutlass",
             "torch_grouped",
+            "torchao_fp8",
             "liger",
         }:
             raise ValueError(
                 "moe_impl must be 'reference', 'grouped', 'cutlass', or "
-                "'torch_grouped', or 'liger', "
+                "'torch_grouped', 'torchao_fp8', or 'liger', "
                 f"got {requested_impl!r}"
             )
         if requested_impl == "grouped" and linear_backend != "transformer_engine":
@@ -106,6 +108,14 @@ class DeepSeekStyleMoE(nn.Module):
             )
         elif self.moe_impl == "torch_grouped":
             self._grouped_routed = TorchGroupedRoutedExperts(
+                self.routed,
+                dim=dim,
+                expert_hidden=expert_hidden,
+                num_experts=num_experts,
+                dropout=dropout,
+            )
+        elif self.moe_impl == "torchao_fp8":
+            self._grouped_routed = TorchAOFP8GroupedRoutedExperts(
                 self.routed,
                 dim=dim,
                 expert_hidden=expert_hidden,
@@ -151,7 +161,13 @@ class DeepSeekStyleMoE(nn.Module):
         top_weight = affinity.gather(-1, top_idx)
         top_weight = top_weight / top_weight.sum(dim=-1, keepdim=True).clamp_min(1e-9)
 
-        if self.moe_impl in {"grouped", "cutlass", "torch_grouped", "liger"}:
+        if self.moe_impl in {
+            "grouped",
+            "cutlass",
+            "torch_grouped",
+            "torchao_fp8",
+            "liger",
+        }:
             if self._grouped_routed is None:
                 raise RuntimeError("Grouped MoE bridge was not initialized")
             routed_out = self._grouped_routed(flat, top_idx, top_weight)

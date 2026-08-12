@@ -55,7 +55,7 @@ def main() -> None:
     parser.add_argument("--device", default="cuda")
     parser.add_argument(
         "--moe-implementation",
-        choices=("reference", "grouped", "cutlass", "torch_grouped"),
+        choices=("reference", "grouped", "cutlass", "torch_grouped", "torchao_fp8"),
         default="reference",
         help="Physical MoE path, recorded separately from architecture semantics.",
     )

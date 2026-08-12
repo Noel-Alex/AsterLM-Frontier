@@ -321,7 +321,7 @@ def main() -> None:
     )
     parser.add_argument(
         "--moe-implementation",
-        choices=["reference", "grouped", "cutlass", "torch_grouped"],
+        choices=["reference", "grouped", "cutlass", "torch_grouped", "torchao_fp8"],
         default=None,
         help="Select and record the physical expert implementation explicitly.",
     )

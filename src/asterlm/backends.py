@@ -89,6 +89,7 @@ def _default_registry() -> BackendRegistry:
                 "transformer_engine_grouped",
                 "cutlass_grouped",
                 "torch_grouped",
+                "torchao_fp8_grouped",
                 "liger_experts",
                 "custom_triton",
             ),

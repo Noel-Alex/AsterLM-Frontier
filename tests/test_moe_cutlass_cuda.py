@@ -14,11 +14,15 @@ def _relative_l2(actual: torch.Tensor, expected: torch.Tensor) -> float:
     return float((numerator / denominator).item())
 
 
-@pytest.mark.parametrize("implementation", ["cutlass", "torch_grouped", "liger"])
+@pytest.mark.parametrize(
+    "implementation", ["cutlass", "torch_grouped", "torchao_fp8", "liger"]
+)
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA parity test")
 def test_grouped_moe_matches_dropless_reference(implementation):
     if implementation != "liger" and importlib.util.find_spec("grouped_gemm") is None:
         pytest.skip("nv_grouped_gemm is not installed")
+    if implementation == "torchao_fp8" and importlib.util.find_spec("torchao") is None:
+        pytest.skip("torchao is not installed")
     if implementation == "liger" and importlib.util.find_spec("liger_kernel") is None:
         pytest.skip("liger-kernel is not installed")
 
@@ -70,7 +74,8 @@ def test_grouped_moe_matches_dropless_reference(implementation):
         actual = candidate_parameters[name]
         assert expected.grad is not None, name
         assert actual.grad is not None, name
-        assert _relative_l2(actual.grad, expected.grad) < 0.05, name
+        tolerance = 0.12 if implementation == "torchao_fp8" else 0.05
+        assert _relative_l2(actual.grad, expected.grad) < tolerance, name
 
     assert bridge.cache_refreshes == 2
     candidate.zero_grad(set_to_none=True)

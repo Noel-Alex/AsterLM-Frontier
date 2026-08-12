@@ -12,6 +12,7 @@ from .moe_grouped_cutlass import CUTLASSGroupedRoutedExperts
 from .moe_grouped_liger import LigerGroupedRoutedExperts
 from .moe_grouped_te import TEGroupedRoutedExperts
 from .moe_grouped_torch import TorchGroupedRoutedExperts
+from .moe_grouped_torchao_fp8 import TorchAOFP8GroupedRoutedExperts
 from .norm import RMSNorm
 from .routing import fixed_bincount
 
@@ -70,10 +71,12 @@ class LatentMoE(nn.Module):
             "grouped",
             "cutlass",
             "torch_grouped",
+            "torchao_fp8",
             "liger",
         }:
             raise ValueError(
-                "moe_impl must be reference, grouped, cutlass, torch_grouped, or liger"
+                "moe_impl must be reference, grouped, cutlass, torch_grouped, "
+                "torchao_fp8, or liger"
             )
         if moe_impl == "grouped" and linear_backend != "transformer_engine":
             raise ValueError("grouped LatentMoE requires Transformer Engine expert linears")
@@ -179,6 +182,14 @@ class LatentMoE(nn.Module):
                 num_experts=num_experts,
                 dropout=dropout,
             )
+        elif self.moe_impl == "torchao_fp8":
+            self._grouped_routed = TorchAOFP8GroupedRoutedExperts(
+                self.routed,
+                dim=latent_dim,
+                expert_hidden=expert_hidden,
+                num_experts=num_experts,
+                dropout=dropout,
+            )
         elif self.moe_impl == "liger":
             self._grouped_routed = LigerGroupedRoutedExperts(
                 self.routed,
@@ -261,7 +272,13 @@ class LatentMoE(nn.Module):
         top_weight = top_weight / top_weight.sum(dim=-1, keepdim=True).clamp_min(1e-9)
 
         latent = self.down_proj(flat)
-        if self.moe_impl in {"grouped", "cutlass", "torch_grouped", "liger"}:
+        if self.moe_impl in {
+            "grouped",
+            "cutlass",
+            "torch_grouped",
+            "torchao_fp8",
+            "liger",
+        }:
             if self._grouped_routed is None:
                 raise RuntimeError("Grouped LatentMoE bridge was not initialized")
             routed_latent = self._grouped_routed(latent, top_idx, top_weight)

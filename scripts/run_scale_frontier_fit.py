@@ -93,7 +93,7 @@ def main() -> None:
     parser.add_argument("--optimizer", action="append", default=[])
     parser.add_argument(
         "--moe-implementation",
-        choices=("reference", "cutlass", "torch_grouped"),
+        choices=("reference", "cutlass", "torch_grouped", "torchao_fp8"),
         default="cutlass",
     )
     parser.add_argument("--target-update-tokens", type=int, default=16_384)
