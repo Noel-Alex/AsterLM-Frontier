@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 
 from asterlm.config import AsterConfig, DataConfig, TrainConfig
+from asterlm.generation.hub_checkpoint import resolve_hub_auto_resume
 from asterlm.training import Trainer
 
 
@@ -27,6 +28,7 @@ def main() -> None:
     parser.add_argument("--promotion-gates", default=None)
     args = parser.parse_args()
     train_config = TrainConfig.from_yaml(args.train)
+    model_config = AsterConfig.from_yaml(args.model)
     if args.run_class:
         train_config.run_class = args.run_class
     if args.promotion_gates:
@@ -39,8 +41,23 @@ def main() -> None:
         train_config.hub_private = False
     if args.hub_model_only:
         train_config.hub_include_optimizer = False
+    if (
+        train_config.hub_auto_resume_latest
+        and train_config.hub_repo_id
+        and not args.init_checkpoint
+    ):
+        resume, record = resolve_hub_auto_resume(
+            output_dir=train_config.output_dir,
+            repo_id=train_config.hub_repo_id,
+            revision=train_config.hub_revision,
+            local_checkpoint=train_config.resume,
+            requested_model=model_config,
+        )
+        if resume is not None:
+            train_config.resume = str(resume)
+        print(f"Hub/local auto-resume: {record}", flush=True)
     trainer = Trainer(
-        AsterConfig.from_yaml(args.model),
+        model_config,
         train_config,
         DataConfig.from_yaml(args.data),
         mode="pretrain",

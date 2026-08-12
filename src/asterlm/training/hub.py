@@ -75,13 +75,12 @@ class HubRunSync:
     def _planned_upload_bytes(root: Path, checkpoint: Path) -> int:
         """Pessimistic upload forecast; replacements are deliberately counted again."""
 
-        files: set[Path] = set(path for path in checkpoint.rglob("*") if path.is_file())
+        files: set[Path] = {path for path in checkpoint.rglob("*") if path.is_file()}
         for path in (
             root / "run_manifest.json",
             root / "analysis_manifest.json",
             root / "experiment.json",
             root / "metrics.jsonl",
-            root / "latest.txt",
             root / "hub_sync_state.json",
         ):
             if path.is_file():
@@ -167,7 +166,6 @@ class HubRunSync:
             root / "analysis_manifest.json",
             root / "experiment.json",
             root / "metrics.jsonl",
-            root / "latest.txt",
             state_path,
         ):
             if not path.exists():
@@ -204,6 +202,19 @@ class HubRunSync:
             checkpoint=checkpoint,
             path_in_repo=f"{prefix}/checkpoints/{checkpoint.name}",
         )
+        # Publish the movable pointer only after every checkpoint artifact has an
+        # authoritative remote hash. An interrupted upload can never advertise a
+        # missing/incomplete recovery point.
+        latest_path = root / "latest.txt"
+        if latest_path.is_file():
+            self.api.upload_file(
+                path_or_fileobj=str(latest_path),
+                path_in_repo=f"{prefix}/latest.txt",
+                repo_id=self.repo_id,
+                repo_type="model",
+                revision=self.revision,
+                commit_message=f"Advance {root.name} latest to verified {checkpoint.name}",
+            )
         metadata["seconds"] = time.time() - started
         metadata["status"] = "verified"
         metadata["verified_file_count"] = verification["verified_file_count"]

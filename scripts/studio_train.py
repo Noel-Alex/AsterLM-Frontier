@@ -18,6 +18,7 @@ for candidate in (ROOT, ROOT / "src"):
 from torch.utils.data import DataLoader
 
 from asterlm.config import AsterConfig, DataConfig, TrainConfig
+from asterlm.generation.hub_checkpoint import resolve_hub_auto_resume
 from asterlm.training import Trainer
 from asterlm.training.checkpoint import resolve_checkpoint, save_checkpoint
 from asterlm.training.telemetry import save_diagnostic_bundle
@@ -326,6 +327,7 @@ def main() -> None:
     args = parser.parse_args()
 
     train_config = TrainConfig.from_yaml(args.train)
+    model_config = AsterConfig.from_yaml(args.model)
     if args.resume:
         train_config.resume = args.resume
     if args.hub_repo:
@@ -345,8 +347,24 @@ def main() -> None:
         train_config.hub_include_optimizer = True
         train_config.hub_fail_on_error = True
 
+    if (
+        train_config.hub_auto_resume_latest
+        and train_config.hub_repo_id
+        and not args.init_checkpoint
+    ):
+        resume, record = resolve_hub_auto_resume(
+            output_dir=train_config.output_dir,
+            repo_id=train_config.hub_repo_id,
+            revision=train_config.hub_revision,
+            local_checkpoint=train_config.resume,
+            requested_model=model_config,
+        )
+        if resume is not None:
+            train_config.resume = str(resume)
+        print(f"Hub/local auto-resume: {record}", flush=True)
+
     trainer = StudioTrainer(
-        AsterConfig.from_yaml(args.model),
+        model_config,
         train_config,
         DataConfig.from_yaml(args.data),
         mode=args.mode,
