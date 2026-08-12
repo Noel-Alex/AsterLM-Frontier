@@ -61,4 +61,7 @@ model:
   qk_clip_tau: 100.0
   init_std: 0.02
   gradient_checkpointing: true
-
+  # Two-block GPU recomputation is the measured all-device speed/fit policy at
+  # 8K: segment-4 nearly fills the 12 GiB GPU and is much slower. No parameter,
+  # optimizer, gradient, or activation state is offloaded to CPU/NVMe.
+  checkpoint_segment_size: 2

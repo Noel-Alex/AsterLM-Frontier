@@ -89,3 +89,33 @@ source-pinned evidence is under
 A bounded segment-size-two comparison completed at 4,042.6 tok/s median and 6.29
 GiB peak allocated. Segment four is about 1.6% faster and remains the 8K default;
 segment two is the lower-memory fallback for later context-extension stages.
+
+## Matched 868M quality gate
+
+The source-pinned 1,048,576-token comparison used identical named
+initialization, data order, BF16 compute, K3 per-head Muon equations, and CUTLASS
+experts. The only treatment was persistent optimizer-state representation.
+
+| State | Final eval loss | Median tok/s | Mean GPU util. | Peak training VRAM |
+|---|---:|---:|---:|---:|
+| FP32 Muon | 6.678311 | 3,456.97 | 89.55% | 7.338 GiB |
+| GPU INT8 Muon | 6.704460 | 3,160.49 | 77.66% | 4.991 GiB |
+
+INT8 reduced total training VRAM by about 32%, but was 9.4% slower and ended
+0.39% higher in eval loss at this short horizon. The 868M laptop default remains
+FP32-state Muon when it fits. INT8 state is retained for a model/context tier
+that otherwise cannot run fully on-device. Evidence is stored under
+`runs/optimizer-campaign/muon-state-confirm-1m-1d95a47`.
+
+## Larger laptop tier
+
+The 1.448B-total / 568.2M-active candidate also fits fully on-device at 8K with
+INT8 Muon state. Two-block recomputation measured 3.22k tok/s, 97% median GPU
+utilization, 9.31 GiB peak allocation, and 10.38 GiB peak reservation. A clean
+four-block run technically fit but nearly filled the device (11.95 GiB reserved)
+and fell to 1.38k tok/s. Its default is therefore segment 2. No CPU or NVMe
+offload is used in either model.
+
+This is a fit and throughput result, not a quality promotion. The 1.45B tier must
+beat the 868M tier on the source-pinned matched-data learning-curve gate before
+becoming the pretraining model.

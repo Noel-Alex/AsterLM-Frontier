@@ -98,6 +98,13 @@ execution_variants:
     model_overrides: {linear_backend: transformer_engine, ffn_linear_backend: transformer_engine}
     train_overrides: {compile: false, precision_backend: transformer_engine_fp8, moe_implementation: cutlass, optimizer: muon_adamw, muon_per_head: true, schedule_type: cosine}
     environment: {}
+  cutlass-grouped-k3-muon8bit-bf16:
+    description: Ada CUTLASS grouped experts with BF16 compute, Kimi K3 per-head Muon, and GPU-resident blockwise INT8 optimizer state for a matched laptop scale comparison.
+    comparison_role: recipe_research
+    numerical_family: bf16-torch-int8-optimizer-state
+    model_overrides: {linear_backend: torch, ffn_linear_backend: torch}
+    train_overrides: {compile: false, precision_backend: amp, moe_implementation: cutlass, optimizer: muon_adamw8bit, muon_state_dtype: int8_blockwise, muon_quant_block_size: 2048, muon_per_head: true, muon_lr: 0.01, adam_lr: 0.0003, schedule_type: cosine, warmup_steps: 2, sequence_length: 2048, micro_batch_size: 1, gradient_accumulation_steps: 8, eval_batches: 8, log_interval: 1, diagnostic_interval: 8}
+    environment: {}
   torch-grouped-k3-muon:
     description: GPU-resident native grouped experts with Kimi K3 per-head Muon and independently tuned cosine schedule.
     comparison_role: recipe_research
@@ -461,13 +468,13 @@ candidates:
     hypothesis: The promoted K3 mechanism scales to the first laptop frontier with matched active compute and practical grouped expert shapes.
     base_model: configs/model/aster_k3_latentmoe_868m_a483m.yaml
     model_overrides: {}
-    execution_variants: [torch-reference, cutlass-grouped-bf16, cutlass-grouped, torch-grouped, cutlass-grouped-k3-muon, torch-grouped-k3-muon]
+    execution_variants: [torch-reference, cutlass-grouped-bf16, cutlass-grouped, torch-grouped, cutlass-grouped-k3-muon, cutlass-grouped-k3-muon8bit-bf16, torch-grouped-k3-muon]
   - id: tier2-k3-latentmoe-1p45b-a568m
     tier: 2
     hypothesis: Additional sparse capacity at 1.45B total improves quality enough to repay reduced laptop update rate.
     base_model: configs/model/aster_k3_latentmoe_1p45b_a568m.yaml
     model_overrides: {}
-    execution_variants: [torch-reference, cutlass-grouped-bf16, cutlass-grouped, torch-grouped, cutlass-grouped-k3-muon, torch-grouped-k3-muon]
+    execution_variants: [torch-reference, cutlass-grouped-bf16, cutlass-grouped, torch-grouped, cutlass-grouped-k3-muon, cutlass-grouped-k3-muon8bit-bf16, torch-grouped-k3-muon]
   - id: tier2-k3-latentmoe-1p95b-a766m
     tier: 2
     hypothesis: The 1.95B stretch tier is the maximum-quality candidate if its full training state fits and its time-to-quality beats smaller tiers.
