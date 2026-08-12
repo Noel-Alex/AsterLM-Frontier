@@ -469,6 +469,10 @@ class TrainConfig:
     hub_auto_resume_latest: bool = False
     hub_include_optimizer: bool = True
     hub_fail_on_error: bool = False
+    # Remote durable mode overlaps verified Hub transfer with subsequent training.
+    # The bounded queue applies backpressure rather than dropping checkpoints.
+    hub_async_upload: bool = False
+    hub_max_pending_uploads: int = 2
     # Decimal TB, matching provider quota displays. The lower operational guard
     # is a fail-closed review point; the hard cap may never be exceeded.
     hub_storage_guard_tb_decimal: float | None = None
@@ -545,6 +549,8 @@ class TrainConfig:
             raise ValueError("milestone_tokens cannot exceed max_tokens")
         if not self.hub_revision.strip():
             raise ValueError("hub_revision cannot be empty")
+        if self.hub_max_pending_uploads <= 0:
+            raise ValueError("hub_max_pending_uploads must be positive")
         for name, value in (
             ("hub_storage_guard_tb_decimal", self.hub_storage_guard_tb_decimal),
             ("hub_storage_hard_cap_tb_decimal", self.hub_storage_hard_cap_tb_decimal),

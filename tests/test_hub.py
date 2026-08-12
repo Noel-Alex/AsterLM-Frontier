@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 from asterlm.artifacts import sha256_file
-from asterlm.training.hub import HubRunSync, _git_blob_sha1
+from asterlm.training.hub import HubRunSync, HubUploadQueue, HubUploadTask, _git_blob_sha1
 
 
 @dataclass
@@ -130,3 +130,38 @@ def test_storage_preflight_fails_before_operational_guard(tmp_path: Path) -> Non
 
     with pytest.raises(RuntimeError, match="operational storage guard"):
         sync.storage_preflight(root=tmp_path, checkpoint=checkpoint)
+
+
+class _RecordingSync:
+    def __init__(self, *, fail: bool = False) -> None:
+        self.fail = fail
+        self.calls: list[dict[str, object]] = []
+
+    def sync(self, **kwargs: object) -> dict[str, object]:
+        self.calls.append(kwargs)
+        if self.fail:
+            raise RuntimeError("upload failed")
+        return {"status": "verified", "seconds": 0.1}
+
+
+def test_async_upload_queue_drains_verified_tasks(tmp_path: Path) -> None:
+    sync = _RecordingSync()
+    upload_queue = HubUploadQueue(sync, max_pending=1)  # type: ignore[arg-type]
+    checkpoint = tmp_path / "checkpoint-1"
+    task = HubUploadTask(tmp_path, checkpoint, "periodic", 1, 100)
+    upload_queue.enqueue(task)
+    assert checkpoint.resolve() in upload_queue.pending_checkpoints()
+    report = upload_queue.drain(close=True)
+    assert report["errors"] == []
+    assert report["results"][0]["status"] == "verified"
+    assert upload_queue.pending_checkpoints() == set()
+    assert sync.calls[0]["checkpoint"] == checkpoint
+
+
+def test_async_upload_queue_surfaces_worker_errors(tmp_path: Path) -> None:
+    upload_queue = HubUploadQueue(_RecordingSync(fail=True), max_pending=1)  # type: ignore[arg-type]
+    checkpoint = tmp_path / "checkpoint-1"
+    upload_queue.enqueue(HubUploadTask(tmp_path, checkpoint, "periodic", 1, 100))
+    report = upload_queue.drain(close=True)
+    assert report["results"] == []
+    assert "upload failed" in report["errors"][0]["error"]

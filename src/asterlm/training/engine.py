@@ -23,6 +23,7 @@ from asterlm.optim import build_optimizer, learning_rate_multiplier
 from asterlm.quantization.loqt import iter_loqt_modules, merge_loqt_modules
 from asterlm.source_provenance import assert_current_checkout_source
 
+from .analysis_schema import build_analysis_manifest
 from .checkpoint import (
     checkpoint_storage_usage,
     enforce_checkpoint_storage_budget,
@@ -33,10 +34,9 @@ from .checkpoint import (
     prune_rolling_checkpoints,
     save_checkpoint,
 )
-from .analysis_schema import build_analysis_manifest
 from .contracts import validate_training_contract
 from .execution import probe_execution_backends, resolve_execution_engine
-from .hub import HubRunSync
+from .hub import HubRunSync, HubUploadQueue, HubUploadTask
 from .metrics import JsonlLogger
 from .precision import PrecisionManager
 from .telemetry import (
@@ -357,6 +357,7 @@ class Trainer:
                 raise ImportError("wandb_project is set, but wandb is not installed") from exc
 
         self.hub: HubRunSync | None = None
+        self.hub_upload_queue: HubUploadQueue | None = None
         hub_repo_id = os.environ.get("ASTERLM_HUB_REPO_ID") or train_config.hub_repo_id
         if hub_repo_id:
             try:
@@ -377,6 +378,15 @@ class Trainer:
                     ),
                 )
                 print(f"Hugging Face experiment backup enabled: {hub_repo_id}")
+                if train_config.hub_async_upload:
+                    self.hub_upload_queue = HubUploadQueue(
+                        self.hub,
+                        max_pending=train_config.hub_max_pending_uploads,
+                    )
+                    print(
+                        "Asynchronous Hub checkpoint transfer enabled: "
+                        f"max_pending={train_config.hub_max_pending_uploads}"
+                    )
             except Exception as exc:
                 if train_config.hub_fail_on_error:
                     raise
@@ -715,22 +725,36 @@ class Trainer:
                 self.wandb.log_artifact(artifact, aliases=["latest", reason.replace("/", "-")])
 
         upload_verified = False
+        upload_queued = False
         if should_upload and self.hub is not None:
-            try:
-                result = self.hub.sync(
-                    output_dir=self.train_config.output_dir,
-                    checkpoint=path,
-                    reason=reason,
-                    step=self.step,
-                    tokens_seen=self.tokens_seen,
+            if self.hub_upload_queue is not None:
+                self.hub_upload_queue.enqueue(
+                    HubUploadTask(
+                        output_dir=Path(self.train_config.output_dir),
+                        checkpoint=path,
+                        reason=reason,
+                        step=self.step,
+                        tokens_seen=self.tokens_seen,
+                    )
                 )
-                self._log({"hub_sync_seconds": result["seconds"], "hub_sync_ok": 1})
-                upload_verified = result.get("status") == "verified"
-            except Exception as exc:
-                self._log({"hub_sync_ok": 0, "hub_sync_error": str(exc)})
-                if self.train_config.hub_fail_on_error:
-                    raise
-                print(f"WARNING: Hugging Face checkpoint sync failed: {exc}")
+                upload_queued = True
+                self._log({"hub_sync_queued": 1, "hub_sync_checkpoint": str(path)})
+            else:
+                try:
+                    result = self.hub.sync(
+                        output_dir=self.train_config.output_dir,
+                        checkpoint=path,
+                        reason=reason,
+                        step=self.step,
+                        tokens_seen=self.tokens_seen,
+                    )
+                    self._log({"hub_sync_seconds": result["seconds"], "hub_sync_ok": 1})
+                    upload_verified = result.get("status") == "verified"
+                except Exception as exc:
+                    self._log({"hub_sync_ok": 0, "hub_sync_error": str(exc)})
+                    if self.train_config.hub_fail_on_error:
+                        raise
+                    print(f"WARNING: Hugging Face checkpoint sync failed: {exc}")
         # Never allow a promised remote checkpoint to trigger local deletion until
         # the Hub copy has passed exact size/hash verification. Ordinary local-only
         # rolling saves still use the configured recent-checkpoint ring.
@@ -741,7 +765,10 @@ class Trainer:
                 pyramid_levels=self.train_config.checkpoint_pyramid_levels,
             )
         budget_result: dict[str, Any] | None = None
-        if self.train_config.checkpoint_local_budget_gib is not None:
+        if (
+            self.train_config.checkpoint_local_budget_gib is not None
+            and not upload_queued
+        ):
             budget_result = enforce_checkpoint_storage_budget(
                 self.train_config.output_dir,
                 max_total_gib=self.train_config.checkpoint_local_budget_gib,
@@ -756,6 +783,7 @@ class Trainer:
                 "checkpoint_path": str(path),
                 "checkpoint_permanent": int(permanent),
                 "checkpoint_hub_verified": int(upload_verified),
+                "checkpoint_hub_queued": int(upload_queued),
                 "checkpoint_local_bytes": storage["total_bytes"],
                 "checkpoint_local_count": storage["checkpoint_count"],
                 "checkpoint_budget_bytes": (
@@ -776,6 +804,43 @@ class Trainer:
                 "recent or unverified recovery checkpoint"
             )
         return path
+
+    def _flush_hub_uploads(self, *, close: bool = False) -> None:
+        if self.hub_upload_queue is None:
+            return
+        report = self.hub_upload_queue.drain(close=close)
+        if close:
+            self.hub_upload_queue = None
+        for result in report["results"]:
+            self._log(
+                {
+                    "hub_sync_seconds": result.get("seconds"),
+                    "hub_sync_ok": 1,
+                    "hub_sync_checkpoint": result.get("checkpoint"),
+                }
+            )
+        for error in report["errors"]:
+            self._log(
+                {
+                    "hub_sync_ok": 0,
+                    "hub_sync_checkpoint": error.get("checkpoint"),
+                    "hub_sync_error": error.get("error"),
+                }
+            )
+        if report["errors"] and self.train_config.hub_fail_on_error:
+            raise RuntimeError(f"Asynchronous Hub upload failed: {report['errors']}")
+        prune_rolling_checkpoints(
+            self.train_config.output_dir,
+            keep_last=self.train_config.keep_last_checkpoints,
+            pyramid_levels=self.train_config.checkpoint_pyramid_levels,
+            protected=self.hub_upload_queue.pending_checkpoints(),
+        )
+        if self.train_config.checkpoint_local_budget_gib is not None:
+            enforce_checkpoint_storage_budget(
+                self.train_config.output_dir,
+                max_total_gib=self.train_config.checkpoint_local_budget_gib,
+                keep_last=self.train_config.keep_last_checkpoints,
+            )
 
     def _clear_optimizer_state_for(self, parameters: list[torch.nn.Parameter]) -> None:
         if not self.train_config.loqt_reset_optimizer_state:
@@ -1080,6 +1145,7 @@ class Trainer:
             path = None
             if cfg.checkpoint_policy in {"full", "final_only"}:
                 path = self._save("complete", permanent=True, tag="final")
+            self._flush_hub_uploads(close=True)
             self.registry.finish("ok", tokens_seen=self.tokens_seen)
             if path is None:
                 print("training complete; metrics-only run saved no model checkpoint")
@@ -1121,6 +1187,8 @@ class Trainer:
                     self.wandb.log_artifact(artifact, aliases=["latest"])
             raise
         finally:
+            if self.hub_upload_queue is not None:
+                self._flush_hub_uploads(close=True)
             if self.tensorboard is not None:
                 self.tensorboard.flush()
                 self.tensorboard.close()

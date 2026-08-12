@@ -20,8 +20,7 @@ from torch.utils.data import DataLoader
 from asterlm.config import AsterConfig, DataConfig, TrainConfig
 from asterlm.generation.hub_checkpoint import resolve_hub_auto_resume
 from asterlm.training import Trainer
-from asterlm.training.checkpoint import resolve_checkpoint, save_checkpoint
-from asterlm.training.telemetry import save_diagnostic_bundle
+from asterlm.training.checkpoint import resolve_checkpoint
 from studio.stateful_data import StatefulLocalPackedDataset
 
 
@@ -195,6 +194,14 @@ class StudioTrainer(Trainer):
             ),
         }
 
+    def _training_data_state(self) -> dict[str, Any]:
+        if not self._studio_fast_data:
+            return super()._training_data_state()
+        state = self._studio_data_state()
+        if state is None:  # pragma: no cover - guarded by _studio_fast_data
+            raise RuntimeError("Studio fast data state is unexpectedly unavailable")
+        return state
+
     def _save(
         self,
         reason: str,
@@ -202,104 +209,7 @@ class StudioTrainer(Trainer):
         permanent: bool = False,
         tag: str | None = None,
     ) -> Path:
-        if not self._studio_fast_data:
-            return super()._save(reason, permanent=permanent, tag=tag)
-
-        # Mirror Trainer._save but place the data cursor *before* optional remote
-        # checkpoint sync so a milestone uploaded by Studio is disaster-recovery
-        # complete.
-        path = save_checkpoint(
-            self.train_config.output_dir,
-            self.step,
-            self.model,
-            self.optimizer,
-            self.model_config,
-            self.train_config,
-            self.tokens_seen,
-            self.train_config.keep_last_checkpoints,
-            tag=tag,
-            permanent=permanent,
-            reason=reason,
-            data_state=self._studio_data_state(),
-            prune=False,
-        )
-        self.registry.add_checkpoint(path, reason=reason)
-
-        if self.train_config.save_diagnostic_bundle:
-            save_diagnostic_bundle(
-                self.train_config.output_dir,
-                reason=reason,
-                extra={
-                    "step": self.step,
-                    "tokens_seen": self.tokens_seen,
-                    "checkpoint": str(path),
-                    "studio_fast_resume": True,
-                },
-            )
-
-        should_upload = self.hub is not None and (
-            self.train_config.hub_upload_every_save
-            or (
-                reason.startswith("milestone-")
-                and self.train_config.hub_upload_milestones
-            )
-            or (
-                reason == "complete"
-                and self.train_config.hub_upload_final
-            )
-            or (
-                reason == "studio-stop"
-                and self.train_config.hub_upload_on_stop
-            )
-        )
-        upload_verified = False
-        if should_upload and self.hub is not None:
-            try:
-                result = self.hub.sync(
-                    output_dir=self.train_config.output_dir,
-                    checkpoint=path,
-                    reason=reason,
-                    step=self.step,
-                    tokens_seen=self.tokens_seen,
-                )
-                upload_verified = result.get("status") == "verified"
-                self._log(
-                    {
-                        "hub_sync_seconds": result["seconds"],
-                        "hub_sync_ok": 1,
-                    }
-                )
-            except Exception as exc:
-                self._log(
-                    {
-                        "hub_sync_ok": 0,
-                        "hub_sync_error": str(exc),
-                    }
-                )
-                if self.train_config.hub_fail_on_error:
-                    raise
-                print(
-                    f"WARNING: Hugging Face checkpoint sync failed: {exc}",
-                    flush=True,
-                )
-        if not should_upload or upload_verified:
-            from asterlm.training.checkpoint import prune_rolling_checkpoints
-
-            prune_rolling_checkpoints(
-                self.train_config.output_dir,
-                keep_last=self.train_config.keep_last_checkpoints,
-                pyramid_levels=self.train_config.checkpoint_pyramid_levels,
-            )
-        if self.train_config.checkpoint_local_budget_gib is not None:
-            from asterlm.training.checkpoint import enforce_checkpoint_storage_budget
-
-            enforce_checkpoint_storage_budget(
-                self.train_config.output_dir,
-                max_total_gib=self.train_config.checkpoint_local_budget_gib,
-                keep_last=self.train_config.keep_last_checkpoints,
-                protected={path} if path.exists() else None,
-            )
-        return path
+        return super()._save(reason, permanent=permanent, tag=tag)
 
 
 def main() -> None:
@@ -346,6 +256,8 @@ def main() -> None:
         train_config.hub_auto_resume_latest = True
         train_config.hub_include_optimizer = True
         train_config.hub_fail_on_error = True
+        train_config.hub_async_upload = True
+        train_config.hub_max_pending_uploads = 2
 
     if (
         train_config.hub_auto_resume_latest
@@ -442,6 +354,7 @@ def main() -> None:
             permanent=False,
             tag="studio-stop",
         )
+        trainer._flush_hub_uploads(close=True)
         print(
             f"Studio stop checkpoint saved: {checkpoint}",
             flush=True,

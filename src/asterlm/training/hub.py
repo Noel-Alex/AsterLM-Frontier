@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import hashlib
+import queue
+import threading
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -205,16 +207,14 @@ class HubRunSync:
         # Publish the movable pointer only after every checkpoint artifact has an
         # authoritative remote hash. An interrupted upload can never advertise a
         # missing/incomplete recovery point.
-        latest_path = root / "latest.txt"
-        if latest_path.is_file():
-            self.api.upload_file(
-                path_or_fileobj=str(latest_path),
-                path_in_repo=f"{prefix}/latest.txt",
-                repo_id=self.repo_id,
-                repo_type="model",
-                revision=self.revision,
-                commit_message=f"Advance {root.name} latest to verified {checkpoint.name}",
-            )
+        self.api.upload_file(
+            path_or_fileobj=(checkpoint.name + "\n").encode("utf-8"),
+            path_in_repo=f"{prefix}/latest.txt",
+            repo_id=self.repo_id,
+            repo_type="model",
+            revision=self.revision,
+            commit_message=f"Advance {root.name} latest to verified {checkpoint.name}",
+        )
         metadata["seconds"] = time.time() - started
         metadata["status"] = "verified"
         metadata["verified_file_count"] = verification["verified_file_count"]
@@ -284,3 +284,107 @@ class HubRunSync:
             "verified_file_count": len(verified),
             "files": verified,
         }
+
+
+@dataclass(frozen=True, slots=True)
+class HubUploadTask:
+    output_dir: Path
+    checkpoint: Path
+    reason: str
+    step: int
+    tokens_seen: int
+
+
+class HubUploadQueue:
+    """One-worker bounded upload queue for immutable full checkpoints."""
+
+    def __init__(self, sync: HubRunSync, *, max_pending: int = 2) -> None:
+        if max_pending <= 0:
+            raise ValueError("max_pending must be positive")
+        self.sync = sync
+        self._queue: queue.Queue[HubUploadTask | None] = queue.Queue(max_pending)
+        self._results: list[dict[str, Any]] = []
+        self._errors: list[dict[str, Any]] = []
+        self._pending: set[Path] = set()
+        self._lock = threading.Lock()
+        self._closed = False
+        self._worker = threading.Thread(
+            target=self._run,
+            name="aster-hub-upload",
+            daemon=False,
+        )
+        self._worker.start()
+
+    def enqueue(self, task: HubUploadTask) -> None:
+        if self._closed:
+            raise RuntimeError("Hub upload queue is closed")
+        checkpoint = task.checkpoint.resolve()
+        with self._lock:
+            if checkpoint in self._pending:
+                raise RuntimeError(f"Checkpoint already queued: {checkpoint}")
+            self._pending.add(checkpoint)
+        try:
+            # Bounded blocking is deliberate backpressure when network throughput
+            # falls behind checkpoint production.
+            self._queue.put(task)
+        except BaseException:
+            with self._lock:
+                self._pending.discard(checkpoint)
+            raise
+
+    def pending_checkpoints(self) -> set[Path]:
+        with self._lock:
+            return set(self._pending)
+
+    def _run(self) -> None:
+        while True:
+            task = self._queue.get()
+            try:
+                if task is None:
+                    return
+                try:
+                    result = self.sync.sync(
+                        output_dir=task.output_dir,
+                        checkpoint=task.checkpoint,
+                        reason=task.reason,
+                        step=task.step,
+                        tokens_seen=task.tokens_seen,
+                    )
+                    with self._lock:
+                        self._results.append(
+                            {
+                                **result,
+                                "checkpoint": str(task.checkpoint),
+                                "reason": task.reason,
+                            }
+                        )
+                except Exception as exc:  # noqa: BLE001 - surfaced by drain
+                    with self._lock:
+                        self._errors.append(
+                            {
+                                "checkpoint": str(task.checkpoint),
+                                "reason": task.reason,
+                                "error": f"{type(exc).__name__}: {exc}",
+                            }
+                        )
+                finally:
+                    with self._lock:
+                        self._pending.discard(task.checkpoint.resolve())
+            finally:
+                self._queue.task_done()
+
+    def drain(self, *, close: bool = False) -> dict[str, Any]:
+        self._queue.join()
+        if close and not self._closed:
+            self._closed = True
+            self._queue.put(None)
+            self._worker.join()
+        with self._lock:
+            result = {
+                "results": list(self._results),
+                "errors": list(self._errors),
+                "pending": [str(path) for path in sorted(self._pending)],
+            }
+            self._results.clear()
+            self._errors.clear()
+        return result
