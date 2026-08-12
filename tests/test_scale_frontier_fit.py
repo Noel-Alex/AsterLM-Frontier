@@ -17,3 +17,4 @@ def test_scale_fit_plan_keeps_update_tokens_and_descending_batches():
         for trial in trials
     )
     assert all(trial.moe_implementation == "cutlass" for trial in trials)
+    assert trials[0].trial_id.endswith("-s2048-b4-a2-adamw-cutlass")

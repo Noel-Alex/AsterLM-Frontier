@@ -40,7 +40,7 @@ class FitTrial:
     def trial_id(self) -> str:
         model = Path(self.model).stem
         return (
-            f"{model}-s{self.sequence}-b{self.micro_batch}-a{self.accum}-"
+            f"{model}-s{self.sequence}-b{self.micro_batch}-a{self.accumulation}-"
             f"{self.optimizer}-{self.moe_implementation}"
         )
 
