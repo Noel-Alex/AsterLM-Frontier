@@ -8,6 +8,7 @@ from torch.nn import functional as F
 
 from asterlm.cache import AsterCache
 from asterlm.config import AsterConfig
+
 from .norm import HeadRMSNorm
 
 
@@ -16,7 +17,7 @@ def fla_is_available() -> bool:
         from fla.layers.kda import KimiDeltaAttention  # noqa: F401
 
         return True
-    except Exception:
+    except (ImportError, ModuleNotFoundError):
         return False
 
 
@@ -31,20 +32,25 @@ class TorchGatedDeltaNet(nn.Module):
     def __init__(self, config: AsterConfig) -> None:
         super().__init__()
         d = config.d_model
-        self.n_heads = config.n_heads
-        self.head_dim = config.head_dim
+        self.n_heads = config.kda_num_heads or config.n_heads
+        self.head_dim = config.kda_head_dim or config.head_dim
+        self.value_head_dim = int(self.head_dim * config.kda_expand_v)
+        if self.value_head_dim <= 0 or self.value_head_dim != self.head_dim * config.kda_expand_v:
+            raise ValueError("kda_expand_v must produce an integer value-head dimension")
+        self.key_dim = self.n_heads * self.head_dim
+        self.value_dim = self.n_heads * self.value_head_dim
         self.lower_bound = config.kda_lower_bound
         self.allow_negative = config.kda_allow_negative_eigenvalues
 
-        self.q_proj = nn.Linear(d, d, bias=False)
-        self.k_proj = nn.Linear(d, d, bias=False)
-        self.v_proj = nn.Linear(d, d, bias=False)
-        self.decay_proj = nn.Linear(d, d, bias=True)
+        self.q_proj = nn.Linear(d, self.key_dim, bias=False)
+        self.k_proj = nn.Linear(d, self.key_dim, bias=False)
+        self.v_proj = nn.Linear(d, self.value_dim, bias=False)
+        self.decay_proj = nn.Linear(d, self.key_dim, bias=True)
         self.beta_proj = nn.Linear(d, self.n_heads, bias=True)
-        self.sign_proj = nn.Linear(d, d, bias=True) if self.allow_negative else None
-        self.out_gate = nn.Linear(d, d, bias=True)
-        self.out_norm = HeadRMSNorm(self.head_dim, config.rms_eps)
-        self.out_proj = nn.Linear(d, d, bias=False)
+        self.sign_proj = nn.Linear(d, self.key_dim, bias=True) if self.allow_negative else None
+        self.out_gate = nn.Linear(d, self.value_dim, bias=True)
+        self.out_norm = HeadRMSNorm(self.value_head_dim, config.rms_eps)
+        self.out_proj = nn.Linear(self.value_dim, d, bias=False)
         self.out_proj._is_residual_projection = True
 
     def forward(
@@ -53,7 +59,9 @@ class TorchGatedDeltaNet(nn.Module):
         bsz, seq_len, _ = hidden.shape
         q = self.q_proj(hidden).view(bsz, seq_len, self.n_heads, self.head_dim)
         k = self.k_proj(hidden).view_as(q)
-        v = self.v_proj(hidden).view_as(q)
+        v = self.v_proj(hidden).view(
+            bsz, seq_len, self.n_heads, self.value_head_dim
+        )
         q = F.normalize(q.float(), dim=-1).to(hidden.dtype)
         k = F.normalize(k.float(), dim=-1).to(hidden.dtype)
 
@@ -70,7 +78,7 @@ class TorchGatedDeltaNet(nn.Module):
                 bsz,
                 self.n_heads,
                 self.head_dim,
-                self.head_dim,
+                self.value_head_dim,
                 dtype=hidden.dtype,
                 device=hidden.device,
             )
@@ -87,7 +95,7 @@ class TorchGatedDeltaNet(nn.Module):
         out = torch.stack(outputs, dim=1)
         gate = torch.sigmoid(self.out_gate(hidden)).view_as(out)
         out = self.out_norm(out) * gate
-        out = self.out_proj(out.reshape(bsz, seq_len, -1))
+        out = self.out_proj(out.reshape(bsz, seq_len, self.value_dim))
         return out, state
 
 
@@ -95,6 +103,12 @@ class KDA(nn.Module):
     def __init__(self, config: AsterConfig, kda_idx: int) -> None:
         super().__init__()
         self.kda_idx = kda_idx
+        self._d_model = config.d_model
+        self._n_heads = config.kda_num_heads or config.n_heads
+        self._head_dim = config.kda_head_dim or config.head_dim
+        self._value_head_dim = int(self._head_dim * config.kda_expand_v)
+        self._short_conv = config.kda_short_conv
+        self._conv_size = config.kda_conv_size
         requested = config.kda_backend
         available = fla_is_available()
         self.uses_fla = requested == "fla" or (requested == "auto" and available)
@@ -107,9 +121,9 @@ class KDA(nn.Module):
             self.impl = KimiDeltaAttention(
                 hidden_size=config.d_model,
                 expand_v=config.kda_expand_v,
-                head_dim=config.head_dim,
-                num_heads=config.n_heads,
-                num_v_heads=config.n_heads,
+                head_dim=config.kda_head_dim or config.head_dim,
+                num_heads=config.kda_num_heads or config.n_heads,
+                num_v_heads=config.kda_num_heads or config.n_heads,
                 mode="chunk",
                 use_short_conv=config.kda_short_conv,
                 allow_neg_eigval=config.kda_allow_negative_eigenvalues,
@@ -127,6 +141,33 @@ class KDA(nn.Module):
                     stacklevel=2,
                 )
             self.impl = TorchGatedDeltaNet(config)
+
+    def logical_parameter_count(self) -> int:
+        """Return the production KDA geometry independent of the execution backend.
+
+        The readable Torch recurrence intentionally uses larger dense decay and gate
+        projections than FLA's KimiDeltaAttention.  It is a numerical-control backend,
+        not a different model candidate, so architecture/FLOP accounting must describe
+        the production KDA parameterization even when FLA is unavailable in CPU CI.
+        """
+
+        d = self._d_model
+        h = self._n_heads
+        k = self._head_dim
+        v = self._value_head_dim
+        key_width = h * k
+        value_width = h * v
+
+        total = h + key_width  # A_log and dt_bias
+        total += (2 * key_width + value_width) * d  # q, k, v projections
+        if self._short_conv:
+            total += (2 * key_width + value_width) * self._conv_size
+        total += k * d + key_width * k  # low-rank f projection
+        total += h * d  # beta projection
+        total += k * d + value_width * k + value_width  # low-rank output gate
+        total += v  # per-head output norm
+        total += d * value_width  # output projection
+        return total
 
     def forward(
         self,

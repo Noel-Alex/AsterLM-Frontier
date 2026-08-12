@@ -138,7 +138,8 @@ def test_deepseek_mtp_is_depth_one_research_backend():
         raise AssertionError("DeepSeek-style vNext2 MTP must reject depth > 1")
 
 
-def test_stable_latent_moe_post_norm_is_explicit_and_optional():
+def test_stable_latent_moe_components_are_explicit_and_trainable():
+    from asterlm.layers.ffn import SiTUGLU
     from asterlm.layers.latent_moe import LatentMoE
     from asterlm.layers.norm import RMSNorm
 
@@ -157,6 +158,8 @@ def test_stable_latent_moe_post_norm_is_explicit_and_optional():
         ffn_type="latent_moe",
         latent_moe_dim=8,
         latent_moe_post_norm=True,
+        moe_activation="situ_glu",
+        moe_balance_strategy="quantile",
         moe_first_dense_layers=0,
         moe_every=1,
         moe_num_experts=4,
@@ -171,6 +174,8 @@ def test_stable_latent_moe_post_norm_is_explicit_and_optional():
     assert isinstance(f0, LatentMoE) and isinstance(f1, LatentMoE)
     assert isinstance(f0.routed_post_norm, torch.nn.Identity)
     assert isinstance(f1.routed_post_norm, RMSNorm)
+    assert isinstance(f1.routed[0], SiTUGLU)
+    assert f1.balance_strategy == "quantile"
     ids = torch.randint(0, stable.vocab_size, (2, 12))
     labels = torch.roll(ids, shifts=-1, dims=1)
     labels[:, -1] = -100
@@ -179,3 +184,24 @@ def test_stable_latent_moe_post_norm_is_explicit_and_optional():
     out.loss.backward()
     assert f1.routed_post_norm.weight.grad is not None
     assert torch.isfinite(f1.routed_post_norm.weight.grad).all()
+    old_bias = f1.routing_bias.clone()
+    histogram_load = f1.update_routing_bias()
+    assert histogram_load is not None
+    assert torch.isfinite(f1.routing_bias).all()
+    assert torch.count_nonzero(f1.quantile_histogram) == 0
+    assert not torch.equal(old_bias, f1.routing_bias) or torch.allclose(
+        f1.routing_bias, torch.zeros_like(f1.routing_bias)
+    )
+
+
+def test_situ_glu_is_locally_swiglu_like_and_globally_bounded():
+    from asterlm.layers.ffn import situ_glu
+
+    small_gate = torch.tensor([-0.01, 0.01])
+    small_up = torch.tensor([0.02, -0.02])
+    expected = torch.nn.functional.silu(small_gate) * small_up
+    torch.testing.assert_close(
+        situ_glu(small_gate, small_up), expected, atol=2e-7, rtol=2e-4
+    )
+    huge = situ_glu(torch.tensor([1000.0]), torch.tensor([1000.0]))
+    assert 0.0 < float(huge) <= 100.0

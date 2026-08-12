@@ -1,0 +1,77 @@
+{
+  "schema_version": 1,
+  "status": "complete",
+  "imported_at_utc": "2026-08-12T03:11:26.257778+00:00",
+  "importer_git_commit": "9cde08bb42f80e20dbba2096a3ae3448f1751e4c",
+  "source_artifacts": [
+    {
+      "path": "docs/promotion-evidence/9cde08bb42f8/quality-screen/quality-campaign.json",
+      "sha256": "6716cc9f81be1342c2b717254b43c8897f2874732f7cfad8e2faa283a59acbc4"
+    },
+    {
+      "path": "docs/promotion-evidence/9cde08bb42f8/quality-screen/quality-analysis.json",
+      "sha256": "265aced8b142af3760c6436e3328818d58d589cf3bb779edcc2bc7e17336605a"
+    }
+  ],
+  "assertions": {
+    "source_execution_commit": "bad468f423c4bd29429d41d2ae17e64d533738cc",
+    "seeds": [
+      1337,
+      2027
+    ],
+    "tokens_per_candidate": 16777216,
+    "complete_runs": 6,
+    "matched_token": {
+      "dense_final_eval_loss_mean": 5.379433356225491,
+      "k3_final_eval_loss_mean": 5.373940087854862,
+      "absolute_k3_improvement": 0.005493268370628357,
+      "relative_k3_improvement_percent": 0.10211611533900923,
+      "passed": true
+    },
+    "equal_wall": {
+      "dense_loss_mean": 5.379433356225491,
+      "k3_loss_mean": 5.733934625699065,
+      "absolute_k3_regression": 0.3545012694735741,
+      "passed": false
+    },
+    "per_seed_runs": {
+      "1337": {
+        "tier0-dense-mla-220m": {
+          "tokens_seen": 16777216,
+          "eval_main_loss": 5.385085508227348,
+          "run_id": "torch-sdpa-bf16-20260811T090629Z-67100bdb"
+        },
+        "tier2-k3-stable-latentmoe-220m": {
+          "tokens_seen": 16777216,
+          "eval_main_loss": 5.375369265675545,
+          "run_id": "cutlass-grouped-bf16-20260811T095341Z-deaefa21"
+        }
+      },
+      "2027": {
+        "tier0-dense-mla-220m": {
+          "tokens_seen": 16777216,
+          "eval_main_loss": 5.373781204223633,
+          "run_id": "torch-sdpa-bf16-20260811T102304Z-6b5124d9"
+        },
+        "tier2-k3-stable-latentmoe-220m": {
+          "tokens_seen": 16777216,
+          "eval_main_loss": 5.37251091003418,
+          "run_id": "cutlass-grouped-bf16-20260811T120059Z-de355dd1"
+        }
+      }
+    }
+  },
+  "certified_gates": [
+    "equal_token_quality",
+    "dense_baseline_regression"
+  ],
+  "failed_gates": [
+    "equal_wall_clock"
+  ],
+  "not_certified": [
+    "long_context_retrieval",
+    "repeated_warm_throughput",
+    "gpu_utilization_root_cause",
+    "vram"
+  ]
+}

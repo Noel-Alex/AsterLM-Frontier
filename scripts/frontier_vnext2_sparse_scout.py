@@ -5,11 +5,11 @@ import argparse
 import gc
 import json
 import math
-import os
+import statistics
 import subprocess
 import sys
-import statistics
 import time
+import types
 from pathlib import Path
 
 import torch
@@ -17,7 +17,7 @@ import yaml
 
 ROOT = Path.cwd().resolve()
 PIN = "bd67af59b90afa34b25f61d2922e612d10dba3bd"
-REPO = ROOT / "third_party/native-sparse-attention"
+REPO = ROOT / ".cache/third_party/native-sparse-attention"
 
 
 def ensure_repo() -> tuple[bool, str]:
@@ -75,10 +75,34 @@ def bench_sdpa(seq: int, q_heads: int, qk_dim: int, value_dim: int, repeats: int
     }
 
 
+def load_parallel_nsa():
+    """Load the pinned NSA operator against Aster's installed FLA runtime."""
+
+    # The pinned NSA source imports FLA 0.4's former `fla.ops.common.utils`
+    # location. FLA 0.5 exposes the same helpers from `fla.ops.utils`. Alias the
+    # module in memory so the isolated scout uses Aster's tested FLA runtime,
+    # without installing NSA's historical FLA submodule over the environment.
+    from fla.ops import utils as fla_ops_utils
+
+    fla_common = types.ModuleType("fla.ops.common")
+    fla_common.__path__ = []
+    fla_common.utils = fla_ops_utils
+    sys.modules["fla.ops.common"] = fla_common
+    sys.modules["fla.ops.common.utils"] = fla_ops_utils
+
+    # Load only the pinned kernel package. Adding REPO to sys.path would expose
+    # its broken/uninitialized `fla` symlink ahead of the installed FLA runtime.
+    nsa_package = types.ModuleType("native_sparse_attention")
+    nsa_package.__path__ = [str(REPO / "native_sparse_attention")]
+    sys.modules["native_sparse_attention"] = nsa_package
+    from native_sparse_attention.ops import parallel_nsa
+
+    return parallel_nsa
+
+
 def bench_nsa(seq: int, q_heads: int, qk_dim: int, value_dim: int, repeats: int) -> dict:
     cleanup()
-    sys.path.insert(0, str(REPO))
-    from native_sparse_attention.ops import parallel_nsa
+    parallel_nsa = load_parallel_nsa()
     q = torch.randn(1, seq, q_heads, qk_dim, device="cuda", dtype=torch.bfloat16, requires_grad=True)
     k = torch.randn(1, seq, 1, qk_dim, device="cuda", dtype=torch.bfloat16, requires_grad=True)
     v = torch.randn(1, seq, 1, value_dim, device="cuda", dtype=torch.bfloat16, requires_grad=True)

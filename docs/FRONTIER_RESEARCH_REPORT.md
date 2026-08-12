@@ -213,11 +213,11 @@ Warmup–Stable–Decay is default because it supports long stable training and 
 
 ### General corpus
 
-FineWeb-Edu-Dedup and DCLM provide broad coverage. Cosmopedia contributes structured educational exposition. FineMath adds mathematical density. Stack-Edu adds code while preserving provenance and permissive metadata.
+FineWeb-Edu-Dedup and DCLM provide broad coverage. Cosmopedia contributes structured educational exposition. FineMath adds mathematical density. Stack-Edu was retired after its per-blob reconstruction path proved operationally unsuitable; a replacement code tranche must pass license, quality, duplication, contamination and matched-learning-curve gates before promotion.
 
 ### Token budget
 
-The full local corpus target is 18.4B raw tokens. This is much smaller than frontier-lab training corpora but large enough to make data decisions and expert starvation meaningful. The 1.9B model may be undertrained at this budget; the dense/MoE ablation will reveal that.
+The original local corpus target was 18.4B raw tokens. The active four-source frontier tranche is 16B before cleaning, with larger 43.5B and 87B prose/math tiers. None is a complete 50B/100B mixture until the replacement math/code tranche is promoted. Exact active materialization and effective repetition must be read from the corpus audit rather than inferred from a tier name.
 
 ### Cleaning
 

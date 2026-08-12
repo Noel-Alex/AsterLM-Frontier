@@ -7,6 +7,7 @@ from types import SimpleNamespace
 import pytest
 import torch
 
+from scripts.studio_train import normalize_studio_data_state
 from studio.stateful_data import StatefulLocalPackedDataset
 
 
@@ -113,3 +114,11 @@ def test_data_signature_rejects_modified_local_shard(tmp_path: Path):
     resumed = StatefulLocalPackedDataset(FakeTokenizer(), config(a, b), 16)
     with pytest.raises(RuntimeError, match="signature"):
         resumed.load_state_dict(saved)
+
+
+def test_studio_checkpoint_envelope_uses_canonical_schema_and_reads_legacy_version():
+    canonical = {"schema_version": 1, "step": 4, "tokens_seen": 128}
+    assert normalize_studio_data_state(canonical) is canonical
+    assert normalize_studio_data_state(
+        {"version": 1, "step": 4, "tokens_seen": 128}
+    ) == {"schema_version": 1, "step": 4, "tokens_seen": 128}

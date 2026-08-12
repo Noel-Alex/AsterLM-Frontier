@@ -1,8 +1,8 @@
-# AsterLM Frontier: authoritative training runbook
+# AsterLM Frontier: operational reference
 
-This is the command source of truth for the audited repository. Run commands from the repository root. Paths under the **root** `data/`, `runs/`, and `artifacts/` directories are intentionally not included in the distributable code archive; source-code directories such as `src/asterlm/data/` and `configs/data/` are included.
+For the frozen production pretraining campaign, [100B_EXPERIMENT.md](100B_EXPERIMENT.md) and `configs/pretraining/frontier_100b_k3.yaml` are the command and machine-readable sources of truth. The 893M/APOLLO commands below are retained as historical operational references and must not be used to start the final K3/Muon campaign. Run commands from the repository root. Paths under the **root** `data/`, `runs/`, and `artifacts/` directories are intentionally not included in the distributable code archive; source-code directories such as `src/asterlm/data/` and `configs/data/` are included.
 
-Never run one checkout while another checkout's virtual environment is active. The downloader now rejects that state by default. For the normal installation, work only in `/home/nol/Documents/AsterLM-Frontier` and activate `/home/nol/Documents/AsterLM-Frontier/.venv`.
+Never run one checkout while another checkout's virtual environment is active. The downloader rejects that state by default. In the current Windows/WSL installation, use `/mnt/n/AsterLM-Frontier` with `/root/.venvs/asterlm`; do not activate a virtual environment from the deleted Fedora checkout.
 
 ## 1. Install and verify the environment
 
@@ -65,7 +65,7 @@ python scripts/download_data.py --profile posttrain --validate-first --require-a
 # Reasoning SFT/RLVR sources
 python scripts/download_data.py --profile reasoning --validate-first --require-auth --network-mode low --max-retries 0
 
-# Expand the retained pilot checkpoints to the full web/math corpus and add Stack-Edu
+# Expand the retained pilot checkpoints to the active web/math corpus
 python scripts/download_data.py --profile frontier --validate-first --require-auth --network-mode low --max-retries 0
 
 # Everything, in a safe progressive order
@@ -85,7 +85,7 @@ The benchmark materializer now treats `target_records: null` as “download the 
 
 ## 3. Clean, deduplicate, decontaminate, and create local holdouts
 
-For the current 500M pilot, omit code until Stack-Edu is downloaded:
+Clean the active web/math tranche without any retired source:
 
 ```bash
 python scripts/prepare_frontier_data.py \
@@ -95,12 +95,13 @@ python scripts/prepare_frontier_data.py \
   --skip-code
 ```
 
-For the complete frontier corpus:
+After a replacement code corpus is independently audited and promoted, pass it explicitly:
 
 ```bash
 python scripts/prepare_frontier_data.py \
   --raw-corpus data/corpus-frontier-16b \
-  --raw-code data/stack-edu-frontier-2p4b \
+  --raw-code data/promoted-code-corpus \
+  --code-id promoted_code \
   --benchmarks data/decontamination-benchmarks \
   --output data/clean-frontier
 ```
@@ -108,15 +109,17 @@ python scripts/prepare_frontier_data.py \
 The cleaner writes deterministic, disjoint local validation holdouts under `data/clean-frontier/validation/` and generates:
 
 ```text
-configs/data/pretrain_frontier_clean.yaml
+data/clean-frontier/pretrain_data.yaml
+data/clean-frontier/clean_manifest.json
 ```
+
+The cleaner uses one shared deduplication database across all active sources, then hashes every completed shard before publishing the manifest. Do not edit the generated data config after sealing it. Use `training_preflight.py --verify-manifest-hashes` once before a costly decision/final run; ordinary startups verify manifest identity, paths, presence, and sizes without repeatedly hashing hundreds of GiB.
 
 If `data/clean-frontier` was created by an older repository version that did not make local holdouts, rebuild it deliberately:
 
 ```bash
 python scripts/prepare_frontier_data.py \
   --raw-corpus data/corpus-frontier-16b \
-  --raw-code data/stack-edu-frontier-2p4b \
   --benchmarks data/decontamination-benchmarks \
   --output data/clean-frontier \
   --reset-existing
@@ -130,7 +133,7 @@ Train once after the clean mixture exists. This version includes all ordinary, F
 
 ```bash
 python scripts/train_tokenizer.py \
-  --data configs/data/pretrain_frontier_clean.yaml \
+  --data data/clean-frontier/pretrain_data.yaml \
   --output artifacts/tokenizer.json \
   --vocab-size 32768 \
   --documents 1000000
@@ -142,7 +145,7 @@ python scripts/train_tokenizer.py \
 python scripts/training_preflight.py \
   --model configs/model/aster_moe_frontier_893m_a484m.yaml \
   --train configs/train/frontier_stage1_8k.yaml \
-  --data configs/data/pretrain_frontier_clean.yaml \
+  --data data/clean-frontier/pretrain_data.yaml \
   --check-first-record \
   --json runs/preflight-frontier-stage1.json
 
@@ -180,22 +183,22 @@ python scripts/profile_training.py \
 python scripts/training_preflight.py \
   --model configs/model/aster_220m.yaml \
   --train configs/train/pretrain_laptop.yaml \
-  --data configs/data/pretrain_frontier_clean.yaml \
+  --data data/clean-frontier/pretrain_data.yaml \
   --check-first-record
 
 python scripts/train_pretrain.py \
   --model configs/model/aster_220m.yaml \
   --train configs/train/pretrain_laptop.yaml \
-  --data configs/data/pretrain_frontier_clean.yaml
+  --data data/clean-frontier/pretrain_data.yaml
 ```
 
-Resume the same run, including optimizer, RNG, counters, and deterministic packed-data replay:
+Resume the same run, including optimizer, RNG, counters, source-mixture state, source cursors, FIM RNG, and the partially filled packing buffer without replaying earlier batches:
 
 ```bash
 python scripts/train_pretrain.py \
   --model configs/model/aster_220m.yaml \
   --train configs/train/pretrain_laptop.yaml \
-  --data configs/data/pretrain_frontier_clean.yaml \
+  --data data/clean-frontier/pretrain_data.yaml \
   --resume runs/aster-220m-pretrain
 ```
 
@@ -205,7 +208,7 @@ Continue it at 8K with a fresh optimizer/schedule but loaded weights:
 python scripts/train_pretrain.py \
   --model configs/model/aster_220m.yaml \
   --train configs/train/pretrain_8k_laptop.yaml \
-  --data configs/data/pretrain_frontier_clean.yaml \
+  --data data/clean-frontier/pretrain_data.yaml \
   --init-checkpoint runs/aster-220m-pretrain
 ```
 
@@ -218,27 +221,27 @@ Stage transitions use `--init-checkpoint` because they intentionally start a new
 python scripts/train_pretrain.py \
   --model configs/model/aster_moe_frontier_893m_a484m.yaml \
   --train configs/train/frontier_stage1_8k.yaml \
-  --data configs/data/pretrain_frontier_clean.yaml
+  --data data/clean-frontier/pretrain_data.yaml
 
 # Exact same-stage resume
 python scripts/train_pretrain.py \
   --model configs/model/aster_moe_frontier_893m_a484m.yaml \
   --train configs/train/frontier_stage1_8k.yaml \
-  --data configs/data/pretrain_frontier_clean.yaml \
+  --data data/clean-frontier/pretrain_data.yaml \
   --resume runs/aster-frontier-stage1-8k
 
 # Stage 2: 16K
 python scripts/train_pretrain.py \
   --model configs/model/aster_moe_frontier_893m_a484m.yaml \
   --train configs/train/frontier_stage2_16k.yaml \
-  --data configs/data/pretrain_frontier_clean.yaml \
+  --data data/clean-frontier/pretrain_data.yaml \
   --init-checkpoint runs/aster-frontier-stage1-8k
 
 # Stage 3: genuinely trained 32K
 python scripts/train_pretrain.py \
   --model configs/model/aster_moe_frontier_893m_a484m.yaml \
   --train configs/train/frontier_stage3_32k.yaml \
-  --data configs/data/pretrain_frontier_clean.yaml \
+  --data data/clean-frontier/pretrain_data.yaml \
   --init-checkpoint runs/aster-frontier-stage2-16k
 ```
 
@@ -250,7 +253,7 @@ Do not mix this checkpoint with the ordinary BF16 model config.
 python scripts/train_pretrain.py \
   --model configs/model/aster_moe_frontier_893m_loqt.yaml \
   --train configs/train/frontier_stage1_8k_loqt.yaml \
-  --data configs/data/pretrain_frontier_clean.yaml
+  --data data/clean-frontier/pretrain_data.yaml
 ```
 
 ### 6.4 Larger 1.5B target experiment
@@ -261,12 +264,12 @@ Only proceed after a real VRAM profile passes.
 python scripts/train_pretrain.py \
   --model configs/model/aster_moe_target_1p51b_a623m.yaml \
   --train configs/train/frontier_target_stage1_4k.yaml \
-  --data configs/data/pretrain_frontier_clean.yaml
+  --data data/clean-frontier/pretrain_data.yaml
 
 python scripts/train_pretrain.py \
   --model configs/model/aster_moe_target_1p51b_a623m.yaml \
   --train configs/train/frontier_target_stage2_8k.yaml \
-  --data configs/data/pretrain_frontier_clean.yaml \
+  --data data/clean-frontier/pretrain_data.yaml \
   --init-checkpoint runs/aster-target-stage1-4k
 ```
 
@@ -274,7 +277,7 @@ python scripts/train_pretrain.py \
 
 ```bash
 python scripts/run_quality_ablations.py \
-  --data configs/data/pretrain_frontier_clean.yaml \
+  --data data/clean-frontier/pretrain_data.yaml \
   --tokens 100000000 \
   --continue-on-error
 ```
@@ -407,7 +410,7 @@ python scripts/train_sft.py \
 ```bash
 python scripts/evaluate_perplexity.py \
   --checkpoint runs/aster-frontier-stage3-32k \
-  --data configs/data/pretrain_frontier_clean.yaml \
+  --data data/clean-frontier/pretrain_data.yaml \
   --sequence 8192 \
   --batches 32
 
@@ -458,10 +461,18 @@ python scripts/benchmark_cache_quantization.py --tokens 32768
 python scripts/benchmark_speculative.py \
   --checkpoint artifacts/aster-frontier-dpo-osp-folded \
   --new-tokens 128
-python scripts/needle_test.py \
+python scripts/long_context_retrieval.py \
   --checkpoint artifacts/aster-frontier-dpo-osp-folded \
-  --lengths 8192,16384,32768
+  --lengths 8192,16384,32768 \
+  --depths 0.1,0.5,0.9 \
+  --repeats 3 \
+  --output runs/long-context/aster-frontier-dpo
 ```
+
+The retrieval evaluator uses exact token budgets and teacher-forced answer-token
+scoring, so it also works on base pretraining checkpoints without requiring chat or
+instruction-following behavior. It verifies the checkpoint manifest, rejects dirty
+source by default, appends every completed case durably, and resumes by case ID.
 
 ## 12. Rules that prevent accidental corruption
 
@@ -475,4 +486,4 @@ python scripts/needle_test.py \
 
 ## 100B-token overtraining campaign
 
-For the research-grade 18.4B → 50B → 100B scaling study, permanent token milestones, MoE pathway telemetry and private Hugging Face disaster-recovery uploads, follow [100B_EXPERIMENT.md](100B_EXPERIMENT.md).
+For the frozen 100B curriculum, permanent 18.4B/50B analysis milestones, unattended stage transitions, 150 GiB local checkpoint cache, private hash-verified Hugging Face recovery and W&B/Studio observability, follow [100B_EXPERIMENT.md](100B_EXPERIMENT.md). Do not launch the old stage commands from earlier sections as the production campaign.

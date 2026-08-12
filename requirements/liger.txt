@@ -1,0 +1,4 @@
+-r base.txt
+# Optional fused SwiGLU expert backend. K3 SiTU-GLU remains unsupported until a
+# separate numerical-parity port is implemented.
+liger-kernel==0.8.1

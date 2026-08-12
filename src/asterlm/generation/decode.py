@@ -1,8 +1,8 @@
 from __future__ import annotations
 
+from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterator
 
 import torch
 
@@ -14,6 +14,7 @@ from asterlm.training.checkpoint import (
     pin_kda_backend_from_checkpoint,
     resolve_checkpoint,
 )
+
 from .sampling import apply_repetition_penalty, sample_next
 
 
@@ -37,6 +38,7 @@ def load_runtime(
     device: str = "cuda",
     compile_model: bool = False,
     quantization: str = "none",
+    moe_implementation: str | None = None,
 ) -> tuple[AsterLM, AsterTokenizer]:
     checkpoint = resolve_checkpoint(checkpoint)
     if model_config is None:
@@ -46,7 +48,7 @@ def load_runtime(
         model_config = candidate
     config = AsterConfig.from_yaml(model_config)
     pin_kda_backend_from_checkpoint(config, checkpoint)
-    model = AsterLM(config)
+    model = AsterLM(config, moe_implementation=moe_implementation)
     load_model_weights(model, checkpoint)
     target_device = torch.device(device)
     # Keep CPU inference in fp32. On Ada CUDA GPUs, bf16 cuts weight memory and

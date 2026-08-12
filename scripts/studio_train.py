@@ -2,9 +2,7 @@
 from __future__ import annotations
 
 import argparse
-import json
 import os
-import pickle
 import signal
 import sys
 import threading
@@ -29,14 +27,17 @@ from studio.stateful_data import StatefulLocalPackedDataset
 class StudioStopRequested(BaseException):
     """Raised only at a safe training-update boundary."""
 
+    asterlm_status = "interrupted_user"
 
-def atomic_pickle(path: Path, payload: Any) -> None:
-    tmp = path.with_name(path.name + ".tmp")
-    with tmp.open("wb") as handle:
-        pickle.dump(payload, handle, protocol=pickle.HIGHEST_PROTOCOL)
-        handle.flush()
-        os.fsync(handle.fileno())
-    os.replace(tmp, path)
+
+def normalize_studio_data_state(state: dict[str, Any]) -> dict[str, Any]:
+    """Translate the short-lived Studio envelope to the canonical trainer schema."""
+
+    if "schema_version" in state:
+        return state
+    if int(state.get("version", -1)) == 1:
+        return {"schema_version": 1, **{key: value for key, value in state.items() if key != "version"}}
+    return state
 
 
 class StudioTrainer(Trainer):
@@ -108,7 +109,7 @@ class StudioTrainer(Trainer):
 
         assert self.train_config.resume is not None
         checkpoint = resolve_checkpoint(self.train_config.resume)
-        cursor_path = checkpoint / "studio_data_state.pkl"
+        cursor_path = checkpoint / "data_state.pt"
         if not cursor_path.is_file():
             print(
                 "Studio data cursor is absent in this older checkpoint; "
@@ -117,11 +118,14 @@ class StudioTrainer(Trainer):
             )
             return super()._restore_training_data_position()
 
-        with cursor_path.open("rb") as handle:
-            state = pickle.load(handle)
-        if int(state.get("version", -1)) != 1:
+        import torch
+
+        state = torch.load(cursor_path, map_location="cpu", weights_only=False)
+        state = normalize_studio_data_state(state)
+        if int(state.get("schema_version", -1)) != 1:
             raise RuntimeError(
-                f"Unsupported studio_data_state version={state.get('version')}"
+                "Unsupported studio_data_state schema_version="
+                f"{state.get('schema_version')}"
             )
         if int(state.get("tokens_seen", -1)) != int(self.tokens_seen):
             raise RuntimeError(
@@ -158,11 +162,28 @@ class StudioTrainer(Trainer):
             flush=True,
         )
 
-    def _write_studio_data_state(self, checkpoint: Path) -> None:
+    def _restore_training_data_state(self, state: dict[str, Any]) -> None:
+        """Restore both canonical and legacy Studio cursor envelopes exactly."""
+
+        normalized = normalize_studio_data_state(state)
+        super()._restore_training_data_state(normalized)
+        train_state = normalized.get("train") or {}
+        cursors = train_state.get("cursors", [])
+        cursor_summary = ", ".join(
+            f"s{i}:file={item.get('file_index')} row={int(item.get('record_index', 0)):,}"
+            for i, item in enumerate(cursors)
+        )
+        print(
+            "Studio fast data resume restored packed buffer + source/RNG state; "
+            + cursor_summary,
+            flush=True,
+        )
+
+    def _studio_data_state(self) -> dict[str, Any] | None:
         if not self._studio_fast_data or self._studio_train_dataset is None:
-            return
-        payload = {
-            "version": 1,
+            return None
+        return {
+            "schema_version": 1,
             "step": int(self.step),
             "tokens_seen": int(self.tokens_seen),
             "train": self._studio_train_dataset.state_dict(),
@@ -172,20 +193,6 @@ class StudioTrainer(Trainer):
                 else None
             ),
         }
-        path = checkpoint / "studio_data_state.pkl"
-        atomic_pickle(path, payload)
-
-        manifest_path = checkpoint / "checkpoint_manifest.json"
-        try:
-            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-        except Exception:
-            manifest = {}
-        manifest["studio_data_state"] = path.name
-        manifest["studio_data_state_bytes"] = path.stat().st_size
-        manifest["studio_fast_resume"] = True
-        tmp = manifest_path.with_name(manifest_path.name + ".tmp")
-        tmp.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
-        os.replace(tmp, manifest_path)
 
     def _save(
         self,
@@ -212,8 +219,10 @@ class StudioTrainer(Trainer):
             tag=tag,
             permanent=permanent,
             reason=reason,
+            data_state=self._studio_data_state(),
+            prune=False,
         )
-        self._write_studio_data_state(path)
+        self.registry.add_checkpoint(path, reason=reason)
 
         if self.train_config.save_diagnostic_bundle:
             save_diagnostic_bundle(
@@ -238,6 +247,7 @@ class StudioTrainer(Trainer):
                 and self.train_config.hub_upload_final
             )
         )
+        upload_verified = False
         if should_upload and self.hub is not None:
             try:
                 result = self.hub.sync(
@@ -247,6 +257,7 @@ class StudioTrainer(Trainer):
                     step=self.step,
                     tokens_seen=self.tokens_seen,
                 )
+                upload_verified = result.get("status") == "verified"
                 self._log(
                     {
                         "hub_sync_seconds": result["seconds"],
@@ -266,6 +277,23 @@ class StudioTrainer(Trainer):
                     f"WARNING: Hugging Face checkpoint sync failed: {exc}",
                     flush=True,
                 )
+        if not should_upload or upload_verified:
+            from asterlm.training.checkpoint import prune_rolling_checkpoints
+
+            prune_rolling_checkpoints(
+                self.train_config.output_dir,
+                keep_last=self.train_config.keep_last_checkpoints,
+                pyramid_levels=self.train_config.checkpoint_pyramid_levels,
+            )
+        if self.train_config.checkpoint_local_budget_gib is not None:
+            from asterlm.training.checkpoint import enforce_checkpoint_storage_budget
+
+            enforce_checkpoint_storage_budget(
+                self.train_config.output_dir,
+                max_total_gib=self.train_config.checkpoint_local_budget_gib,
+                keep_last=self.train_config.keep_last_checkpoints,
+                protected={path} if path.exists() else None,
+            )
         return path
 
 
@@ -286,6 +314,11 @@ def main() -> None:
         default=None,
     )
     parser.add_argument("--hub-repo", default=None)
+    parser.add_argument(
+        "--remote-durable",
+        action="store_true",
+        help="Require persistent output plus verified full-state Hub upload at every save",
+    )
     args = parser.parse_args()
 
     train_config = TrainConfig.from_yaml(args.train)
@@ -293,6 +326,17 @@ def main() -> None:
         train_config.resume = args.resume
     if args.hub_repo:
         train_config.hub_repo_id = args.hub_repo
+    if args.remote_durable:
+        if not args.hub_repo:
+            raise ValueError("--remote-durable requires --hub-repo")
+        remote_run_root = Path(os.environ.get("ASTERLM_REMOTE_RUN_ROOT", "/opt/aster/runs"))
+        train_config.output_dir = str(remote_run_root / Path(train_config.output_dir).name)
+        train_config.hub_private = True
+        train_config.hub_upload_every_save = True
+        train_config.hub_upload_milestones = True
+        train_config.hub_upload_final = True
+        train_config.hub_include_optimizer = True
+        train_config.hub_fail_on_error = True
 
     trainer = StudioTrainer(
         AsterConfig.from_yaml(args.model),

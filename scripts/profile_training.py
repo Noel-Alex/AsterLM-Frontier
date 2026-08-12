@@ -2,21 +2,105 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
-import platform
+import os
+import statistics
+import subprocess
+import threading
 import time
+from contextlib import contextmanager, nullcontext
 from pathlib import Path
 from typing import Any
 
 import torch
 
 from asterlm import AsterConfig, AsterLM, TrainConfig
+from asterlm.kernels.situ_glu import configured_situ_glu_backend
 from asterlm.optim import build_optimizer
+from asterlm.source_provenance import assert_expected_checkout_source
 from asterlm.training.precision import PrecisionManager
-from asterlm.training.telemetry import SystemSampler, static_system_manifest
+from asterlm.training.telemetry import static_system_manifest
 
 
-def gib(value: int | float) -> float:
+class ContinuousGpuSampler:
+    """Sample GPU activity without synchronizing the training CUDA stream."""
+
+    _FIELDS = (
+        "utilization.gpu",
+        "utilization.memory",
+        "power.draw",
+        "temperature.gpu",
+        "clocks.current.sm",
+        "clocks.current.memory",
+        "memory.used",
+    )
+
+    def __init__(self, device_index: int, interval: float) -> None:
+        self.device_index = int(device_index)
+        self.interval = max(float(interval), 0.1)
+        self.samples: list[dict[str, Any]] = []
+        self._stop = threading.Event()
+        self._thread: threading.Thread | None = None
+        self._phase = "setup"
+        self._iteration = 0
+
+    def set_phase(self, phase: str, iteration: int) -> None:
+        self._phase = phase
+        self._iteration = int(iteration)
+
+    def start(self) -> None:
+        self._thread = threading.Thread(target=self._run, name="aster-gpu-sampler", daemon=True)
+        self._thread.start()
+
+    def stop(self) -> None:
+        self._stop.set()
+        if self._thread is not None:
+            self._thread.join(timeout=max(5.0, self.interval * 3))
+
+    def _run(self) -> None:
+        while not self._stop.is_set():
+            started = time.monotonic()
+            sample: dict[str, Any] = {
+                "time_unix": time.time(),
+                "phase": self._phase,
+                "iteration": self._iteration,
+            }
+            try:
+                output = subprocess.check_output(
+                    [
+                        "nvidia-smi",
+                        "--query-gpu=" + ",".join(self._FIELDS),
+                        "--format=csv,noheader,nounits",
+                        "-i",
+                        str(self.device_index),
+                    ],
+                    text=True,
+                    stderr=subprocess.DEVNULL,
+                    timeout=5,
+                )
+                values = [float(value.strip()) for value in output.splitlines()[0].split(",")]
+                sample.update(dict(zip(self._FIELDS, values, strict=True)))
+            except (OSError, ValueError, subprocess.SubprocessError) as exc:
+                sample["error"] = f"{type(exc).__name__}: {exc}"
+            self.samples.append(sample)
+            self._stop.wait(max(0.0, self.interval - (time.monotonic() - started)))
+
+
+def summarize_gpu_samples(samples: list[dict[str, Any]]) -> dict[str, float | int]:
+    measured = [sample for sample in samples if sample.get("phase") == "measured"]
+    summary: dict[str, float | int] = {"measured_sample_count": len(measured)}
+    for field in ContinuousGpuSampler._FIELDS:
+        values = [float(sample[field]) for sample in measured if field in sample]
+        if values:
+            summary[f"mean_{field.replace('.', '_')}"] = statistics.fmean(values)
+            summary[f"median_{field.replace('.', '_')}"] = statistics.median(values)
+            summary[f"p10_{field.replace('.', '_')}"] = sorted(values)[max(0, int(0.1 * (len(values) - 1)))]
+            summary[f"p90_{field.replace('.', '_')}"] = sorted(values)[min(len(values) - 1, int(0.9 * (len(values) - 1)))]
+    return summary
+
+
+def gib(value: float) -> float:
     return float(value) / 2**30
 
 
@@ -37,7 +121,9 @@ def parameter_storage(model: torch.nn.Module) -> dict[str, Any]:
     result: dict[str, Any] = {
         "total_gib": 0.0,
         "parameter_gib": 0.0,
+        "parameter_tensors": 0,
         "buffer_gib": 0.0,
+        "buffer_tensors": 0,
         "by_dtype": {},
     }
     seen: set[int] = set()
@@ -52,8 +138,10 @@ def parameter_storage(model: torch.nn.Module) -> dict[str, Any]:
         size = tensor.numel() * tensor.element_size()
         if kind == "parameter":
             parameter_total += size
+            result["parameter_tensors"] += 1
         else:
             buffer_total += size
+            result["buffer_tensors"] += 1
         key = f"{kind}:{str(tensor.dtype).removeprefix('torch.')}"
         result["by_dtype"][key] = result["by_dtype"].get(key, 0) + size
 
@@ -69,6 +157,100 @@ def parameter_storage(model: torch.nn.Module) -> dict[str, Any]:
     return result
 
 
+@contextmanager
+def measure_phase(
+    name: str,
+    *,
+    device: torch.device,
+    host_seconds: dict[str, float],
+    cuda_events: dict[str, list[tuple[torch.cuda.Event, torch.cuda.Event]]],
+    record_trace: bool = False,
+):
+    """Record host submission/synchronization time and default-stream CUDA time."""
+
+    started = time.perf_counter()
+    event_pair = None
+    if device.type == "cuda":
+        event_pair = (torch.cuda.Event(enable_timing=True), torch.cuda.Event(enable_timing=True))
+        event_pair[0].record()
+    marker = torch.profiler.record_function(f"aster::{name}") if record_trace else nullcontext()
+    try:
+        with marker:
+            yield
+    finally:
+        if event_pair is not None:
+            event_pair[1].record()
+            cuda_events.setdefault(name, []).append(event_pair)
+        host_seconds[name] = host_seconds.get(name, 0.0) + (time.perf_counter() - started)
+
+
+def summarize_phase_timing(records: list[dict[str, Any]]) -> dict[str, dict[str, float]]:
+    summary: dict[str, dict[str, float]] = {}
+    for timing_kind in ("cuda_ms", "host_submit_or_sync_ms"):
+        names = sorted(
+            {
+                name
+                for record in records
+                for name in record.get("phase_timing", {}).get(timing_kind, {})
+            }
+        )
+        summary[timing_kind] = {
+            name: statistics.median(
+                float(record["phase_timing"][timing_kind][name])
+                for record in records
+                if name in record.get("phase_timing", {}).get(timing_kind, {})
+            )
+            for name in names
+        }
+    return summary
+
+
+def summarize_torch_profiler_events(events: Any, *, limit: int = 200) -> list[dict[str, Any]]:
+    """Create a stable machine-readable operator table across PyTorch profiler versions."""
+
+    rows: list[dict[str, Any]] = []
+    for event in events:
+        device_us = float(
+            getattr(
+                event,
+                "self_device_time_total",
+                getattr(event, "self_cuda_time_total", 0.0),
+            )
+            or 0.0
+        )
+        rows.append(
+            {
+                "name": str(getattr(event, "key", "unknown")),
+                "count": int(getattr(event, "count", 0) or 0),
+                "self_cpu_time_us": float(getattr(event, "self_cpu_time_total", 0.0) or 0.0),
+                "self_device_time_us": device_us,
+                "cpu_memory_bytes": int(getattr(event, "cpu_memory_usage", 0) or 0),
+                "device_memory_bytes": int(
+                    getattr(
+                        event,
+                        "device_memory_usage",
+                        getattr(event, "cuda_memory_usage", 0),
+                    )
+                    or 0
+                ),
+                "input_shapes": str(getattr(event, "input_shapes", "")),
+            }
+        )
+    rows.sort(
+        key=lambda row: (row["self_device_time_us"], row["self_cpu_time_us"]),
+        reverse=True,
+    )
+    return rows[: max(1, int(limit))]
+
+
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(8 * 1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Measure actual AsterLM VRAM before corpus training")
     parser.add_argument("--model", default="configs/model/aster_moe_frontier_893m_a484m.yaml")
@@ -82,6 +264,7 @@ def main() -> None:
     parser.add_argument(
         "--optimizer",
         choices=[
+            "adamw",
             "muon_adamw",
             "apollo_mini",
             "apollo",
@@ -92,10 +275,55 @@ def main() -> None:
         default=None,
     )
     parser.add_argument("--precision", choices=["amp", "transformer_engine_fp8"], default=None)
+    parser.add_argument(
+        "--moe-implementation",
+        choices=["reference", "grouped", "cutlass", "torch_grouped"],
+        default=None,
+        help="Select and record the physical expert implementation explicitly.",
+    )
+    parser.add_argument(
+        "--apollo-disable-norm-limiter",
+        action="store_true",
+        help="Diagnostic only: disable APOLLO's norm-growth limiter for an explicit causal screen.",
+    )
     parser.add_argument("--activation-offload", action="store_true")
     parser.add_argument("--compile", action="store_true")
+    parser.add_argument(
+        "--checkpoint-segment-size",
+        type=int,
+        default=None,
+        help="Override the number of consecutive blocks inside each activation-checkpoint segment.",
+    )
+    parser.add_argument(
+        "--disable-gradient-checkpointing",
+        action="store_true",
+        help="Execution-only control that preserves model math but retains all forward activations.",
+    )
+    parser.add_argument(
+        "--allow-compile-transformer-engine-experimental",
+        action="store_true",
+        help=(
+            "Allow the explicitly experimental torch.compile + Transformer Engine "
+            "combination. This is disabled by default until numerical parity and "
+            "end-to-end stability are established for the exact backend."
+        ),
+    )
+    parser.add_argument("--gpu-sample-interval", type=float, default=0.5)
+    parser.add_argument(
+        "--torch-trace",
+        type=Path,
+        default=None,
+        help=(
+            "Export one bounded Chrome trace and machine-readable operator summary. "
+            "Disabled by default because profiling changes timing."
+        ),
+    )
+    parser.add_argument("--torch-trace-operator-limit", type=int, default=200)
     parser.add_argument("--json", default=None)
     args = parser.parse_args()
+
+    repo_root = Path(__file__).resolve().parents[1]
+    source = assert_expected_checkout_source(repo_root)
 
     config = AsterConfig.from_yaml(args.model)
     train = TrainConfig.from_yaml(args.train_config)
@@ -112,10 +340,18 @@ def main() -> None:
     if args.precision is not None:
         train.precision_backend = args.precision
         config.linear_backend = "transformer_engine" if args.precision == "transformer_engine_fp8" else "torch"
+    if args.apollo_disable_norm_limiter:
+        train.apollo_disable_norm_limiter = True
     if args.activation_offload:
         train.activation_offload = True
     if args.compile:
         train.compile = True
+    if args.checkpoint_segment_size is not None:
+        if args.checkpoint_segment_size <= 0:
+            raise ValueError("checkpoint segment size must be positive")
+        config.checkpoint_segment_size = args.checkpoint_segment_size
+    if args.disable_gradient_checkpointing:
+        config.gradient_checkpointing = False
     config.max_seq_len = max(config.max_seq_len, train.sequence_length)
 
     result: dict[str, Any] = {
@@ -124,6 +360,11 @@ def main() -> None:
         "train_config": args.train_config,
         "resolved_model": config.to_dict(),
         "resolved_train": train.to_dict(),
+        "moe_implementation": args.moe_implementation or os.environ.get(
+            "ASTER_MOE_IMPL", "reference"
+        ),
+        "situ_glu_backend": configured_situ_glu_backend(),
+        "source_provenance": source,
         "steps": [],
     }
     output_path = Path(args.json) if args.json else None
@@ -144,9 +385,13 @@ def main() -> None:
         if device.type == "cuda":
             torch.cuda.manual_seed_all(train.seed)
         result["system"] = static_system_manifest(device)
-        sampler = SystemSampler(device, min_interval=0.1)
+        gpu_sampler = (
+            ContinuousGpuSampler(device.index or 0, args.gpu_sample_interval)
+            if device.type == "cuda"
+            else None
+        )
 
-        model = AsterLM(config)
+        model = AsterLM(config, moe_implementation=args.moe_implementation)
         dtype = {"bfloat16": torch.bfloat16, "float32": torch.float32}[train.dtype]
         if device.type == "cuda" and dtype != torch.float32:
             model = model.to(device=device, dtype=dtype)
@@ -155,6 +400,7 @@ def main() -> None:
                     parameter.data = parameter.data.float()
         else:
             model = model.to(device)
+        result["grouped_expert_storage"] = model.pack_grouped_expert_storage()
         model.train()
         precision = PrecisionManager(train, device, dtype)
         result["architecture"] = model.architecture_summary()
@@ -163,87 +409,202 @@ def main() -> None:
         optimizer = build_optimizer(model, train)
         result["memory_after_optimizer_build"] = cuda_snapshot(device)
 
-        if train.compile and config.linear_backend == "transformer_engine":
-            raise ValueError("Do not combine --compile and Transformer Engine in the first probe")
+        if (
+            train.compile
+            and config.linear_backend == "transformer_engine"
+            and not args.allow_compile_transformer_engine_experimental
+        ):
+            raise ValueError(
+                "Compile + Transformer Engine remains experimental; pass "
+                "--allow-compile-transformer-engine-experimental only for an explicit "
+                "parity and performance probe"
+            )
         forward_model = (
             torch.compile(model, mode=train.compile_mode, dynamic=False) if train.compile else model
         )
         durations: list[float] = []
+        measured_phase_records: list[dict[str, Any]] = []
         # Keep synthetic benchmark data independent of model/backend RNG use.
         data_generator = torch.Generator(device=device)
         data_generator.manual_seed(train.seed + 100003)
         tokens_per_step = train.sequence_length * train.micro_batch_size * train.gradient_accumulation_steps
         total_iterations = args.warmup + args.steps
+        if args.torch_trace and total_iterations > 20:
+            raise ValueError("Bounded torch traces may capture at most 20 total iterations")
+        trace_profiler = None
+        trace_running = False
+        if args.torch_trace:
+            activities = [torch.profiler.ProfilerActivity.CPU]
+            if device.type == "cuda":
+                activities.append(torch.profiler.ProfilerActivity.CUDA)
+            trace_profiler = torch.profiler.profile(
+                activities=activities,
+                record_shapes=True,
+                profile_memory=True,
+                with_stack=False,
+                with_flops=True,
+            )
+            trace_profiler.start()
+            trace_running = True
+        if gpu_sampler is not None:
+            gpu_sampler.start()
         for iteration in range(total_iterations):
+            if gpu_sampler is not None:
+                gpu_sampler.set_phase(
+                    "warmup" if iteration < args.warmup else "measured",
+                    iteration + 1,
+                )
             optimizer.zero_grad(set_to_none=True)
             if device.type == "cuda":
                 torch.cuda.reset_peak_memory_stats(device)
             started = time.perf_counter()
-            loss_value = 0.0
+            phase_host_seconds: dict[str, float] = {}
+            phase_cuda_events: dict[
+                str, list[tuple[torch.cuda.Event, torch.cuda.Event]]
+            ] = {}
+            loss_value = torch.zeros((), device=device, dtype=torch.float32)
             for _ in range(train.gradient_accumulation_steps):
-                ids = torch.randint(
-                    0,
-                    config.vocab_size,
-                    (train.micro_batch_size, train.sequence_length),
+                with measure_phase(
+                    "synthetic_data",
                     device=device,
-                    generator=data_generator,
-                )
-                labels = torch.randint(
-                    0,
-                    config.vocab_size,
-                    ids.shape,
+                    host_seconds=phase_host_seconds,
+                    cuda_events=phase_cuda_events,
+                    record_trace=trace_profiler is not None,
+                ):
+                    ids = torch.randint(
+                        0,
+                        config.vocab_size,
+                        (train.micro_batch_size, train.sequence_length),
+                        device=device,
+                        generator=data_generator,
+                    )
+                    labels = torch.randint(
+                        0,
+                        config.vocab_size,
+                        ids.shape,
+                        device=device,
+                        generator=data_generator,
+                    )
+                with measure_phase(
+                    "forward",
                     device=device,
-                    generator=data_generator,
-                )
-                with precision.activation_context():
-                    with precision.forward_context():
-                        output = forward_model(ids, labels=labels, return_logits=False)
-                        if output.loss is None:
-                            raise FloatingPointError("model returned no loss")
-                        if not torch.isfinite(output.loss.detach()).all():
-                            raise FloatingPointError(
-                                f"non-finite loss before backward at iteration {iteration + 1}: "
-                                f"{float(output.loss.detach())}"
-                            )
-                        loss = output.loss / train.gradient_accumulation_steps
-                loss.backward()
-                loss_value += float(output.loss.detach())
-            grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), train.max_grad_norm)
-            if not torch.isfinite(grad_norm).all():
-                bad_grads = []
-                for name, parameter in model.named_parameters():
-                    grad = parameter.grad
-                    if grad is None:
-                        continue
-                    if not torch.isfinite(grad).all():
-                        bad_grads.append(name)
-                        if len(bad_grads) >= 8:
-                            break
-                raise FloatingPointError(
-                    "non-finite gradients before optimizer.step at "
-                    f"iteration {iteration + 1}; grad_norm={float(grad_norm)}; "
-                    f"first_bad_grad_tensors={bad_grads}"
-                )
-            optimizer.step()
-            balance = model.update_moe_router_biases()
+                    host_seconds=phase_host_seconds,
+                    cuda_events=phase_cuda_events,
+                    record_trace=trace_profiler is not None,
+                ), precision.activation_context(), precision.forward_context():
+                    output = forward_model(ids, labels=labels, return_logits=False)
+                    if output.loss is None:
+                        raise FloatingPointError("model returned no loss")
+                    loss = output.loss / train.gradient_accumulation_steps
+                with measure_phase(
+                    "backward",
+                    device=device,
+                    host_seconds=phase_host_seconds,
+                    cuda_events=phase_cuda_events,
+                    record_trace=trace_profiler is not None,
+                ):
+                    loss.backward()
+                loss_value.add_(output.loss.detach().float())
+            with measure_phase(
+                "clip_and_finite_gate",
+                device=device,
+                host_seconds=phase_host_seconds,
+                cuda_events=phase_cuda_events,
+                record_trace=trace_profiler is not None,
+            ):
+                grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), train.max_grad_norm)
+                # The gradient gate catches any non-finite loss/backward before the
+                # optimizer mutates parameters, while avoiding one GPU->CPU sync per
+                # accumulation microbatch in the measured workload.
+                if not torch.isfinite(grad_norm).all():
+                    bad_grads = []
+                    for name, parameter in model.named_parameters():
+                        grad = parameter.grad
+                        if grad is None:
+                            continue
+                        if not torch.isfinite(grad).all():
+                            bad_grads.append(name)
+                            if len(bad_grads) >= 8:
+                                break
+                    raise FloatingPointError(
+                        "non-finite gradients before optimizer.step at "
+                        f"iteration {iteration + 1}; grad_norm={float(grad_norm)}; "
+                        f"first_bad_grad_tensors={bad_grads}"
+                    )
+            with measure_phase(
+                "optimizer",
+                device=device,
+                host_seconds=phase_host_seconds,
+                cuda_events=phase_cuda_events,
+                record_trace=trace_profiler is not None,
+            ):
+                optimizer.step()
+            with measure_phase(
+                "router_balance",
+                device=device,
+                host_seconds=phase_host_seconds,
+                cuda_events=phase_cuda_events,
+                record_trace=trace_profiler is not None,
+            ):
+                balance = model.update_moe_router_biases()
             if device.type == "cuda":
                 torch.cuda.synchronize(device)
             duration = time.perf_counter() - started
+            phase_timing = {
+                "cuda_ms": {
+                    name: sum(start_event.elapsed_time(end_event) for start_event, end_event in pairs)
+                    for name, pairs in phase_cuda_events.items()
+                },
+                # This includes Python submission and any synchronization incurred by
+                # that phase. It is intentionally not described as GPU execution time.
+                "host_submit_or_sync_ms": {
+                    name: seconds * 1000.0 for name, seconds in phase_host_seconds.items()
+                },
+            }
             record = {
                 "iteration": iteration + 1,
                 "warmup": iteration < args.warmup,
                 "seconds": duration,
                 "tokens_per_second": tokens_per_step / duration,
-                "loss": loss_value / train.gradient_accumulation_steps,
+                "loss": float(loss_value / train.gradient_accumulation_steps),
                 "grad_norm": float(grad_norm),
                 "memory": cuda_snapshot(device),
-                "system": sampler.sample(force=True),
+                "phase_timing": phase_timing,
+                # Continuous sampling avoids launching another blocking nvidia-smi
+                # query between every optimizer update.
+                "system": (
+                    dict(gpu_sampler.samples[-1])
+                    if gpu_sampler is not None and gpu_sampler.samples
+                    else {}
+                ),
                 **balance,
+                **model.moe_execution_stats(),
             }
             result["steps"].append(record)
             print(json.dumps(record, sort_keys=True))
             if iteration >= args.warmup:
                 durations.append(duration)
+                measured_phase_records.append(record)
+            if trace_profiler is not None:
+                trace_profiler.step()
+
+        if trace_profiler is not None:
+            trace_profiler.stop()
+            trace_running = False
+            args.torch_trace.parent.mkdir(parents=True, exist_ok=True)
+            trace_profiler.export_chrome_trace(str(args.torch_trace))
+            result["torch_profiler"] = {
+                "trace_path": str(args.torch_trace),
+                "trace_sha256": _sha256(args.torch_trace),
+                "trace_size_bytes": args.torch_trace.stat().st_size,
+                "includes_warmup": True,
+                "profiled_iterations": total_iterations,
+                "timing_policy": "diagnostic_only_not_comparable_to_unprofiled_throughput",
+                "operators": summarize_torch_profiler_events(
+                    trace_profiler.key_averages(group_by_input_shape=True),
+                    limit=args.torch_trace_operator_limit,
+                ),
+            }
 
         ordered_durations = sorted(durations)
         n_durations = len(ordered_durations)
@@ -259,9 +620,35 @@ def main() -> None:
         result["summary"] = {
             "median_seconds": median,
             "median_tokens_per_second": tokens_per_step / median,
+            "measured_wall_time_seconds": sum(durations),
+            "measured_tokens": tokens_per_step * len(durations),
             "final_memory": cuda_snapshot(device),
             "fits_11p25_gib_peak": cuda_snapshot(device).get("peak_allocated_gib", 0) <= 11.25,
+            "median_phase_timing": summarize_phase_timing(measured_phase_records),
+            "moe_execution": model.moe_execution_stats(),
         }
+        if gpu_sampler is not None:
+            gpu_sampler.stop()
+            result["gpu_samples"] = gpu_sampler.samples
+            result["summary"]["gpu"] = summarize_gpu_samples(gpu_sampler.samples)
+            median_power = result["summary"]["gpu"].get("median_power_draw")
+            if isinstance(median_power, (int, float)) and median_power > 0:
+                result["summary"]["median_tokens_per_joule"] = (
+                    result["summary"]["median_tokens_per_second"] / median_power
+                )
+            mean_power = result["summary"]["gpu"].get("mean_power_draw")
+            measured_seconds = result["summary"]["measured_wall_time_seconds"]
+            measured_tokens = result["summary"]["measured_tokens"]
+            if isinstance(mean_power, (int, float)) and mean_power > 0:
+                # `nvidia-smi` samples board power, so this is estimated GPU energy,
+                # not whole-laptop wall energy. It is recorded for diagnostics and
+                # research statistics only and never participates in promotion.
+                energy_joules = mean_power * measured_seconds
+                result["summary"]["estimated_gpu_energy_joules"] = energy_joules
+                result["summary"]["estimated_gpu_energy_kwh"] = energy_joules / 3_600_000.0
+                result["summary"]["estimated_gpu_joules_per_token"] = (
+                    energy_joules / measured_tokens
+                )
         result["status"] = "ok"
     except torch.cuda.OutOfMemoryError as exc:
         result["status"] = "oom"
@@ -269,11 +656,16 @@ def main() -> None:
         if "device" in locals():
             result["memory_at_failure"] = cuda_snapshot(device)
         print(f"CUDA OOM: {exc}")
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - profiler must persist arbitrary trial failures
         result["status"] = "error"
         result["error"] = f"{type(exc).__name__}: {exc}"
         print(result["error"])
     finally:
+        if "trace_profiler" in locals() and trace_profiler is not None and trace_running:
+            trace_profiler.stop()
+        if "gpu_sampler" in locals() and gpu_sampler is not None and gpu_sampler._thread is not None:
+            gpu_sampler.stop()
+            result.setdefault("gpu_samples", gpu_sampler.samples)
         if output_path:
             output_path.parent.mkdir(parents=True, exist_ok=True)
             output_path.write_text(json.dumps(result, indent=2, default=str), encoding="utf-8")

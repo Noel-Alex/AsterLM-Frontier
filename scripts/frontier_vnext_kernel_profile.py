@@ -2,8 +2,10 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
+import subprocess
 import time
 from pathlib import Path
 from typing import Any
@@ -21,9 +23,22 @@ def _event_value(event: Any, *names: str) -> float:
         if value is not None:
             try:
                 return float(value)
-            except Exception:
+            except (TypeError, ValueError):
                 pass
     return 0.0
+
+
+def _sha256(path: str | Path) -> str:
+    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+
+
+def _git_commit() -> str | None:
+    try:
+        return subprocess.check_output(
+            ["git", "rev-parse", "HEAD"], text=True, stderr=subprocess.DEVNULL
+        ).strip()
+    except (OSError, subprocess.SubprocessError):
+        return None
 
 
 def main() -> None:
@@ -31,14 +46,25 @@ def main() -> None:
     parser.add_argument("--model", required=True)
     parser.add_argument("--train", required=True)
     parser.add_argument("--sequence", type=int, default=1024)
+    parser.add_argument("--batch", type=int, default=1)
     parser.add_argument("--optimizer", default=None)
     parser.add_argument("--precision", default=None)
+    parser.add_argument(
+        "--export-trace",
+        action="store_true",
+        help="Export a Chrome/Perfetto trace next to the JSON summary.",
+    )
     parser.add_argument("--output", required=True)
     args = parser.parse_args()
 
     out = Path(args.output)
     out.parent.mkdir(parents=True, exist_ok=True)
-    result: dict[str, Any] = {"status": "started"}
+    result: dict[str, Any] = {
+        "status": "started",
+        "git_commit": _git_commit(),
+        "model": {"path": args.model, "sha256": _sha256(args.model)},
+        "train": {"path": args.train, "sha256": _sha256(args.train)},
+    }
 
     try:
         cfg = AsterConfig.from_yaml(args.model)
@@ -76,7 +102,13 @@ def main() -> None:
         data_gen.manual_seed(train.seed + 880301)
 
         def batch():
-            ids = torch.randint(0, cfg.vocab_size, (1, args.sequence), device=device, generator=data_gen)
+            ids = torch.randint(
+                0,
+                cfg.vocab_size,
+                (args.batch, args.sequence),
+                device=device,
+                generator=data_gen,
+            )
             labels = torch.randint(0, cfg.vocab_size, ids.shape, device=device, generator=data_gen)
             return ids, labels
 
@@ -105,9 +137,8 @@ def main() -> None:
             with_stack=False,
         ) as prof:
             t0 = time.perf_counter()
-            with torch.profiler.record_function("ASTER::forward"):
-                with precision.forward_context():
-                    output = model(ids, labels=labels, return_logits=False)
+            with torch.profiler.record_function("ASTER::forward"), precision.forward_context():
+                output = model(ids, labels=labels, return_logits=False)
             if device.type == "cuda":
                 torch.cuda.synchronize(device)
             phase_wall["forward_s"] = time.perf_counter() - t0
@@ -151,6 +182,7 @@ def main() -> None:
             {
                 "status": "ok",
                 "sequence": args.sequence,
+                "batch": args.batch,
                 "moe_impl": os.environ.get("ASTER_MOE_IMPL", "reference"),
                 "loss": float(output.loss.detach()),
                 "grad_norm_before_clip": float(grad_norm),
@@ -166,6 +198,11 @@ def main() -> None:
             prof.key_averages().table(sort_by="self_cuda_time_total", row_limit=100),
             encoding="utf-8",
         )
+        result["table"] = str(table_path)
+        if args.export_trace:
+            trace_path = out.with_suffix(".trace.json")
+            prof.export_chrome_trace(str(trace_path))
+            result["trace"] = str(trace_path)
     except Exception as exc:
         result.update({"status": "error", "error": f"{type(exc).__name__}: {exc}"})
         raise

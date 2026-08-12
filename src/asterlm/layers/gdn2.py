@@ -12,7 +12,7 @@ def gdn2_is_available() -> bool:
         from fla.layers.gdn2 import GatedDeltaNet2  # noqa: F401
 
         return True
-    except Exception:
+    except (ImportError, ModuleNotFoundError):
         return False
 
 
@@ -22,7 +22,7 @@ class GDN2(nn.Module):
     The wrapper intentionally uses FLA as an external dependency instead of copying
     NVIDIA's non-commercial reference implementation into Aster. FLA exposes its own
     adapted implementation and cache interface. The recurrent index shares the same
-    LegacyFLACache namespace as KDA layers, allowing KDA/GDN2 hybrid patterns.
+    FLA cache namespace as KDA layers, allowing KDA/GDN2 hybrid patterns.
     """
 
     def __init__(self, config: AsterConfig, recurrent_idx: int) -> None:

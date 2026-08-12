@@ -1,13 +1,16 @@
 from __future__ import annotations
 
-import os
 import torch
 from torch import nn
 from torch.nn import functional as F
 
 from .ffn import SwiGLU
 from .linear import build_linear
+from .moe_grouped_cutlass import CUTLASSGroupedRoutedExperts
+from .moe_grouped_liger import LigerGroupedRoutedExperts
 from .moe_grouped_te import TEGroupedRoutedExperts
+from .moe_grouped_torch import TorchGroupedRoutedExperts
+from .routing import fixed_bincount
 
 
 class DeepSeekStyleMoE(nn.Module):
@@ -34,6 +37,7 @@ class DeepSeekStyleMoE(nn.Module):
         loqt_alpha: float = 32.0,
         loqt_group_size: int = 64,
         init_std: float = 0.02,
+        moe_impl: str = "reference",
     ) -> None:
         super().__init__()
         if num_experts < 1 or not 1 <= top_k <= num_experts:
@@ -52,27 +56,34 @@ class DeepSeekStyleMoE(nn.Module):
         self.register_buffer("routing_bias", torch.zeros(num_experts, dtype=torch.float32))
         self.register_buffer("load_accumulator", torch.zeros(num_experts, dtype=torch.float32), persistent=False)
         self.register_buffer("load_batches", torch.zeros((), dtype=torch.float32), persistent=False)
-        ffn_kwargs = dict(
-            loqt_rank=loqt_rank,
-            loqt_alpha=loqt_alpha,
-            loqt_group_size=loqt_group_size,
-            init_std=init_std,
-        )
+        ffn_kwargs = {
+            "loqt_rank": loqt_rank,
+            "loqt_alpha": loqt_alpha,
+            "loqt_group_size": loqt_group_size,
+            "init_std": init_std,
+        }
         self.routed = nn.ModuleList(
             [SwiGLU(dim, expert_hidden, dropout, linear_backend, **ffn_kwargs) for _ in range(num_experts)]
         )
         self.shared = nn.ModuleList(
             [SwiGLU(dim, expert_hidden, dropout, linear_backend, **ffn_kwargs) for _ in range(shared_experts)]
         )
-        requested_impl = os.environ.get("ASTER_MOE_IMPL", "reference").strip().lower()
-        if requested_impl not in {"reference", "grouped"}:
+        requested_impl = moe_impl.strip().lower()
+        if requested_impl not in {
+            "reference",
+            "grouped",
+            "cutlass",
+            "torch_grouped",
+            "liger",
+        }:
             raise ValueError(
-                "ASTER_MOE_IMPL must be either 'reference' or 'grouped', "
+                "moe_impl must be 'reference', 'grouped', 'cutlass', or "
+                "'torch_grouped', or 'liger', "
                 f"got {requested_impl!r}"
             )
         if requested_impl == "grouped" and linear_backend != "transformer_engine":
             raise ValueError(
-                "ASTER_MOE_IMPL=grouped currently requires linear_backend='transformer_engine'"
+                "moe_impl=grouped currently requires linear_backend='transformer_engine'"
             )
         self.moe_impl = requested_impl
         self._grouped_routed = None
@@ -84,6 +95,30 @@ class DeepSeekStyleMoE(nn.Module):
                 num_experts=num_experts,
                 dropout=dropout,
                 align=16,
+            )
+        elif self.moe_impl == "cutlass":
+            self._grouped_routed = CUTLASSGroupedRoutedExperts(
+                self.routed,
+                dim=dim,
+                expert_hidden=expert_hidden,
+                num_experts=num_experts,
+                dropout=dropout,
+            )
+        elif self.moe_impl == "torch_grouped":
+            self._grouped_routed = TorchGroupedRoutedExperts(
+                self.routed,
+                dim=dim,
+                expert_hidden=expert_hidden,
+                num_experts=num_experts,
+                dropout=dropout,
+            )
+        elif self.moe_impl == "liger":
+            self._grouped_routed = LigerGroupedRoutedExperts(
+                self.routed,
+                dim=dim,
+                expert_hidden=expert_hidden,
+                num_experts=num_experts,
+                dropout=dropout,
             )
         self.last_aux_loss: torch.Tensor | None = None
         self.last_z_loss: torch.Tensor | None = None
@@ -116,7 +151,7 @@ class DeepSeekStyleMoE(nn.Module):
         top_weight = affinity.gather(-1, top_idx)
         top_weight = top_weight / top_weight.sum(dim=-1, keepdim=True).clamp_min(1e-9)
 
-        if self.moe_impl == "grouped":
+        if self.moe_impl in {"grouped", "cutlass", "torch_grouped", "liger"}:
             if self._grouped_routed is None:
                 raise RuntimeError("Grouped MoE bridge was not initialized")
             routed_out = self._grouped_routed(flat, top_idx, top_weight)
@@ -137,8 +172,8 @@ class DeepSeekStyleMoE(nn.Module):
 
         # Switch-style balancing signal plus router z-loss. The trainer decides the
         # coefficients, so these remain inspectable independently.
-        dispatch = F.one_hot(top_idx, num_classes=self.num_experts).float().sum(dim=1) / self.top_k
-        load = dispatch.mean(dim=0)
+        load = fixed_bincount(top_idx, self.num_experts, dtype=torch.float32)
+        load = load / float(top_idx.numel())
         importance = affinity / affinity.sum(dim=-1, keepdim=True).clamp_min(1e-9)
         importance = importance.mean(dim=0)
         self.last_aux_loss = self.num_experts * torch.sum(importance * load.detach())
@@ -151,9 +186,11 @@ class DeepSeekStyleMoE(nn.Module):
 
     @torch.no_grad()
     def update_routing_bias(self) -> torch.Tensor | None:
-        if self.balance_strategy not in {"bias", "hybrid"} or self.load_batches.item() == 0:
+        if self.balance_strategy not in {"bias", "hybrid"}:
             return None
-        mean_load = self.load_accumulator / self.load_batches
+        # This is called after at least one training forward. Avoid Tensor.item(),
+        # which forced a GPU-to-CPU synchronization at every optimizer step.
+        mean_load = self.load_accumulator / self.load_batches.clamp_min(1.0)
         target = torch.full_like(mean_load, 1.0 / self.num_experts)
         # Overloaded experts receive a lower selection-only bias; underloaded experts
         # receive a higher one. Gating weights still come from the unbiased affinity.

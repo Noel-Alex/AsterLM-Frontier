@@ -1,0 +1,390 @@
+{
+  "schema_version": 1,
+  "date": "2026-08-10",
+  "classification": "diagnostic_interactive_workstation",
+  "protocol": {
+    "sequence_length": 2048,
+    "micro_batch": 1,
+    "gradient_accumulation": 16,
+    "warmup_updates": 5,
+    "measured_updates": 20,
+    "repetitions": 3,
+    "gpu_sample_interval_seconds": 0.5,
+    "idle_utilization_ceiling_percent": 25,
+    "promotion_grade": false,
+    "annotation": "Codex desktop contributed background GPU load; final benchmark must be rerun detached."
+  },
+  "variants": {
+    "dense-all-mla": {
+      "median_tokens_per_second": 12086.285028218528,
+      "median_gpu_utilization_percent": 66.0,
+      "median_gpu_power_w": 98.215,
+      "median_tokens_per_joule": 123.0594616730492,
+      "median_peak_allocated_gib": 3.5469131469726562
+    },
+    "dense-kda3": {
+      "median_tokens_per_second": 10714.42850926039,
+      "median_gpu_utilization_percent": 59.5,
+      "median_gpu_power_w": 91.075,
+      "median_tokens_per_joule": 113.06139029600276,
+      "median_peak_allocated_gib": 3.7703676223754883
+    },
+    "grouped-moe-kda3": {
+      "median_tokens_per_second": 5908.948829148469,
+      "median_gpu_utilization_percent": 43.0,
+      "median_gpu_power_w": 75.125,
+      "median_tokens_per_joule": 78.97080303103296,
+      "median_peak_allocated_gib": 5.211589813232422,
+      "relative_to_dense_kda3": {
+        "throughput_percent": -44.85,
+        "tokens_per_joule_percent": -30.15,
+        "gpu_utilization_points": -16.5,
+        "peak_allocated_percent": 38.22
+      }
+    },
+    "latent-moe-kda3": {
+      "median_tokens_per_second": 5010.621031428361,
+      "median_gpu_utilization_percent": 39.0,
+      "median_gpu_power_w": 68.0,
+      "median_tokens_per_joule": 73.68560340335824,
+      "median_peak_allocated_gib": 5.365606307983398,
+      "relative_to_dense_kda3": {
+        "throughput_percent": -53.23,
+        "tokens_per_joule_percent": -34.83,
+        "gpu_utilization_points": -20.5,
+        "peak_allocated_percent": 42.31
+      }
+    }
+  },
+  "operator_profiles": {
+    "dense-kda3": {
+      "forward_backward_ms": 268.56,
+      "optimizer_ms": 151.06,
+      "aten_mm_events": 778
+    },
+    "grouped-moe-kda3": {
+      "forward_backward_ms": 415.45,
+      "optimizer_ms": 333.08,
+      "aten_mm_events": 1196
+    },
+    "latent-moe-kda3": {
+      "forward_backward_ms": 489.97,
+      "optimizer_ms": 524.10,
+      "aten_mm_events": 1592
+    }
+  },
+  "one_repetition_causal_screens": {
+    "grouped_e8k2_batch1_seq2k": {
+      "tokens_per_second": 6238.567382742815,
+      "gpu_utilization_percent": 44.0,
+      "peak_allocated_gib": 5.211589813232422
+    },
+    "grouped_e4k2_batch1_seq2k": {
+      "tokens_per_second": 6534.548517915171,
+      "gpu_utilization_percent": 45.0,
+      "peak_allocated_gib": 4.523122787475586
+    },
+    "grouped_e4k1wide_batch1_seq2k": {
+      "tokens_per_second": 6722.501335508546,
+      "gpu_utilization_percent": 48.0,
+      "peak_allocated_gib": 5.385076522827148
+    },
+    "grouped_e8k2_batch2_seq2k": {
+      "tokens_per_second": 11151.760099504896,
+      "gpu_utilization_percent": 66.0,
+      "tokens_per_joule": 106.16679454974197,
+      "peak_allocated_gib": 8.113532066345215
+    },
+    "grouped_e8k2_batch1_seq4k": {
+      "tokens_per_second": 10567.849427750863,
+      "gpu_utilization_percent": 64.5,
+      "tokens_per_joule": 104.56487832336481,
+      "peak_allocated_gib": 8.12308406829834
+    }
+  },
+  "repeated_confirmations": {
+    "batch2_seq2k_accum8": {
+      "warmup_updates": 5,
+      "measured_updates": 20,
+      "repetitions": 3,
+      "dense-kda3": {
+        "median_tokens_per_second": 18071.316623958064,
+        "median_gpu_utilization_percent": 95.5,
+        "median_gpu_power_w": 117.48,
+        "median_tokens_per_joule": 155.0055034863667,
+        "median_peak_allocated_gib": 6.174110412597656
+      },
+      "grouped-moe-kda3": {
+        "median_tokens_per_second": 11331.61520507454,
+        "median_gpu_utilization_percent": 66.0,
+        "median_gpu_power_w": 105.06,
+        "median_tokens_per_joule": 106.29035930095245,
+        "median_peak_allocated_gib": 8.12308406829834,
+        "relative_to_dense_kda3": {
+          "throughput_percent": -37.3,
+          "tokens_per_joule_percent": -31.43,
+          "gpu_utilization_points": -29.5,
+          "peak_allocated_percent": 31.57
+        }
+      }
+    },
+    "reference_vs_grouped_batch2_seq2k_accum8": {
+      "warmup_updates": 5,
+      "measured_updates": 20,
+      "repetitions": 3,
+      "reference-moe-kda3": {
+        "median_tokens_per_second": 7818.667397474643,
+        "median_gpu_utilization_percent": 48.0,
+        "median_gpu_power_w": 80.57,
+        "median_tokens_per_joule": 97.09614899068168,
+        "median_peak_allocated_gib": 8.485073566436768
+      },
+      "grouped-moe-kda3": {
+        "median_tokens_per_second": 11006.141335003622,
+        "median_gpu_utilization_percent": 66.0,
+        "median_gpu_power_w": 102.45,
+        "median_tokens_per_joule": 107.42939321623838,
+        "median_peak_allocated_gib": 8.12308406829834,
+        "relative_to_reference": {
+          "throughput_percent": 40.77,
+          "tokens_per_joule_percent": 10.64,
+          "gpu_utilization_points": 18.0,
+          "peak_allocated_percent": -4.27
+        }
+      }
+    }
+  },
+  "one_repetition_phase_localization": {
+    "batch2_seq2k_accum8": {
+      "dense-kda3": {
+        "parameter_tensors": 434,
+        "cuda_ms": {
+          "forward": 682.570240020752,
+          "backward": 952.4362449645996,
+          "clip_and_finite_gate": 8.18345594406128,
+          "optimizer": 86.10790252685547,
+          "router_balance": 0.026479999185539782,
+          "synthetic_data": 0.09424000093713403
+        }
+      },
+      "grouped-moe-kda3": {
+        "parameter_tensors": 808,
+        "cuda_ms": {
+          "forward": 1326.167869567871,
+          "backward": 1271.080451965332,
+          "clip_and_finite_gate": 16.372751235961914,
+          "optimizer": 193.6802520751953,
+          "router_balance": 2.484320044517517,
+          "synthetic_data": 0.1722880033776164
+        }
+      },
+      "moe_minus_dense_ms": 1080.53936943586,
+      "gap_share_percent": {
+        "forward": 59.56,
+        "backward": 29.49,
+        "optimizer": 9.96
+      }
+    }
+  },
+  "shared_expert_isolation": {
+    "classification": "capacity_changing_cost_control_not_architecture_candidate",
+    "batch2_seq2k_accum8_repetitions": 3,
+    "with_shared": {
+      "median_tokens_per_second": 9872.674925829766,
+      "median_gpu_utilization_percent": 65.0,
+      "median_tokens_per_joule": 104.46169639011497,
+      "median_peak_allocated_gib": 8.124030113220215,
+      "median_phase_cuda_ms": {
+        "forward": 1597.6772079467773,
+        "backward": 1449.2588272094727,
+        "clip_and_finite_gate": 20.025456428527832,
+        "optimizer": 239.880126953125,
+        "router_balance": 2.725856065750122
+      }
+    },
+    "without_shared": {
+      "median_tokens_per_second": 10626.829338454372,
+      "median_gpu_utilization_percent": 67.0,
+      "median_tokens_per_joule": 109.27892784672088,
+      "median_peak_allocated_gib": 7.383755683898926,
+      "relative_to_with_shared": {
+        "throughput_percent": 7.64,
+        "tokens_per_joule_percent": 4.61,
+        "gpu_utilization_points": 2.0,
+        "peak_allocated_percent": -9.11
+      },
+      "median_phase_cuda_ms": {
+        "forward": 1487.910774230957,
+        "backward": 1344.2606582641602,
+        "clip_and_finite_gate": 18.38878345489502,
+        "optimizer": 225.91934967041016,
+        "router_balance": 3.1438080072402954
+      }
+    }
+  },
+  "te_grouped_shared_expert_probe": {
+    "shape": {
+      "rows": 4096,
+      "dim": 768,
+      "hidden": 704
+    },
+    "precision": "transformer_engine_delayed_fp8",
+    "baseline_median_forward_backward_ms": 1.6532480120658875,
+    "grouped_one_group_median_forward_backward_ms": 1.8411519527435303,
+    "grouped_speedup_percent": -10.205781244597667,
+    "bf16_parity": {
+      "output_relative_l2": 0.003625623881816864,
+      "input_grad_relative_l2": 0.005134271457791328,
+      "gate_up_grad_relative_l2": 0.005082424730062485,
+      "down_grad_relative_l2": 0.0032432901207357645
+    },
+    "decision": "reject_grouped_one_group_keep_existing_te_swiglu"
+  },
+  "routed_dispatch_probe": {
+    "shape": {
+      "rows": 4096,
+      "dim": 768,
+      "hidden": 704,
+      "experts": 8,
+      "top_k": 2,
+      "assignments": 8192
+    },
+    "precision": "transformer_engine_delayed_fp8",
+    "median_ms": {
+      "dispatch_pack": 0.6574079990386963,
+      "grouped_mlp_forward": 1.1234880089759827,
+      "combine": 0.26214399933815,
+      "forward_total": 2.054655909538269,
+      "backward": 2.0311520099639893,
+      "forward_backward_total": 4.073487997055054
+    },
+    "forward_share_percent": {
+      "dispatch_pack": 31.996014319810453,
+      "grouped_mlp": 54.68010501225277,
+      "combine": 12.758535291539893
+    }
+  },
+  "te_index_map_permute_probe": {
+    "bf16_parity": {
+      "output_relative_l2": 0.0,
+      "input_grad_relative_l2": 0.0,
+      "max_weight_grad_relative_l2": 0.0
+    },
+    "current_median_forward_backward_ms": 4.930047988891602,
+    "te_permute_median_forward_backward_ms": 4.962431907653809,
+    "te_permute_speedup_percent": -0.6525816245913529,
+    "decision": "reject_direct_index_map_substitution"
+  },
+  "te_mask_pad_permute_probe": {
+    "precision": "transformer_engine_delayed_fp8",
+    "bf16_parity": {
+      "output_relative_l2": 0.0032607,
+      "input_grad_relative_l2": 0.0047919,
+      "max_weight_grad_relative_l2": 0.0049376
+    },
+    "current_median_forward_backward_ms": 3.800608,
+    "te_mask_pad_median_forward_backward_ms": 3.776512,
+    "te_mask_pad_speedup_percent": 0.638,
+    "decision": "advance_only_to_full_model_gate"
+  },
+  "te_mask_pad_full_model_gate": {
+    "batch2_seq2k_accum8_repetitions": 3,
+    "provenance": {
+      "base_commit": "f415376",
+      "candidate_commit": "1f70691",
+      "worktree_was_dirty": true,
+      "note": "Exact experimental candidate source was committed immediately after the run, before removal."
+    },
+    "current": {
+      "median_tokens_per_second": 11343.4056,
+      "median_gpu_utilization_percent": 68.5,
+      "median_gpu_power_w": 104.63,
+      "median_tokens_per_joule": 108.4145,
+      "median_peak_allocated_gib": 8.123084
+    },
+    "te_mask_pad": {
+      "median_tokens_per_second": 11127.6386,
+      "median_gpu_utilization_percent": 67.0,
+      "median_gpu_power_w": 103.11,
+      "median_tokens_per_joule": 107.9201,
+      "median_peak_allocated_gib": 8.124007,
+      "relative_to_current": {
+        "throughput_percent": -1.9021,
+        "tokens_per_joule_percent": -0.456,
+        "gpu_utilization_points": -1.5,
+        "peak_allocated_percent": 0.01136
+      }
+    },
+    "decision": "reject_keep_current_grouped_dispatch"
+  },
+  "optimizer_fragmentation_confirmation": {
+    "classification": "systems_only_no_quality_claim",
+    "batch2_seq2k_accum8_repetitions": 3,
+    "provenance": {
+      "commit": "b7cfff7337cd6813f45ec171eaec07b1be1d860f",
+      "worktree_was_dirty": false,
+      "tracked_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "apollo_mini_with_norm_limiter": {
+      "median_tokens_per_second": 10636.842715187317,
+      "median_optimizer_cuda_ms": 216.83113861083984,
+      "median_clip_cuda_ms": 18.83891201019287,
+      "median_gpu_utilization_percent": 65.0,
+      "median_tokens_per_joule": 105.6919983623541,
+      "median_peak_allocated_gib": 8.124053001403809
+    },
+    "apollo_mini_without_norm_limiter": {
+      "median_tokens_per_second": 10722.095150087605,
+      "median_optimizer_cuda_ms": 123.64724731445312,
+      "median_clip_cuda_ms": 18.12289524078369,
+      "median_gpu_utilization_percent": 64.0,
+      "median_tokens_per_joule": 105.1495062281809,
+      "median_peak_allocated_gib": 8.122798919677734,
+      "relative_to_limiter": {
+        "throughput_percent": 0.801482518666607,
+        "optimizer_cuda_ms_percent": -42.9753272031789,
+        "gpu_utilization_points": -1.0,
+        "tokens_per_joule_percent": -0.513276447204003,
+        "peak_allocated_percent": -0.01543665121162
+      },
+      "decision": "cost_control_only_requires_quality_and_stability_gate"
+    },
+    "muon_fused_adamw": {
+      "median_tokens_per_second": 9612.857795757316,
+      "median_optimizer_cuda_ms": 460.0936584472656,
+      "median_clip_cuda_ms": 19.4683198928833,
+      "median_gpu_utilization_percent": 67.0,
+      "median_tokens_per_joule": 95.97535090259443,
+      "median_peak_allocated_gib": 9.639641761779785,
+      "relative_to_apollo_limiter": {
+        "throughput_percent": -9.62677503887457,
+        "optimizer_cuda_ms_percent": 112.18984569971,
+        "gpu_utilization_points": 2.0,
+        "tokens_per_joule_percent": -9.1933614751489,
+        "peak_allocated_percent": 18.6555745034417
+      },
+      "decision": "reject_for_current_grouped_moe_recipe"
+    },
+    "default_decision": "retain_apollo_mini_with_norm_limiter"
+  },
+  "raw_artifacts": [
+    "runs/frontier-vnext2/moe-utilization-followup-20260810/matrix.json",
+    "runs/frontier-vnext2/moe-utilization-dense-kda3-20260810/matrix.json",
+    "runs/frontier-vnext2/operator-profiles-20260810/",
+    "runs/frontier-vnext2/moe-work-granularity-screen-20260810/matrix.json",
+    "runs/frontier-vnext2/moe-workload-mb2-screen-20260810/matrix.json",
+    "runs/frontier-vnext2/moe-workload-seq4k-screen-20260810/matrix.json",
+    "runs/frontier-vnext2/dense-vs-grouped-mb2-confirm-20260810/matrix.json",
+    "runs/frontier-vnext2/reference-vs-grouped-mb2-20260810/matrix.json",
+    "runs/frontier-vnext2/phase-timing-dense-vs-grouped-b2-20260810/",
+    "runs/frontier-vnext2/shared-expert-isolation-b2-20260810/matrix.json",
+    "runs/frontier-vnext2/shared-expert-isolation-b2-repeat-20260810/matrix.json",
+    "runs/frontier-vnext2/te-shared-expert-probe-20260810.json",
+    "runs/frontier-vnext2/moe-dispatch-probe-20260810.json",
+    "runs/frontier-vnext2/te-moe-permute-probe-20260810.json",
+    "runs/frontier-vnext2/te-moe-permute-pad-probe-20260810.json",
+    "runs/frontier-vnext2/current-vs-te-mask-pad-b2-20260810/matrix.json",
+    "runs/frontier-vnext2/optimizer-fragmentation-screen-20260810/matrix.json",
+    "runs/frontier-vnext2/optimizer-fragmentation-confirm-20260810/matrix.json"
+  ]
+}

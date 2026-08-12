@@ -9,6 +9,7 @@ import sys
 from pathlib import Path
 
 from asterlm.reasoning import RLVRConfig
+from asterlm.training.checkpoint import resolve_checkpoint
 
 
 def atomic_state(path: Path, payload: dict) -> None:
@@ -27,7 +28,7 @@ def latest_checkpoint(root: Path) -> str:
     latest = root / "latest.txt"
     if not latest.exists():
         raise FileNotFoundError(f"No latest checkpoint at {latest}")
-    return latest.read_text(encoding="utf-8").strip()
+    return str(resolve_checkpoint(root))
 
 
 def main() -> None:

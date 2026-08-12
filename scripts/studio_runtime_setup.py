@@ -5,6 +5,8 @@ import argparse
 import importlib
 import json
 import os
+import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -16,17 +18,22 @@ ROOT = Path(__file__).resolve().parents[1]
 STATE = ROOT / 'data' / 'aster-studio'
 
 PROFILES: dict[str, list[str]] = {
-    "kda": ["flash-linear-attention==0.5.1"],
+    "kda": ["flash-linear-attention==0.5.2"],
     "apollo": ["apollo-torch>=1.0"],
     "tracking": ["wandb>=0.19", "tensorboard>=2.18"],
     "torchao": ["torchao==0.17.0"],
-    "fp8": ["transformer_engine[pytorch]==2.13.0"],
+    "fp8": ["transformer-engine[pytorch]==2.17.0"],
     "reasoning": ["math-verify>=0.7.0", "sympy>=1.13"],
 }
 
 
 
-def run(cmd: list[str], *, capture: bool = False) -> subprocess.CompletedProcess[str]:
+def run(
+    cmd: list[str],
+    *,
+    capture: bool = False,
+    env: dict[str, str] | None = None,
+) -> subprocess.CompletedProcess[str]:
     print('$', ' '.join(cmd), flush=True)
     return subprocess.run(
         cmd,
@@ -35,27 +42,72 @@ def run(cmd: list[str], *, capture: bool = False) -> subprocess.CompletedProcess
         text=True,
         stdout=subprocess.PIPE if capture else None,
         stderr=subprocess.STDOUT if capture else None,
+        env=env,
     )
 
 
+def installer_prefix() -> list[str]:
+    candidates = [
+        os.environ.get("ASTERLM_UV_PATH"),
+        shutil.which("uv"),
+        "/root/.local/bin/uv",
+    ]
+    for candidate in candidates:
+        if candidate and Path(candidate).is_file():
+            return [candidate, "pip"]
+    try:
+        import pip  # noqa: F401
+    except ImportError as exc:
+        raise RuntimeError("Neither uv nor pip is available in this environment") from exc
+    return [sys.executable, "-m", "pip"]
+
+
 def pip_freeze(path: Path) -> None:
-    result = run([sys.executable, '-m', 'pip', 'freeze'], capture=True)
+    result = run([*installer_prefix(), "freeze"], capture=True)
     path.write_text(result.stdout or '', encoding='utf-8')
 
 
 def dry_run_guard(requirements: list[str]) -> dict[str, Any]:
+    prefix = installer_prefix()
+    if prefix[-1] == "pip" and Path(prefix[0]).name.startswith("uv"):
+        result = subprocess.run(
+            [*prefix, "install", "--dry-run", *requirements],
+            cwd=ROOT,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            check=False,
+        )
+        print(result.stdout or "", flush=True)
+        if result.returncode != 0:
+            raise RuntimeError("uv dependency dry-run failed")
+        protected = {"torch", "triton", "datasets", "pyarrow", "huggingface-hub", "zstandard"}
+        planned_changes: dict[str, str | None] = {}
+        for line in (result.stdout or "").splitlines():
+            clean_line = re.sub(r"\x1b\[[0-9;]*m", "", line)
+            match = re.match(r"\s*[+\-~]\s+([A-Za-z0-9_.-]+)==([^\s]+)", clean_line)
+            if match and match.group(1).lower().replace("_", "-") in protected:
+                planned_changes[match.group(1)] = match.group(2)
+        if planned_changes:
+            raise RuntimeError(
+                "Refusing optional runtime install because uv wants to replace protected "
+                f"packages: {planned_changes}"
+            )
+        return {"installer": "uv", "output": result.stdout or ""}
+
     with tempfile.NamedTemporaryFile(suffix='.json', delete=False) as handle:
         report_path = Path(handle.name)
     try:
         result = subprocess.run(
             [
-                sys.executable, '-m', 'pip', 'install', '--upgrade',
+                *prefix, 'install',
                 '--dry-run', '--report', str(report_path), *requirements,
             ],
             cwd=ROOT,
             text=True,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
+            check=False,
         )
         print(result.stdout or '', flush=True)
         if result.returncode != 0:
@@ -101,7 +153,7 @@ def verify() -> dict[str, Any]:
             if attr is not None:
                 getattr(loaded, attr)
             checks[name] = True
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - every optional capability must be reported
             checks[name] = f'{type(exc).__name__}: {exc}'
     return checks
 
@@ -132,10 +184,19 @@ def main() -> None:
     for profile in profiles:
         requirements = PROFILES[profile]
         print(f'\n=== {profile.upper()} ===', flush=True)
-        dry_run_guard(requirements)
-        install_cmd = [sys.executable, "-m", "pip", "install", "--upgrade"]
         if profile == "fp8":
-            install_cmd.append("--no-build-isolation")
+            if os.name == "nt":
+                raise RuntimeError("Install FP8 inside WSL/Linux, not native Windows Python")
+            helper = ROOT / "scripts" / "install_transformer_engine_linux.sh"
+            helper_env = dict(os.environ)
+            helper_env["ASTERLM_VENV_PATH"] = sys.prefix
+            run(["bash", str(helper)], env=helper_env)
+            summary['steps'].append(
+                {'profile': profile, 'requirements': requirements, 'helper': str(helper), 'ok': True}
+            )
+            continue
+        dry_run_guard(requirements)
+        install_cmd = [*installer_prefix(), "install"]
         install_cmd.extend(requirements)
         run(install_cmd)
         import torch as torch_after_step

@@ -103,7 +103,6 @@ def main() -> None:
     out_root = ROOT / args.output_dir
     out_root.mkdir(parents=True, exist_ok=True)
     outputs: dict[str, str] = {}
-    previous_run: str | None = None
 
     for index, key in enumerate(("stage1", "stage2", "stage3"), start=1):
         raw = configs[key]
@@ -133,7 +132,6 @@ def main() -> None:
         target = out_root / f"{args.name}_stage{index}_{context // 1024}k.yaml"
         target.write_text(yaml.safe_dump(raw, sort_keys=False), encoding="utf-8")
         outputs[key] = str(target.relative_to(ROOT))
-        previous_run = run_dir
 
     repetition = (
         float(total) / float(args.available_tokens)

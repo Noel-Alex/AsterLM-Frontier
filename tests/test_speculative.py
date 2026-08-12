@@ -5,6 +5,7 @@ from asterlm.generation import GenerationConfig, generate, generate_mtp_greedy
 
 
 def test_mtp_reference_matches_greedy_output():
+    torch.manual_seed(0)
     config = AsterConfig(
         vocab_size=64,
         d_model=32,
@@ -25,6 +26,10 @@ def test_mtp_reference_matches_greedy_output():
     )
     model = AsterLM(config).eval()
     prompt = torch.randint(0, 64, (1, 8))
-    standard = generate(model, prompt, GenerationConfig(max_new_tokens=6, temperature=0))
+    standard = generate(
+        model,
+        prompt,
+        GenerationConfig(max_new_tokens=6, temperature=0, repetition_penalty=1.0),
+    )
     speculative, _ = generate_mtp_greedy(model, prompt, 6)
     assert torch.equal(standard, speculative)

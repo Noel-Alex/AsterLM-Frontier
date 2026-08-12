@@ -1,0 +1,84 @@
+{
+  "schema_version": 1,
+  "status": "passed",
+  "git_commit": "749db298bfbe0518337d3753cf8c20a4dc938c54",
+  "command": [
+    "/root/.venvs/asterlm/bin/python",
+    "-m",
+    "pytest",
+    "-q",
+    "--junitxml=/mnt/n/AsterLM-Frontier/docs/promotion-evidence/749db298bfbe/pytest-full-suite.junit.xml"
+  ],
+  "junit_sha256": "b2402eea26298d654dfe51d21817d4333376ab91acfa30e2afcfb2c53e3842ac",
+  "totals": {
+    "tests": 310,
+    "passed": 310,
+    "failed": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  "gate_results": {
+    "reference_correctness": {
+      "passed": true,
+      "assertions": [
+        "tests.test_model.test_cached_decode_matches_full_forward",
+        "tests.test_model.test_chunked_prefill_matches_full_forward_last_token"
+      ]
+    },
+    "optimized_kernel_numerical_parity": {
+      "passed": true,
+      "assertions": [
+        "tests.test_moe_cutlass_cuda.test_grouped_moe_matches_dropless_reference[cutlass]"
+      ]
+    },
+    "unit_and_integration_tests": {
+      "passed": true,
+      "assertions": [
+        "entire_suite:310"
+      ]
+    },
+    "deterministic_reproducibility": {
+      "passed": true,
+      "assertions": [
+        "tests.test_quality_campaign.test_named_initialization_audit_accepts_shared_projection_parity",
+        "tests.test_exact_training_resume.test_uninterrupted_and_reconstructed_training_are_exact"
+      ]
+    },
+    "checkpoint_round_trip": {
+      "passed": true,
+      "assertions": [
+        "tests.test_checkpoint.test_checkpoint_round_trip",
+        "tests.test_checkpoint.test_checkpoint_hash_detects_corruption"
+      ]
+    },
+    "optimizer_scheduler_exact_resume": {
+      "passed": true,
+      "assertions": [
+        "tests.test_exact_training_resume.test_uninterrupted_and_reconstructed_training_are_exact"
+      ]
+    },
+    "data_cursor_exact_resume": {
+      "passed": true,
+      "assertions": [
+        "tests.test_data.test_packed_data_cursor_resumes_exactly_without_replaying_prior_batches",
+        "tests.test_exact_training_resume.test_uninterrupted_and_reconstructed_training_are_exact"
+      ]
+    },
+    "rng_state_resume": {
+      "passed": true,
+      "assertions": [
+        "tests.test_exact_training_resume.test_uninterrupted_and_reconstructed_training_are_exact"
+      ]
+    }
+  },
+  "not_certified_by_design": [
+    "quality comparisons",
+    "wall-clock comparisons",
+    "GPU utilization or VRAM",
+    "interruption signal recovery",
+    "Hub or W&B network round trips",
+    "inference quality/performance",
+    "clean-corpus quality",
+    "provider-specific recovery"
+  ]
+}

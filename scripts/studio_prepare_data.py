@@ -62,8 +62,6 @@ def main() -> None:
     output = ROOT / str(plan.get("output", "data/clean-frontier-studio"))
     benchmarks = ROOT / str(plan.get("benchmarks", "data/decontamination-benchmarks"))
     validation_fraction = float(plan.get("validation_fraction", 0.005))
-    pii_mode = str(plan.get("pii_mode", "redact"))
-    near_distance = int(plan.get("near_distance", 3))
     audit_sample = int(plan.get("audit_sample", 10000))
     sources = list(plan.get("sources", []))
     if not sources:
@@ -96,7 +94,6 @@ def main() -> None:
         )
 
     if args.reset_existing and output.exists() and not args.dry_run:
-        import shutil
         shutil.rmtree(output)
 
     output.mkdir(parents=True, exist_ok=True)

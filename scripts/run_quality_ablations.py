@@ -33,7 +33,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description="Train architecture/precision candidates for equal tokens and rank by held-out loss"
     )
-    parser.add_argument("--data", default="configs/data/pretrain_frontier_clean.yaml")
+    parser.add_argument("--data", default="data/clean-frontier/pretrain_data.yaml")
     parser.add_argument("--train", default="configs/train/probe_quality_2k.yaml")
     parser.add_argument("--model", action="append", default=[])
     parser.add_argument("--tokens", type=int, default=100_000_000)

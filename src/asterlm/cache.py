@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import torch
 
@@ -236,7 +236,7 @@ class AsterCache:
     cache_quantize_rope: bool = False
 
     @classmethod
-    def create(cls, use_fla: bool = False, config: AsterConfig | None = None) -> "AsterCache":
+    def create(cls, use_fla: bool = False, config: AsterConfig | None = None) -> AsterCache:
         kwargs: dict[str, Any] = {}
         if config is not None:
             kwargs = {
@@ -249,9 +249,13 @@ class AsterCache:
         cache = cls(**kwargs)
         if use_fla:
             try:
-                from fla.models.utils import LegacyFLACache
+                # FLA's compatibility Cache adapts itself to the installed
+                # transformers Cache constructor. LegacyFLACache calls the old
+                # zero-argument superclass API and fails with transformers builds
+                # that require layers or layer_class_to_replicate.
+                from fla.models.utils import Cache as FLACache
 
-                cache.fla_cache = LegacyFLACache()
+                cache.fla_cache = FLACache()
             except Exception as exc:  # pragma: no cover - depends on optional CUDA package
                 raise RuntimeError("FLA was requested but its cache could not be constructed") from exc
         return cache

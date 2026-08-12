@@ -8,6 +8,7 @@ import sys
 from pathlib import Path
 
 from asterlm.config import TrainConfig
+from asterlm.training.checkpoint import resolve_checkpoint
 
 
 def run(command: list[str]) -> None:
@@ -17,7 +18,7 @@ def run(command: list[str]) -> None:
 
 def latest(output_dir: str) -> str | None:
     path = Path(output_dir) / "latest.txt"
-    return path.read_text(encoding="utf-8").strip() if path.exists() else None
+    return str(resolve_checkpoint(output_dir)) if path.exists() else None
 
 
 def main() -> None:

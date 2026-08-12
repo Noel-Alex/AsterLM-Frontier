@@ -9,18 +9,23 @@ import platform
 import sys
 import time
 import traceback
-from datetime import datetime, timezone
+from collections.abc import Callable
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 import torch
+
+from asterlm.runtime import configure_transformer_engine_runtime
+
+configure_transformer_engine_runtime()
 
 
 def version_of(name: str) -> str | None:
     try:
         module = importlib.import_module(name)
         return str(getattr(module, "__version__", "unknown"))
-    except Exception:
+    except Exception:  # noqa: BLE001 - optional package metadata must never abort the audit
         return None
 
 
@@ -36,7 +41,7 @@ def run_check(name: str, fn: Callable[[], Any]) -> dict[str, Any]:
             "seconds": time.perf_counter() - started,
             "detail": detail,
         }
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - each capability failure is recorded independently
         return {
             "name": name,
             "status": "error",
@@ -93,14 +98,24 @@ def check_flex_attention() -> dict[str, Any]:
 
 
 def check_fla() -> dict[str, Any]:
+    import importlib.util
+
     from fla.layers.gdn2 import GatedDeltaNet2
     from fla.layers.kda import KimiDeltaAttention
     from fla.ops.attnres import fused_attnres
 
+    compute_capability = list(torch.cuda.get_device_capability(0)) if torch.cuda.is_available() else None
     return {
         "kda": f"{KimiDeltaAttention.__module__}.{KimiDeltaAttention.__name__}",
         "gdn2": f"{GatedDeltaNet2.__module__}.{GatedDeltaNet2.__name__}",
         "fused_attnres": callable(fused_attnres),
+        "flash_kda_package_installed": importlib.util.find_spec("flash_kda") is not None,
+        "flash_kda_official_sm90_minimum_met": bool(
+            compute_capability and compute_capability[0] >= 9
+        ),
+        "aster_screen_head_dim": 64,
+        "flash_kda_required_head_dim": 128,
+        "training_backend": "FLA Triton chunk KDA (FlashKDA is inference-only)",
     }
 
 
@@ -153,6 +168,7 @@ def check_grouped_moe() -> dict[str, Any]:
         raise RuntimeError("CUDA unavailable")
     import transformer_engine.pytorch as te
     from transformer_engine.common.recipe import DelayedScaling, Format
+
     from asterlm.layers.moe import DeepSeekStyleMoE
 
     old = os.environ.get("ASTER_MOE_IMPL")
@@ -206,7 +222,7 @@ def main() -> None:
         gpu = {"available": False}
 
     report: dict[str, Any] = {
-        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "generated_at": datetime.now(UTC).isoformat(),
         "python": sys.version,
         "platform": platform.platform(),
         "torch": torch.__version__,
@@ -215,6 +231,7 @@ def main() -> None:
         "versions": {
             "transformer_engine": version_of("transformer_engine"),
             "fla": version_of("fla"),
+            "flash_kda": version_of("flash_kda"),
             "triton": version_of("triton"),
             "torchao": version_of("torchao"),
             "apollo_torch": version_of("apollo_torch"),

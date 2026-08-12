@@ -8,7 +8,6 @@ import yaml
 from asterlm.config import AsterConfig, TrainConfig
 from asterlm.model import AsterLM
 
-
 ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -17,16 +16,20 @@ def _corpus_tokens(path: str) -> int:
     return sum(int(source["target_tokens"]) for source in raw["sources"])
 
 
-def _stack_tokens(path: str) -> int:
-    raw = yaml.safe_load((ROOT / path).read_text(encoding="utf-8"))["stack_edu"]
-    return sum(int(source["target_tokens"]) for source in raw["languages"])
-
-
-def test_progressive_overtrain_tiers_have_exact_token_budgets() -> None:
+def test_active_overtrain_tranches_exclude_retired_stack_edu() -> None:
     assert _corpus_tokens("configs/corpus/corpus_overtrain_50b.yaml") == 43_500_000_000
-    assert _stack_tokens("configs/corpus/stack_edu_6p5b.yaml") == 6_500_000_000
     assert _corpus_tokens("configs/corpus/corpus_overtrain_100b.yaml") == 87_000_000_000
-    assert _stack_tokens("configs/corpus/stack_edu_13b.yaml") == 13_000_000_000
+    source = (ROOT / "scripts/download_data.py").read_text(encoding="utf-8")
+    assert "frontier-stack-edu" not in source
+    assert "overtrain100-stack-edu" not in source
+
+
+def test_nemotron_candidate_pool_is_separate_and_revision_pinned() -> None:
+    path = ROOT / "configs/corpus/corpus_nemotron_candidates_16b.yaml"
+    corpus = yaml.safe_load(path.read_text(encoding="utf-8"))["corpus"]
+    assert sum(int(source["target_tokens"]) for source in corpus["sources"]) == 16_000_000_000
+    assert corpus["output_dir"] == "data/corpus-nemotron-candidates"
+    assert all(len(source["revision"]) == 40 for source in corpus["sources"])
 
 
 def test_100b_train_configs_sum_to_campaign_budget() -> None:
@@ -36,7 +39,11 @@ def test_100b_train_configs_sum_to_campaign_budget() -> None:
         TrainConfig.from_yaml(ROOT / "configs/train/frontier_100b_stage3_32k.yaml"),
     ]
     assert sum(config.max_tokens or 0 for config in configs) == 100_000_000_000
-    assert configs[0].milestone_tokens == [18_400_000_000, 50_000_000_000, 92_000_000_000]
+    assert len(configs[0].milestone_tokens) == 13
+    assert configs[0].milestone_tokens[-3:] == [65_000_000_000, 80_000_000_000, 92_000_000_000]
+    assert sum(len(config.milestone_tokens) for config in configs) == 24
+    assert all(config.checkpoint_policy == "full" for config in configs)
+    assert all(config.checkpoint_pyramid_levels == 8 for config in configs)
     assert all(config.hub_upload_milestones for config in configs)
 
 

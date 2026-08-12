@@ -1,8 +1,11 @@
 stack_edu:
   output_dir: data/stack-edu-frontier-2p4b
   shard_size_mb: 512
-  workers: 4
-  in_flight: 16
+  # Software Heritage objects are small, individually addressed and latency-bound.
+  # The old 4/16 settings left CPU, RAM and the network idle at roughly 5--15k tok/s.
+  # Keep Arrow input at one shard, but overlap independent unsigned S3 blob fetches.
+  workers: 32
+  in_flight: 128
   languages:
   - name: Python
     target_tokens: 760000000

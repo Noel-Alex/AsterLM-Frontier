@@ -5,10 +5,15 @@ from torch import nn
 from torch.nn import functional as F
 
 from asterlm.quantization.loqt import effective_parameter_count
-from .ffn import SwiGLU
+
+from .ffn import SiTUGLU, SwiGLU
 from .linear import build_linear, mark_residual
+from .moe_grouped_cutlass import CUTLASSGroupedRoutedExperts
+from .moe_grouped_liger import LigerGroupedRoutedExperts
 from .moe_grouped_te import TEGroupedRoutedExperts
+from .moe_grouped_torch import TorchGroupedRoutedExperts
 from .norm import RMSNorm
+from .routing import fixed_bincount
 
 
 class LatentMoE(nn.Module):
@@ -21,10 +26,10 @@ class LatentMoE(nn.Module):
 
         W_up * sum_i p_i E_i(W_down x; ell) + sum_j E_shared_j(x; d)
 
-    The router is deliberately computed from the original token x. The latent routed
-    aggregate can optionally be RMS-normalized before the up-projection (the
-    Stable LatentMoE ablation). Standard SwiGLU is retained so the experiment
-    isolates the latent bottleneck rather than confounding it with a new activation.
+    The router is deliberately computed from the original token x. Kimi K3's complete
+    Stable LatentMoE recipe is represented by three independent switches: routed
+    post-normalization, SiTU-GLU experts, and Quantile Balancing. Keeping them
+    independent permits causal ablations instead of relabeling post-normalization alone.
     """
 
     def __init__(
@@ -47,6 +52,11 @@ class LatentMoE(nn.Module):
         init_std: float = 0.02,
         norm_eps: float = 1e-6,
         post_norm: bool = False,
+        activation: str = "swiglu",
+        situ_beta_gate: float = 4.0,
+        situ_beta_up: float = 25.0,
+        quantile_bins: int = 256,
+        quantile_margin_bound: float = 4.0,
     ) -> None:
         super().__init__()
         if not 1 <= top_k <= num_experts:
@@ -55,10 +65,31 @@ class LatentMoE(nn.Module):
             raise ValueError("LatentMoE latent_dim must be positive and smaller than dim")
         if shared_experts < 0:
             raise ValueError("shared_experts must be non-negative")
-        if moe_impl not in {"reference", "grouped"}:
-            raise ValueError("moe_impl must be reference or grouped")
+        if moe_impl not in {
+            "reference",
+            "grouped",
+            "cutlass",
+            "torch_grouped",
+            "liger",
+        }:
+            raise ValueError(
+                "moe_impl must be reference, grouped, cutlass, torch_grouped, or liger"
+            )
         if moe_impl == "grouped" and linear_backend != "transformer_engine":
             raise ValueError("grouped LatentMoE requires Transformer Engine expert linears")
+        if activation not in {"swiglu", "situ_glu"}:
+            raise ValueError("activation must be swiglu or situ_glu")
+        if moe_impl == "grouped" and activation != "swiglu":
+            raise ValueError(
+                "Transformer Engine's fused grouped path supports SwiGLU only; "
+                "use the CUTLASS grouped path for SiTU-GLU"
+            )
+        if moe_impl == "liger" and activation != "swiglu":
+            raise ValueError(
+                "LigerExperts 0.8 supports SwiGLU only; use CUTLASS for SiTU-GLU"
+            )
+        if quantile_bins < 16 or quantile_margin_bound <= 0:
+            raise ValueError("invalid Quantile Balancing histogram settings")
 
         self.dim = int(dim)
         self.latent_dim = int(latent_dim)
@@ -69,6 +100,9 @@ class LatentMoE(nn.Module):
         self.bias_update_speed = float(bias_update_speed)
         self.linear_backend = linear_backend
         self.moe_impl = moe_impl
+        self.activation = activation
+        self.quantile_bins = int(quantile_bins)
+        self.quantile_margin_bound = float(quantile_margin_bound)
 
         router_backend = "torch" if linear_backend == "transformer_engine" else linear_backend
         self.router = build_linear(dim, num_experts, bias=False, backend=router_backend)
@@ -86,21 +120,38 @@ class LatentMoE(nn.Module):
             "load_accumulator", torch.zeros(num_experts, dtype=torch.float32), persistent=False
         )
         self.register_buffer("load_batches", torch.zeros((), dtype=torch.float32), persistent=False)
-
-        ffn_kwargs = dict(
-            loqt_rank=loqt_rank,
-            loqt_alpha=loqt_alpha,
-            loqt_group_size=loqt_group_size,
-            init_std=init_std,
+        self.register_buffer(
+            "quantile_histogram",
+            torch.zeros(num_experts, quantile_bins, dtype=torch.float32),
+            persistent=False,
         )
+        self.register_buffer(
+            "quantile_tokens", torch.zeros((), dtype=torch.float32), persistent=False
+        )
+        self.register_buffer(
+            "quantile_clipped", torch.zeros((), dtype=torch.float32), persistent=False
+        )
+
+        ffn_kwargs = {
+            "loqt_rank": loqt_rank,
+            "loqt_alpha": loqt_alpha,
+            "loqt_group_size": loqt_group_size,
+            "init_std": init_std,
+        }
+        expert_type = SiTUGLU if activation == "situ_glu" else SwiGLU
+        if activation == "situ_glu":
+            ffn_kwargs.update(beta_gate=situ_beta_gate, beta_up=situ_beta_up)
         self.routed = nn.ModuleList(
             [
-                SwiGLU(latent_dim, expert_hidden, dropout, linear_backend, **ffn_kwargs)
+                expert_type(latent_dim, expert_hidden, dropout, linear_backend, **ffn_kwargs)
                 for _ in range(num_experts)
             ]
         )
         self.shared = nn.ModuleList(
-            [SwiGLU(dim, expert_hidden, dropout, linear_backend, **ffn_kwargs) for _ in range(shared_experts)]
+            [
+                expert_type(dim, expert_hidden, dropout, linear_backend, **ffn_kwargs)
+                for _ in range(shared_experts)
+            ]
         )
         self._grouped_routed = None
         if self.moe_impl == "grouped":
@@ -112,11 +163,59 @@ class LatentMoE(nn.Module):
                 dropout=dropout,
                 align=16,
             )
+        elif self.moe_impl == "cutlass":
+            self._grouped_routed = CUTLASSGroupedRoutedExperts(
+                self.routed,
+                dim=latent_dim,
+                expert_hidden=expert_hidden,
+                num_experts=num_experts,
+                dropout=dropout,
+            )
+        elif self.moe_impl == "torch_grouped":
+            self._grouped_routed = TorchGroupedRoutedExperts(
+                self.routed,
+                dim=latent_dim,
+                expert_hidden=expert_hidden,
+                num_experts=num_experts,
+                dropout=dropout,
+            )
+        elif self.moe_impl == "liger":
+            self._grouped_routed = LigerGroupedRoutedExperts(
+                self.routed,
+                dim=latent_dim,
+                expert_hidden=expert_hidden,
+                num_experts=num_experts,
+                dropout=dropout,
+            )
 
         self.last_aux_loss: torch.Tensor | None = None
         self.last_z_loss: torch.Tensor | None = None
         self.last_load: torch.Tensor | None = None
         self.last_top1_route: torch.Tensor | None = None
+        self.last_quantile_clipped_fraction: torch.Tensor | None = None
+
+    @torch.no_grad()
+    def _accumulate_quantile_histogram(
+        self, affinity: torch.Tensor, cutoff: torch.Tensor
+    ) -> None:
+        margins = affinity - cutoff.unsqueeze(-1)
+        bound = self.quantile_margin_bound
+        clipped = margins.clamp(-bound, bound)
+        self.quantile_clipped.add_((clipped != margins).sum())
+        scaled = ((clipped + bound) * (self.quantile_bins / (2.0 * bound))).floor()
+        bins = scaled.to(torch.long).clamp_(0, self.quantile_bins - 1)
+        offsets = (
+            torch.arange(self.num_experts, device=bins.device, dtype=torch.long)
+            * self.quantile_bins
+        )
+        flat_bins = (bins + offsets).reshape(-1)
+        histogram = fixed_bincount(
+            flat_bins,
+            self.num_experts * self.quantile_bins,
+            dtype=self.quantile_histogram.dtype,
+        ).reshape(self.num_experts, self.quantile_bins)
+        self.quantile_histogram.add_(histogram)
+        self.quantile_tokens.add_(float(affinity.shape[0]))
 
     def _run_expert(self, expert: nn.Module, tokens: torch.Tensor) -> torch.Tensor:
         if self.linear_backend != "transformer_engine":
@@ -142,18 +241,27 @@ class LatentMoE(nn.Module):
             if self.router_score == "sigmoid"
             else F.softmax(router_logits, dim=-1)
         )
+        uses_selection_bias = self.balance_strategy in {"bias", "hybrid", "quantile"}
         selection_scores = (
             affinity + self.routing_bias
-            if self.balance_strategy in {"bias", "hybrid"}
+            if uses_selection_bias
             else affinity
         )
-        _, top_idx = selection_scores.topk(self.top_k, dim=-1)
+        selection_width = (
+            self.top_k + 1
+            if self.balance_strategy == "quantile" and self.top_k < self.num_experts
+            else self.top_k
+        )
+        top_values, top_indices = selection_scores.topk(selection_width, dim=-1)
+        top_idx = top_indices[:, : self.top_k]
+        if self.training and self.balance_strategy == "quantile" and selection_width > self.top_k:
+            self._accumulate_quantile_histogram(affinity, top_values[:, self.top_k])
         self.last_top1_route = top_idx[:, 0].detach()
         top_weight = affinity.gather(-1, top_idx)
         top_weight = top_weight / top_weight.sum(dim=-1, keepdim=True).clamp_min(1e-9)
 
         latent = self.down_proj(flat)
-        if self.moe_impl == "grouped":
+        if self.moe_impl in {"grouped", "cutlass", "torch_grouped", "liger"}:
             if self._grouped_routed is None:
                 raise RuntimeError("Grouped LatentMoE bridge was not initialized")
             routed_latent = self._grouped_routed(latent, top_idx, top_weight)
@@ -173,8 +281,8 @@ class LatentMoE(nn.Module):
         for expert in self.shared:
             shared_out = shared_out + self._run_expert(expert, flat)
 
-        dispatch = F.one_hot(top_idx, num_classes=self.num_experts).float().sum(dim=1) / self.top_k
-        load = dispatch.mean(dim=0)
+        load = fixed_bincount(top_idx, self.num_experts, dtype=torch.float32)
+        load = load / float(top_idx.numel())
         importance = affinity / affinity.sum(dim=-1, keepdim=True).clamp_min(1e-9)
         importance = importance.mean(dim=0)
         self.last_aux_loss = self.num_experts * torch.sum(importance * load.detach())
@@ -188,9 +296,30 @@ class LatentMoE(nn.Module):
 
     @torch.no_grad()
     def update_routing_bias(self) -> torch.Tensor | None:
-        if self.balance_strategy not in {"bias", "hybrid"} or self.load_batches.item() == 0:
+        if self.balance_strategy == "quantile":
+            if self.top_k >= self.num_experts:
+                return None
+            histogram = self.quantile_histogram.clone()
+            if torch.distributed.is_available() and torch.distributed.is_initialized():
+                torch.distributed.all_reduce(histogram)
+            counts = histogram.sum(dim=-1)
+            probability = 1.0 - (self.top_k / self.num_experts)
+            ranks = (counts * probability).ceil().clamp_min(1.0).unsqueeze(-1)
+            cumulative = histogram.cumsum(dim=-1)
+            bin_index = (cumulative >= ranks).to(torch.int64).argmax(dim=-1)
+            width = 2.0 * self.quantile_margin_bound / self.quantile_bins
+            quantile = -self.quantile_margin_bound + (bin_index.float() + 0.5) * width
+            self.routing_bias.copy_(-quantile)
+            self.routing_bias.sub_(self.routing_bias.mean())
+            denominator = (self.quantile_tokens * self.num_experts).clamp_min(1.0)
+            self.last_quantile_clipped_fraction = self.quantile_clipped / denominator
+            self.quantile_histogram.zero_()
+            self.quantile_tokens.zero_()
+            self.quantile_clipped.zero_()
+            return counts / counts.sum().clamp_min(1.0)
+        if self.balance_strategy not in {"bias", "hybrid"}:
             return None
-        mean_load = self.load_accumulator / self.load_batches
+        mean_load = self.load_accumulator / self.load_batches.clamp_min(1.0)
         target = torch.full_like(mean_load, 1.0 / self.num_experts)
         self.routing_bias.add_(torch.sign(target - mean_load), alpha=self.bias_update_speed)
         self.routing_bias.sub_(self.routing_bias.mean())

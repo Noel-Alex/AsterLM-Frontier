@@ -113,7 +113,8 @@ def _parse_csv_line(line: str) -> list[str]:
 def gpu_snapshot() -> dict[str, Any]:
     fields = [
         "index", "name", "memory.total", "memory.used", "memory.free",
-        "utilization.gpu", "temperature.gpu", "pstate",
+        "utilization.gpu", "temperature.gpu", "pstate", "clocks.current.sm",
+        "clocks.current.memory", "power.draw",
     ]
     raw = run_capture([
         "nvidia-smi", "--query-gpu=" + ",".join(fields), "--format=csv,noheader,nounits"
@@ -125,24 +126,18 @@ def gpu_snapshot() -> dict[str, Any]:
         if len(vals) == len(fields):
             for k, v in zip(fields, vals, strict=True):
                 v = v.strip()
-                if k in {"index", "memory.total", "memory.used", "memory.free", "utilization.gpu", "temperature.gpu"}:
+                output_key = "gpu_name" if k == "name" else k
+                if k in {
+                    "index", "memory.total", "memory.used", "memory.free",
+                    "utilization.gpu", "temperature.gpu", "clocks.current.sm",
+                    "clocks.current.memory", "power.draw",
+                }:
                     try:
-                        snap[k] = float(v)
+                        snap[output_key] = float(v)
                     except Exception:
-                        snap[k] = None
+                        snap[output_key] = None
                 else:
-                    snap[k] = v
-    optional = run_capture([
-        "nvidia-smi", "--query-gpu=clocks.current.sm,clocks.current.memory,power.draw", "--format=csv,noheader,nounits"
-    ])
-    snap["optional_raw"] = optional
-    if optional:
-        vals = _parse_csv_line(optional.splitlines()[0])
-        for k, v in zip(("clocks.current.sm", "clocks.current.memory", "power.draw"), vals, strict=False):
-            try:
-                snap[k] = float(v.strip())
-            except Exception:
-                snap[k] = v.strip()
+                    snap[output_key] = v
 
     apps_raw = run_capture([
         "nvidia-smi", "--query-compute-apps=pid,process_name,used_gpu_memory", "--format=csv,noheader,nounits"
@@ -165,7 +160,9 @@ def gpu_snapshot() -> dict[str, Any]:
 
 def log_gpu(event: str, snap: dict[str, Any], **extra: Any) -> None:
     GPU_LOG.parent.mkdir(parents=True, exist_ok=True)
-    payload = {"event": event, **extra, **snap}
+    # Event identity wins over device metadata. The previous order let the GPU's
+    # `name` field overwrite the trial name, making telemetry attribution ambiguous.
+    payload = {"event": event, **snap, **extra}
     with GPU_LOG.open("a", encoding="utf-8") as f:
         f.write(json.dumps(payload, default=str) + "\n")
 
@@ -383,6 +380,9 @@ def run_trial(
                 text=True, start_new_session=True,
             )
             deadline = time.monotonic() + timeout_s
+            sample_interval = max(
+                0.25, float(os.environ.get("ASTER_GPU_SAMPLE_SECONDS", "0.5"))
+            )
             next_probe = time.monotonic()
             while proc.poll() is None:
                 if time.monotonic() >= deadline:
@@ -409,9 +409,11 @@ def run_trial(
                         contamination.append({"snapshot": live, "extra_compute_apps": extras})
                     log_gpu(
                         "trial_running", live, stage=stage, name=name, child_pid=proc.pid,
-                        external_compute_apps=extras,
+                        trial_name=name, gpu_name=live.get("gpu_name"),
+                        external_compute_apps=extras, power=ac_power_state(),
+                        sample_interval_s=sample_interval,
                     )
-                    next_probe = time.monotonic() + 5.0
+                    next_probe = time.monotonic() + sample_interval
                 time.sleep(0.25)
             returncode = proc.returncode
 

@@ -1,0 +1,39 @@
+name: CI
+
+on:
+  push:
+    branches: [master, "Noel/**"]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  cpu-validation:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      CUDA_VISIBLE_DEVICES: ""
+      PYTHONHASHSEED: "0"
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          enable-cache: true
+      - name: Create isolated CPU environment
+        run: uv venv --python 3.12
+      - name: Install Aster and validation dependencies
+        run: uv pip install --python .venv/bin/python -e ".[dev,reasoning]"
+      - name: Reject fatal Python errors across the repository
+        run: uv run --no-sync ruff check --select E9,F63,F7,F82 src scripts studio tests
+      - name: Validate Studio JavaScript
+        run: node --check studio/static/app.js
+      - name: Run canonical CPU suite
+        run: uv run --no-sync pytest

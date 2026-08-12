@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "gate_id": "data_cursor_exact_resume",
+  "status": "passed",
+  "created_at_utc": "2026-08-12T03:07:06.353840+00:00",
+  "evaluator": {
+    "name": "asterlm-local-promotion-evaluator",
+    "version": "1",
+    "git_commit": "749db298bfbe0518337d3753cf8c20a4dc938c54"
+  },
+  "experiment_ids": [
+    "local-suite-749db298bfbe",
+    "tests.test_data.test_packed_data_cursor_resumes_exactly_without_replaying_prior_batches",
+    "tests.test_exact_training_resume.test_uninterrupted_and_reconstructed_training_are_exact"
+  ],
+  "asserted_test_cases": [
+    "tests.test_data.test_packed_data_cursor_resumes_exactly_without_replaying_prior_batches",
+    "tests.test_exact_training_resume.test_uninterrupted_and_reconstructed_training_are_exact"
+  ],
+  "artifacts": [
+    {
+      "path": "docs/promotion-evidence/749db298bfbe/pytest-full-suite.junit.xml",
+      "sha256": "b2402eea26298d654dfe51d21817d4333376ab91acfa30e2afcfb2c53e3842ac"
+    },
+    {
+      "path": "docs/promotion-evidence/749db298bfbe/local-suite-result.json",
+      "sha256": "8ac83f1295e7fc60ca81d3e133cdafeeacead986d34b9b59c937b110c53c4cea"
+    }
+  ]
+}

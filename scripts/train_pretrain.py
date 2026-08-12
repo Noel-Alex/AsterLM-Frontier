@@ -18,8 +18,19 @@ def main() -> None:
     parser.add_argument("--hub-repo", default=None, help="Private Hugging Face model repo for milestone/final backups")
     parser.add_argument("--hub-public", action="store_true", help="Create/use a public Hub repo instead of private")
     parser.add_argument("--hub-model-only", action="store_true", help="Do not upload optimizer/RNG trainer_state.pt")
+    parser.add_argument(
+        "--run-class",
+        choices=["exploratory", "decision_grade", "final"],
+        default=None,
+        help="Override the fail-closed training contract class",
+    )
+    parser.add_argument("--promotion-gates", default=None)
     args = parser.parse_args()
     train_config = TrainConfig.from_yaml(args.train)
+    if args.run_class:
+        train_config.run_class = args.run_class
+    if args.promotion_gates:
+        train_config.promotion_gates_path = args.promotion_gates
     if args.resume:
         train_config.resume = args.resume
     if args.hub_repo:

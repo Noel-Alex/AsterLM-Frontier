@@ -31,10 +31,11 @@ dependencies = [
 
 [project.optional-dependencies]
 cuda = [
-  "flash-linear-attention>=0.5.1,<0.6",
+  "flash-linear-attention==0.5.2",
   "transformers>=4.53.3",
   "accelerate>=1.7",
 ]
+liger = ["liger-kernel==0.8.1"]
 tracking = ["wandb>=0.19", "tensorboard>=2.18"]
 dev = ["pytest>=8.3", "ruff>=0.11"]
 quant = ["torchao>=0.11"]
@@ -50,13 +51,14 @@ frontier = [
   "math-verify>=0.7.0",
   "sympy>=1.13",
 ]
+remote = ["modal>=1.5,<1.6"]
 
 [tool.setuptools.packages.find]
 where = ["src"]
 
 [tool.pytest.ini_options]
-pythonpath = ["src"]
-testpaths = ["tests"]
+pythonpath = [".", "src"]
+testpaths = ["tests", "studio/tests"]
 addopts = "-q"
 
 [tool.ruff]

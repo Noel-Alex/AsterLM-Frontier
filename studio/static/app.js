@@ -8,6 +8,10 @@ const S = {
   selectedConfig: null,
   cleanPlanPath: null,
   trainingPlan: null,
+  researchRows: [],
+  researchTotal: 0,
+  researchOffset: 0,
+  researchSelected: new Set(),
   timer: null,
 };
 
@@ -82,6 +86,7 @@ const PAGE_TITLES = {
   pipeline:"Turn raw material into training data.",
   architecture:"Know what is real, reference, or research.",
   training:"Design and launch the run.",
+  providers:"Route compute without losing the experiment.",
   experiments:"Read the model while it learns.",
   inference:"Interrogate the finished checkpoints.",
   logs:"Every process, in one place.",
@@ -94,7 +99,12 @@ function gotoPage(page) {
   $("#page-title").textContent=PAGE_TITLES[page]||page;
   history.replaceState(null,"",`#${page}`);
   if(page==="architecture") loadConfigs("model").catch(showError);
-  if(page==="experiments") renderRuns();
+  if(page==="experiments"){
+    mountResearchArchive();
+    renderRuns();
+    loadDiagnostics().catch(showError);
+    loadResearchArchive(true).catch(showError);
+  }
   if(page==="logs") renderJobs();
 }
 
@@ -205,13 +215,76 @@ function renderOverview() {
     ? `${fmtTokens(usableTotal)} clean-estimated`
     : `${fmtTokens(rawTotal)} raw materialized`;
   $("#last-refresh").textContent=`updated ${new Date().toLocaleTimeString()}`;
+  renderTrainingCampaign();
+}
+
+function renderTrainingCampaign(){
+  const c=S.overview?.training_campaign,panel=$("#campaign-live-panel");if(!c||!panel)return;
+  const live=c.live||{},active=c.active_stage||{};
+  $("#campaign-live-title").textContent=`${c.name} · ${fmtTokens(c.goal_tokens)} tokens`;
+  const state=$("#campaign-live-state");
+  const readiness=c.readiness||{};
+  state.textContent=live.tokens_seen!=null?"live":(readiness.ready?"launch ready":`${Number(readiness.blocking_count||0)} launch blockers`);
+  state.className=`status-pill ${live.tokens_seen!=null||readiness.ready?"good":"warning"}`;
+  const freshness=active.freshness_seconds==null?"—":ago(Date.now()/1000-active.freshness_seconds);
+  const metrics=[
+    [fmtTokens(c.completed_tokens),"campaign tokens"],
+    [`${(100*Number(c.progress_fraction||0)).toFixed(4)}%`,"campaign progress"],
+    [live.tokens_per_second_ema!=null?fmtTokens(live.tokens_per_second_ema):"—","smoothed tok/s"],
+    [fmtSecs(c.eta_seconds),"projected ETA"],
+    [active.context?`${Number(active.context/1024)}K`:"—","active context"],
+    [freshness,"metric freshness"],
+  ];
+  $("#campaign-live-metrics").innerHTML=metrics.map(([v,l])=>`<div><strong>${esc(v)}</strong><span>${esc(l)}</span></div>`).join("");
+  $("#campaign-stage-ledger").innerHTML=(c.stages||[]).map(stage=>`<div class="checkpoint-row"><code>${esc(stage.id)} · ${Number(stage.context/1024)}K</code><span>${fmtTokens(stage.completed_tokens)} / ${fmtTokens(stage.tokens)}</span><span>${(100*Number(stage.progress_fraction)).toFixed(3)}%</span><span>${esc(stage.label)}</span><span>${stage.run?.status?esc(stage.run.status):"not started"}</span></div>`).join("");
+  const readinessCount=$("#campaign-readiness-count");
+  if(readinessCount){
+    readinessCount.textContent=readiness.ready?"all required gates ready":`${Number(readiness.blocking_count||0)} blocking`;
+    readinessCount.className=`status-pill ${readiness.ready?"good":"warning"}`;
+  }
+  const stateLabels={ready:"ready",running:"in progress",blocked:"blocked",input_required:"launch input"};
+  $("#campaign-readiness-ledger").innerHTML=(readiness.items||[]).map(item=>`<div class="checkpoint-row"><code>${esc(item.label)}</code><span class="status-pill ${item.state==="ready"?"good":item.state==="running"?"active":"warning"}">${esc(stateLabels[item.state]||item.state)}</span><span>${esc(item.detail)}</span></div>`).join("");
+  const a=c.architecture||{},attn=a.attention||{},experts=a.experts||{};
+  $("#campaign-architecture").innerHTML=`<strong>${fmtTokens(a.total_parameters)} total · ${fmtTokens(a.active_parameters_per_token)} active/token · ${esc(a.layers)} layers</strong><br/>18 global recurrent KDA layers + 6 local-window MLA layers (${fmtTokens(attn.mla_window_tokens)} window). Stable LatentMoE: ${esc(experts.routed)} routed, top-${esc(experts.active_routed)}, ${esc(experts.shared)} shared. After pretraining this is a base completion model; chat/reasoning behavior comes from later post-training.`;
+}
+
+function renderProviders() {
+  const rows=S.overview?.providers||[];
+  const grid=$("#provider-grid");
+  if(!grid)return;
+  for(const id of ["#provider-preferred","#contract-provider"]){
+    const select=$(id);
+    if(select && !select.querySelector('option[value="gcp"]')){
+      const option=document.createElement("option");
+      option.value="gcp"; option.textContent="Google Cloud";
+      select.appendChild(option);
+    }
+  }
+  grid.innerHTML=rows.map(row=>{
+    const state=row.ready?"ready":row.installed?"auth needed":"not installed";
+    const cls=row.ready?"good":row.installed?"warning":"ref";
+    const profiles=(row.profiles||[]).length?`${row.profiles.length} profile${row.profiles.length===1?"":"s"}`:"no profiles";
+    return `<article class="provider-card ${row.ready?"is-ready":""}">
+      <div class="provider-card-top"><div><div class="eyebrow">${esc(row.kind)}</div><h3>${esc(row.label)}</h3></div><span class="status-pill ${cls}">${esc(state)}</span></div>
+      <p>${esc(row.credit)}</p>
+      <div class="provider-facts"><span>${row.installed?"CLI detected":"CLI absent"}</span><span>${esc(profiles)}</span><span>${esc(row.automation)}</span></div>
+      ${row.source_url?`<a href="${esc(row.source_url)}" target="_blank" rel="noreferrer">Official terms / pricing ↗</a>`:""}
+    </article>`;
+  }).join("");
+  const ledgers=rows.filter(row=>(row.profile_status||row.profiles||[]).length);
+  $("#provider-profile-ledger").innerHTML=ledgers.length?ledgers.map(row=>`<div class="profile-row"><strong>${esc(row.label)}</strong><div>${(row.profile_status||row.profiles.map(alias=>({alias,authenticated:true}))).map(profile=>`<span class="profile-chip ${profile.authenticated?"":"muted"}">${esc(profile.alias)} · ${profile.authenticated?"ready":"login required"}</span>`).join("")}</div></div>`).join(""):`<div class="empty-state">No provider profile aliases are configured yet.</div>`;
+  const modal=rows.find(row=>row.id==="modal");
+  const modalSelect=$("#modal-auth-profile");
+  if(modalSelect) modalSelect.innerHTML=(modal?.declared_profiles||[]).map(alias=>`<option value="${esc(alias)}">${esc(alias)}</option>`).join("");
+  const preferred=S.overview?.settings?.providers?.preferred;
+  if(preferred && ["modal","gcp","lightning","huggingface_jobs","skypilot"].includes(preferred)) $("#contract-provider").value=preferred;
 }
 
 function renderPresets() {
   const presets=S.catalog?.presets||{};
   $("#preset-grid").innerHTML=Object.entries(presets).map(([id,p])=>{
     const total=p.sources?Object.values(p.sources).reduce((a,b)=>a+Number(b),0):null;
-    return `<div class="preset"><strong>${esc(p.label)}</strong><p>${esc(p.description)}</p><small>${total?fmtTokens(total):"dynamic"}</small><button class="text-button apply-preset" data-preset="${esc(id)}">Apply →</button></div>`;
+    return `<div class="preset"><strong>${esc(p.label)}</strong><p>${esc(p.description)}</p><small>${total?fmtTokens(total):"dynamic"}</small><button class="text-button apply-preset" data-preset="${esc(id)}" ${p.retired?"disabled":""}>${p.retired?"Retired":"Apply →"}</button></div>`;
   }).join("");
 }
 
@@ -220,15 +293,15 @@ function renderDatasetCatalog() {
   const datasets=S.catalog?.datasets||{};
   $("#dataset-catalog").innerHTML=Object.entries(datasets).map(([id,d])=>{
     const current=dataStatusById(id), currentTokens=current?.tokens||0;
-    const status=d.ready?`<span class="status-pill good">wired</span>`:d.gated?`<span class="status-pill warning">gated / validate</span>`:`<span class="status-pill ref">advanced</span>`;
+    const status=d.retired?`<span class="status-pill ref">retired</span>`:d.ready?`<span class="status-pill good">wired</span>`:d.gated?`<span class="status-pill warning">gated / validate</span>`:`<span class="status-pill ref">advanced</span>`;
     let suggested=current?.target||d.known_tokens||1_000_000_000;
     return `<article class="dataset-card" data-dataset-card="${esc(id)}">
       <div class="dataset-top"><div><div class="category">${esc(d.category)}</div><h3>${esc(d.label)}</h3></div>${status}</div>
       <p>${esc(d.notes||"")}</p>
       <div class="dataset-current">local: ${fmtTokens(currentTokens)} ${current?`· planned ${fmtTokens(current.target)}`:"· not materialized"}</div>
       <div class="dataset-controls">
-        <input class="dataset-target" data-dataset-target="${esc(id)}" type="number" value="${Math.round(suggested)}" step="100000000"/>
-        <button class="ink small dataset-download" data-source-id="${esc(id)}">Download / resume</button>
+        <input class="dataset-target" data-dataset-target="${esc(id)}" type="number" value="${Math.round(suggested)}" step="100000000" ${d.retired?"disabled":""}/>
+        <button class="ink small dataset-download" data-source-id="${esc(id)}" ${d.retired?"disabled":""}>${d.retired?"Excluded":"Download / resume"}</button>
       </div>
     </article>`;
   }).join("");
@@ -236,12 +309,12 @@ function renderDatasetCatalog() {
 
 function renderVerifyAndClean() {
   const rows=S.overview?.datasets||[];
-  $("#verify-source-list").innerHTML=rows.map(item=>`<div class="check-item"><label><input type="checkbox" class="verify-check" data-path="${esc(item.path)}" checked/><span><strong>${esc(item.label||item.id)}</strong><br/><small>${fmtTokens(item.tokens)} on disk</small></span></label></div>`).join("");
+  $("#verify-source-list").innerHTML=rows.map(item=>`<div class="check-item"><label><input type="checkbox" class="verify-check" data-path="${esc(item.path)}" ${item.retired?"":"checked"}/><span><strong>${esc(item.label||item.id)}</strong><br/><small>${fmtTokens(item.tokens)} on disk${item.retired?" · retired":""}</small></span></label></div>`).join("");
   $("#clean-source-grid").innerHTML=rows.map(item=>{
-    const defaultChecked=item.tokens>0 && item.id!=="stack_edu";
+    const defaultChecked=item.tokens>0 && !item.retired && item.id!=="stack_edu";
     const fim=item.id==="stack_edu"?0.5:0;
     return `<div class="clean-item" data-clean-id="${esc(item.id)}">
-      <label><input class="clean-check" type="checkbox" ${defaultChecked?"checked":""}/><span><strong>${esc(item.label||item.id)}</strong> · ${fmtTokens(item.tokens)}</span></label>
+      <label><input class="clean-check" type="checkbox" ${defaultChecked?"checked":""} ${item.retired?"disabled":""}/><span><strong>${esc(item.label||item.id)}</strong> · ${fmtTokens(item.tokens)}${item.retired?" · retired":""}</span></label>
       <div class="mini-fields">
         <label>Weight<input class="clean-weight" type="number" value="${Math.max(1,Number(item.tokens||1))}" step="1000000"/></label>
         <label>FIM rate<input class="clean-fim" type="number" value="${fim}" step="0.1" min="0" max="1"/></label>
@@ -278,6 +351,32 @@ function renderCapabilities(report) {
   }).join("");
 }
 
+function renderExecutionBackends(rows=[]) {
+  const grid=$("#execution-backend-grid");
+  if(!grid)return;
+  const labels={aster_local:"Aster local",megatron_core:"Megatron Core",torchtitan:"TorchTitan",deepspeed:"DeepSpeed",probe:"Capability probe"};
+  grid.innerHTML=rows.map(row=>{
+    let stage="not ready", cls="research-gap";
+    if(row.usable){stage="usable",cls="implemented";}
+    else if(row.promoted){stage="promoted / topology blocked",cls="optional-runtime";}
+    else if(row.adapter_implemented){stage="adapter testing",cls="optional-runtime";}
+    else if(row.source_matches_lock){stage="source pinned",cls="reference";}
+    const facts=[
+      row.importable?`package ${row.installed_version||"detected"}`:"package missing",
+      row.source_repository?(row.source_matches_lock?"source commit matched":"source lock unmatched"):"Aster source",
+      row.adapter_implemented?"adapter implemented":"adapter missing",
+      row.topology_supported?"topology supported":"topology unvalidated",
+    ];
+    const blockers=(row.blockers||[]).slice(0,3).join(" · ")||"No active blockers.";
+    return `<article class="cap-card ${cls}">
+      <div class="eyebrow">${esc(stage)}</div>
+      <h3>${esc(labels[row.backend]||row.backend)}</h3>
+      <div class="provider-facts">${facts.map(f=>`<span>${esc(f)}</span>`).join("")}</div>
+      <p>${esc(blockers)}</p>
+    </article>`;
+  }).join("")||`<div class="empty-state">Execution backend evidence is unavailable.</div>`;
+}
+
 function renderSettings() {
   const s=S.overview?.settings;if(!s)return;
   const d=s.download||{},t=s.training||{};
@@ -291,12 +390,16 @@ function renderSettings() {
   $("#set-stall").value=d.stall_seconds;
   $("#set-checkpoint-tokens").value=t.checkpoint_tokens;
   $("#set-keep").value=t.keep_last_checkpoints;
+  const p=s.providers||{};
+  if($("#provider-preferred")) $("#provider-preferred").value=p.preferred||"local";
+  if($("#provider-max-spend")) $("#provider-max-spend").value=p.max_spend_usd_per_job??30;
+  if($("#provider-confirm-cost")) $("#provider-confirm-cost").checked=p.require_cost_confirmation!==false;
 }
 
 async function refreshOverview() {
   try {
     S.overview=await api("/api/overview");
-    renderOverview();renderDatasetCatalog();renderVerifyAndClean();renderSettings();renderRuns();renderJobs();
+    renderOverview();renderDatasetCatalog();renderVerifyAndClean();renderSettings();renderProviders();renderExecutionBackends(S.overview.execution_backends||[]);renderRuns();renderJobs();
     if(S.overview.capabilities)renderCapabilities(S.overview.capabilities);
   } catch(e){showError(e);}
 }
@@ -324,6 +427,7 @@ async function stopJob(id) {
 
 function presetApply(id) {
   const p=S.catalog?.presets?.[id];if(!p)return;
+  if(p.retired){toast("That historical preset is retired and cannot be applied.");return;}
   if(p.dynamic){
     (S.overview?.datasets||[]).forEach(item=>{
       const input=$(`[data-dataset-target="${CSS.escape(item.id)}"]`);
@@ -379,10 +483,161 @@ async function loadConfigs(kind="model") {
   };
 }
 
+function mountResearchArchive() {
+  if($("#research-summary"))return;
+  const layout=$("#page-experiments .experiment-layout");if(!layout)return;
+  layout.insertAdjacentHTML("beforebegin",`<article class="paper-panel research-archive-panel">
+    <div class="panel-head"><div><div class="eyebrow">PERMANENT RESEARCH INDEX</div><h3>Every result, comparable and traceable</h3></div><button id="research-reindex" class="ghost small">Reindex now</button></div>
+    <p class="muted">The searchable index has unbounded retention. Pagination limits only this view; raw artifacts, revisions, protocols, failures and evidence paths remain preserved.</p>
+    <div id="research-summary" class="research-summary"><div class="empty-state">Loading archive summaryâ€¦</div></div>
+    <div class="research-toolbar">
+      <label>Search<input id="research-query" placeholder="candidate, campaign, config or path"/></label>
+      <label>Backend<select id="research-backend"><option value="">All backends</option></select></label>
+      <label>Status<select id="research-status"><option value="">All statuses</option></select></label>
+      <button id="research-filter" class="ink">Apply</button><button id="research-compare" class="ghost" disabled>Compare selected</button>
+    </div>
+    <div id="research-compatibility" class="research-compatibility"></div>
+    <div class="research-table-wrap"><table class="research-table"><thead><tr><th></th><th>Trial / provenance</th><th>Protocol</th><th>tokens/s</th><th>Eval loss</th><th>Time to target</th><th>GPU</th><th>Peak VRAM</th><th>Parameters</th></tr></thead><tbody id="research-trial-rows"><tr><td colspan="9" class="empty-state">Loading indexed trialsâ€¦</td></tr></tbody></table></div>
+    <div class="research-pagination"><span id="research-range" class="muted"></span><button id="research-more" class="ghost small">Load more</button></div>
+  </article>
+  <div class="research-lower-grid">
+    <article class="paper-panel"><div class="panel-head"><div><div class="eyebrow">MATCHED COMPARISON</div><h3>Systems evidence without false equivalence</h3></div></div><div id="research-comparison" class="research-comparison empty-state">Select two or more indexed trials to compare throughput, utilization, VRAM and protocol compatibility.</div></article>
+    <article class="paper-panel"><div class="panel-head"><div><div class="eyebrow">FINDINGS LEDGER</div><h3>Decisions with evidence</h3></div></div><div id="research-findings" class="research-findings"><div class="empty-state">Loading findingsâ€¦</div></div></article>
+  </div>`);
+  $("#research-filter").onclick=()=>loadResearchArchive(true).catch(showError);
+  $("#research-query").onkeydown=e=>{if(e.key==="Enter")loadResearchArchive(true).catch(showError);};
+  $("#research-more").onclick=()=>loadResearchArchive(false).catch(showError);
+  $("#research-compare").onclick=()=>loadResearchComparison().catch(showError);
+  $("#research-reindex").onclick=async()=>{
+    const button=$("#research-reindex");button.disabled=true;button.textContent="Indexingâ€¦";
+    try{await post("/api/research/reindex",{});await loadResearchArchive(true);toast("Research archive reindexed.");}
+    finally{button.disabled=false;button.textContent="Reindex now";}
+  };
+  $("#research-trial-rows").onchange=e=>{
+    const box=e.target.closest(".research-select");if(!box)return;
+    if(box.checked)S.researchSelected.add(box.dataset.trialId);else S.researchSelected.delete(box.dataset.trialId);
+    $("#research-compare").disabled=S.researchSelected.size<2;
+    $("#research-compare").textContent=S.researchSelected.size?`Compare selected (${S.researchSelected.size})`:"Compare selected";
+  };
+}
+
+function renderResearchSummary(summary) {
+  const fastest=summary.fastest_observed;
+  const cards=[
+    [fmtTokens(summary.trials),"indexed trials"],
+    [fmtTokens(summary.artifact_revisions),"artifact revisions"],
+    [fmtTokens(summary.findings),"durable findings"],
+    [fastest?.tokens_per_second?fmtTokens(fastest.tokens_per_second):"â€”","fastest observed tok/s"],
+    [summary.last_indexed?ago(summary.last_indexed):"never",summary.refresh_in_progress?"refreshing in background":"index freshness"],
+  ];
+  $("#research-summary").innerHTML=cards.map(([value,label])=>`<div><strong>${esc(value)}</strong><span>${esc(label)}</span></div>`).join("");
+  const backend=$("#research-backend"),status=$("#research-status");
+  const selectedBackend=backend.value,selectedStatus=status.value;
+  backend.innerHTML='<option value="">All backends</option>'+(summary.backends||[]).map(x=>`<option value="${esc(x)}">${esc(x)}</option>`).join("");
+  status.innerHTML='<option value="">All statuses</option>'+(summary.statuses||[]).map(x=>`<option value="${esc(x)}">${esc(x)}</option>`).join("");
+  backend.value=selectedBackend;status.value=selectedStatus;
+}
+
+function researchTrialHtml(row) {
+  const checked=S.researchSelected.has(row.id)?"checked":"";
+  const protocol=[row.sequence_length?`${fmtTokens(row.sequence_length)} ctx`:null,row.micro_batch_size!=null?`mb${row.micro_batch_size}`:null,row.gradient_accumulation!=null?`acc${row.gradient_accumulation}`:null,row.optimizer].filter(Boolean).join(" Â· ");
+  const params=row.total_parameters?`${fmtTokens(row.total_parameters)} total / ${fmtTokens(row.active_parameters)} active`:"â€”";
+  const loss=row.eval_loss??row.loss;
+  const lossSpread=row.eval_loss_stdev!=null?` +/- ${Number(row.eval_loss_stdev).toFixed(4)}`:"";
+  return `<tr>
+    <td><input class="research-select" type="checkbox" data-trial-id="${esc(row.id)}" ${checked}/></td>
+    <td><strong>${esc(row.variant||row.name)}</strong><small>${esc(row.backend||row.status)} Â· ${esc((row.git_commit||"unbound").slice(0,8))}</small><code title="${esc(row.matrix_path)}">${esc(row.matrix_path)}</code></td>
+    <td><span>${esc(protocol||"â€”")}</span><small>${row.gradient_checkpointing?`checkpoint seg ${esc(row.checkpoint_segment_size)}`:"no activation checkpoint"}</small></td>
+    <td class="numeric">${row.tokens_per_second!=null?fmtTokens(row.tokens_per_second):"â€”"}</td>
+    <td class="numeric">${loss!=null?`${Number(loss).toFixed(4)}${lossSpread}`:"â€”"}</td>
+    <td class="numeric">${row.time_to_common_loss!=null?`${Number(row.time_to_common_loss).toFixed(1)} s`:"â€”"}</td>
+    <td class="numeric">${row.gpu_utilization!=null?`${Number(row.gpu_utilization).toFixed(1)}%`:"â€”"}</td>
+    <td class="numeric">${row.peak_allocated_gib!=null?`${Number(row.peak_allocated_gib).toFixed(2)} GiB`:"â€”"}</td>
+    <td><span>${esc(params)}</span><small>${esc(row.gpu_name||"hardware unrecorded")}</small></td>
+  </tr>`;
+}
+
+function renderResearchTrials(append=false) {
+  const body=$("#research-trial-rows");
+  if(!append)body.innerHTML="";
+  body.insertAdjacentHTML("beforeend",S.researchRows.slice(append?S.researchOffset:0).map(researchTrialHtml).join(""));
+  if(!S.researchRows.length)body.innerHTML='<tr><td colspan="9" class="empty-state">No indexed trials match these filters.</td></tr>';
+  $("#research-range").textContent=`Showing ${S.researchRows.length} of ${S.researchTotal} matching trials`;
+  $("#research-more").hidden=S.researchRows.length>=S.researchTotal;
+}
+
+function renderResearchFindings(payload) {
+  $("#research-findings").innerHTML=payload.rows.length?payload.rows.map(item=>`<div class="research-finding">
+    <div><span class="status-pill ${item.status==="confirmed"?"good":"warning"}">${esc(item.status)}</span><time>${esc(item.created_utc?.slice(0,10)||"")}</time></div>
+    <strong>${esc(item.title)}</strong><p>${esc(item.summary)}</p>
+    <div class="finding-tags">${item.tags.map(tag=>`<span>${esc(tag)}</span>`).join("")}</div>
+    ${item.evidence.map(path=>`<code title="${esc(path)}">${esc(path)}</code>`).join("")}
+  </div>`).join(""):'<div class="empty-state">No findings have been recorded yet.</div>';
+}
+
+async function loadResearchArchive(reset=true) {
+  mountResearchArchive();
+  if(reset){S.researchOffset=0;S.researchRows=[];}
+  const params=new URLSearchParams({limit:"100",offset:String(S.researchRows.length),query:$("#research-query").value.trim(),backend:$("#research-backend").value,status:$("#research-status").value});
+  const calls=[api(`/api/research/trials?${params}`)];
+  if(reset)calls.push(api("/api/research/summary"),api("/api/research/findings?limit=100"));
+  const [trials,summary,findings]=await Promise.all(calls);
+  const oldLength=S.researchRows.length;
+  S.researchRows.push(...trials.rows);S.researchTotal=trials.total;S.researchOffset=oldLength;
+  renderResearchTrials(oldLength>0);
+  if(summary)renderResearchSummary(summary);
+  if(findings)renderResearchFindings(findings);
+}
+
+function comparisonBar(row,key,max,label,unit) {
+  const value=Number(row[key]);const width=Number.isFinite(value)&&max>0?Math.max(1,value/max*100):0;
+  return `<div class="comparison-bar-row"><code>${esc(row.variant||row.name)}</code><div class="comparison-track"><span style="width:${width}%"></span></div><strong>${Number.isFinite(value)?`${value.toLocaleString(undefined,{maximumFractionDigits:2})}${unit}`:"â€”"}</strong><small>${esc(label)}</small></div>`;
+}
+
+async function loadResearchComparison() {
+  const ids=[...S.researchSelected];if(ids.length<2)return;
+  const result=await api(`/api/research/compare?ids=${encodeURIComponent(ids.join(","))}`);
+  const mismatches=result.dimensions.filter(x=>!x.match&&x.role!=="treatment");
+  const treatments=result.dimensions.filter(x=>!x.match&&x.role==="treatment"),holder=$("#research-comparison");
+  const metrics=[
+    ["tokens_per_second","tokens/s (higher is better)",""],
+    ["eval_loss","eval loss (lower is better)",""],
+    ["token_curve_auc","token-curve loss AUC (lower is better)",""],
+    ["equal_wall_loss","equal-wall loss (lower is better)",""],
+    ["time_to_common_loss","time to common quality (lower is better)"," s"],
+    ["tokens_to_common_loss","tokens to common quality (lower is better)",""],
+    ["gpu_utilization","GPU utilization (higher is better)","%"],
+    ["peak_allocated_gib","peak VRAM (lower is better)"," GiB"],
+    ["run_survival_percent","completed-run survival","%"],
+    ["gradient_nonfinite_count","non-finite gradient events (zero required)",""],
+    ["training_loss_nonfinite_count","non-finite loss events (zero required)",""],
+    ["gradient_norm_p95","pre-clip gradient norm p95 (diagnostic)",""],
+    ["gradient_clip_percent","logged updates clipped (diagnostic)","%"],
+    ["loss_upward_jump_gt_0_5_count","logged loss jumps above 0.5 (lower is better)",""],
+    ["parameter_rms_drift_percent","parameter RMS drift (diagnostic)","%"],
+    ["optimizer_wall_percent","optimizer share of training wall time (lower is better)","%"],
+    ["muon_relative_update_rms","Muon relative update RMS (diagnostic)",""],
+  ];
+  const charts=metrics.map(([key,label,unit])=>{
+    const max=Math.max(0,...result.trials.map(x=>Number(x[key])||0));
+    return `<section><h4>${esc(label)}</h4>${result.trials.map(row=>comparisonBar(row,key,max,label,unit)).join("")}</section>`;
+  }).join("");
+  const comparisonKind=result.comparison_kind||(result.strictly_comparable?"matched_protocol":"protocol_mismatch");
+  const verdict={
+    matched_protocol:"Matched systems protocol",
+    controlled_treatment:"Controlled treatment comparison",
+    protocol_mismatch:"Protocol mismatch detected",
+  }[comparisonKind]||"Comparison status unavailable";
+  holder.className="research-comparison";
+  holder.innerHTML=`<div class="comparison-verdict ${comparisonKind==="protocol_mismatch"?"mismatch":"matched"}"><strong>${esc(verdict)}</strong><span>${result.same_model?"same model fingerprint":"different model fingerprints"}</span></div>
+    ${treatments.length?`<div class="compatibility-chips">${treatments.map(x=>`<span>${esc(x.label)} is the treatment</span>`).join("")}</div>`:""}
+    ${mismatches.length?`<div class="compatibility-chips">${mismatches.map(x=>`<span>${esc(x.label)} differs unexpectedly</span>`).join("")}</div>`:""}${charts}<p class="muted">${esc(result.note)}</p>`;
+}
+
 function renderRuns() {
   const runs=S.overview?.runs||[];
   const list=$("#run-list");if(!list)return;
-  list.innerHTML=runs.length?runs.map(r=>`<div class="run-item ${S.selectedRun===r.path?"active":""}" data-run="${esc(r.path)}"><strong>${esc(r.name)}</strong><small>${fmtTokens(r.latest?.tokens_seen)} · ${r.checkpoint_count} checkpoints · ${ago(r.modified)}</small></div>`).join(""):`<div class="empty-state">No run manifests/metrics yet.</div>`;
+  list.innerHTML=runs.length?runs.map(r=>`<div class="run-item ${S.selectedRun===r.path?"active":""}" data-run="${esc(r.path)}"><strong>${esc(r.name)}</strong><small>${esc(r.status||"legacy")} · ${esc(r.provider||"local")} · ${fmtTokens(r.latest?.tokens_seen||r.experiment?.completed_tokens)} · ${r.checkpoint_count} checkpoints · ${ago(r.modified)}</small>${r.run_id?`<code>${esc(r.run_id)}</code>`:""}</div>`).join(""):`<div class="empty-state">No run manifests/metrics yet.</div>`;
 }
 async function selectRun(path) {
   S.selectedRun=path;renderRuns();
@@ -432,7 +687,22 @@ function renderMetricSnapshot(metrics) {
   $("#metric-snapshot").innerHTML=items.map(([l,v])=>`<div><strong>${esc(v)}</strong><span>${l}</span></div>`).join("");
 }
 function renderCheckpoints(rows) {
-  $("#checkpoint-table").innerHTML=rows.length?rows.map(x=>`<div class="checkpoint-row"><code>${esc(x.name)}</code><span>${fmtTokens(x.tokens_seen)}</span><span>${esc(x.reason||"—")}</span><span>${x.permanent?'<span class="status-pill good">KEEP</span>':'rolling'}</span><span>${fmtBytes(x.model_bytes)}</span></div>`).join(""):`<div class="empty-state">No checkpoints yet.</div>`;
+  $("#checkpoint-table").innerHTML=rows.length?rows.map(x=>`<div class="checkpoint-row"><code>${esc(x.name)}</code><span>${fmtTokens(x.tokens_seen)}</span><span>${esc(x.reason||"—")}</span><span>${x.permanent?'<span class="status-pill good">KEEP</span>':'rolling'}</span><span>${fmtBytes(x.local_bytes||x.model_bytes)}</span><span class="status-pill ${x.hub_verified?"good":"warning"}">${x.hub_verified?`Hub verified${x.hub_verified_files?` · ${esc(x.hub_verified_files)} files`:""}`:"local only"}</span></div>`).join(""):`<div class="empty-state">No checkpoints yet.</div>`;
+}
+
+async function loadDiagnostics() {
+  const holder=$("#diagnostic-matrix-list");if(!holder)return;
+  const rows=await api("/api/diagnostics?limit=60");
+  holder.innerHTML=rows.length?rows.map(matrix=>{
+    const variants=Object.entries(matrix.aggregate||{}).map(([name,value])=>{
+      const tps=Number(value?.median_tokens_per_second);
+      const util=Number(value?.median_gpu_utilization);
+      const reps=value?.successful_repetitions;
+      return `<div class="diagnostic-variant"><code>${esc(name)}</code><span>${Number.isFinite(tps)?`${fmtTokens(tps)} tok/s`:"—"}</span><span>${Number.isFinite(util)?`${util.toFixed(1)}% GPU`:"—"}</span><span>${reps!=null?`${esc(reps)} reps`:"—"}</span></div>`;
+    }).join("");
+    const failure=matrix.failures?.length?`<span class="status-pill warning">${matrix.failures.length} failed</span>`:`<span class="status-pill good">${matrix.successful_trials}/${matrix.trial_count} ok</span>`;
+    return `<details class="diagnostic-matrix"><summary><span><strong>${esc(matrix.name)}</strong><small>${ago(matrix.modified)} · ${esc((matrix.git_commit||"").slice(0,8)||"unbound")}</small></span>${failure}</summary><div class="diagnostic-body">${variants||'<div class="empty-state">Matrix is still running or has no aggregate.</div>'}<code class="diagnostic-path">${esc(matrix.path)}</code></div></details>`;
+  }).join(""):`<div class="empty-state">No matrix.json diagnostics found under runs/.</div>`;
 }
 
 function renderJobs() {
@@ -457,6 +727,10 @@ async function commonAction(action) {
 }
 
 function bind() {
+  const auxiliaryList=$("#page-data .action-list");
+  if(auxiliaryList&&!auxiliaryList.querySelector('[data-profile="posttrain-modern"]')){
+    auxiliaryList.insertAdjacentHTML("beforeend",'<div><strong>Modern post-training candidates</strong><span>LongAlign 64K / OpenThoughts3 / modern preference / tool-use</span><button data-profile="posttrain-modern" class="ghost small profile-download">Download</button></div><div><strong>Quarantined agent traces</strong><span>2026 Agent SFT; isolated from general assistant style</span><button data-profile="posttrain-agent" class="ghost small profile-download">Download</button></div>');
+  }
   $("#nav").addEventListener("click",e=>{const b=e.target.closest("[data-page]");if(b)gotoPage(b.dataset.page);});
   document.addEventListener("click",e=>{const b=e.target.closest("[data-goto]");if(b)gotoPage(b.dataset.goto);});
   document.addEventListener("click",e=>{const b=e.target.closest("[data-action]");if(b)commonAction(b.dataset.action).catch(showError);});
@@ -518,13 +792,23 @@ function bind() {
     $("#train-init").value=b.dataset.init||"";gotoPage("training");toast("Stage loaded into training desk.");
   });
 
-  $("#training-preflight").onclick=()=>startJob("preflight",{model:$("#train-model").value,train:$("#train-config").value,data:$("#train-data").value,json:"runs/studio-preflight.json"}).catch(showError);
+  $("#training-preflight").onclick=()=>startJob("preflight",{model:$("#train-model").value,train:$("#train-config").value,data:$("#train-data").value,hub_repo:$("#train-hub").value.trim(),json:"runs/studio-preflight.json"}).catch(showError);
   $("#start-pretrain").onclick=()=>{
     const payload={model:$("#train-model").value,train:$("#train-config").value,data:$("#train-data").value};
     if($("#train-resume").value.trim())payload.resume=$("#train-resume").value.trim();
     else if($("#train-init").value.trim())payload.init_checkpoint=$("#train-init").value.trim();
     if($("#train-hub").value.trim())payload.hub_repo=$("#train-hub").value.trim();
     startJob("train_pretrain",payload).catch(showError);
+  };
+  $("#start-pretraining-campaign").onclick=()=>{
+    const hub_repo=$("#campaign-hub-repo").value.trim();
+    if(!hub_repo)return showError(new Error("Enter the private Hugging Face repository first."));
+    if(!confirm("Start the frozen 100B pretraining campaign? Preflight runs first; after it passes this allocates the GPU and continues unattended across all three stages."))return;
+    startJob("pretraining_campaign",{
+      hub_repo,
+      wandb_entity:$("#campaign-wandb-entity").value.trim(),
+      verify_manifest_hashes:$("#campaign-verify-hashes").checked,
+    }).catch(showError);
   };
   $("#start-sft").onclick=()=>startJob("train_sft",{model:$("#train-model").value,train:$("#sft-train").value,data:$("#sft-data").value,checkpoint:$("#sft-checkpoint").value}).catch(showError);
   $("#score-dpo").onclick=()=>startJob("dpo_reference",{model:$("#train-model").value,checkpoint:$("#dpo-checkpoint").value,tokenizer:"artifacts/tokenizer.json",input:$("#dpo-raw").value,output:$("#dpo-data").value,max_length:2048}).catch(showError);
@@ -565,6 +849,91 @@ function bind() {
         keep_last_checkpoints:Number($("#set-keep").value),
       }};
       await post("/api/settings",body);toast("Studio settings saved.");await refreshOverview();
+    }catch(e){showError(e);}
+  };
+  $("#save-provider-policy").onclick=async()=>{
+    try{
+      await post("/api/settings",{providers:{
+        preferred:$("#provider-preferred").value,
+        max_spend_usd_per_job:Number($("#provider-max-spend").value),
+        require_cost_confirmation:$("#provider-confirm-cost").checked,
+      }});
+      toast("Compute dispatch policy saved.");
+      await refreshOverview();
+    }catch(e){showError(e);}
+  };
+  $("#modal-auth-start").onclick=()=>{
+    const alias=$("#modal-auth-profile").value;
+    if(!alias) return showError(new Error("No declared Modal profile is available."));
+    startJob("modal_auth",{profile_alias:alias}).catch(showError);
+  };
+  $("#create-provider-contract").onclick=async()=>{
+    try{
+      const contract=await post("/api/provider/contract",{
+        provider:$("#contract-provider").value,
+        profile_alias:$("#contract-profile").value.trim(),
+        model:$("#contract-model").value.trim(),
+        train:$("#contract-train").value.trim(),
+        data:$("#contract-data").value.trim(),
+        hub_repo:$("#contract-hub-repo").value.trim(),
+        gpu:$("#contract-gpu").value.trim(),
+        zone:$("#contract-zone").value.trim(),
+        provisioning_model:$("#contract-provisioning").value,
+        resume_hub_path:$("#contract-resume-hub-path").value.trim(),
+        resume_hub_repo:$("#contract-resume-hub-repo").value.trim(),
+        resume_hub_revision:$("#contract-resume-hub-revision").value.trim(),
+        timeout_minutes:Number($("#contract-timeout").value),
+        estimated_spend_usd:Number($("#contract-spend").value),
+        cost_confirmed:$("#contract-cost-confirmed").checked,
+      });
+      S.providerContract=contract;
+      $("#plan-provider-launch").disabled=false;
+      $("#dispatch-provider-launch").disabled=contract.status!=="ready";
+      $("#provider-contract-result").textContent=JSON.stringify(contract,null,2);
+      toast(`Contract ${contract.contract_id} is ${contract.status}.`);
+    }catch(e){showError(e);}
+  };
+  $("#plan-provider-launch").onclick=async()=>{
+    try{
+      if(!S.providerContract)throw new Error("Create a contract first.");
+      const result=await post("/api/provider/launch",{contract_id:S.providerContract.contract_id,execute:false});
+      $("#provider-contract-result").textContent=JSON.stringify(result,null,2);
+      toast(`Launch plan is ${result.status||result.plan?.status||"ready"}.`);
+    }catch(e){showError(e);}
+  };
+  $("#dispatch-provider-launch").onclick=async()=>{
+    try{
+      if(!S.providerContract)throw new Error("Create a contract first.");
+      if(!confirm(`Dispatch ${S.providerContract.contract_id} to ${S.providerContract.provider}? This can consume paid credit.`))return;
+      const result=await post("/api/provider/launch",{contract_id:S.providerContract.contract_id,execute:true});
+      S.providerRemoteJob=result;
+      const remoteId=result.sandbox_id||result.instance_name;
+      $("#graceful-provider-stop").disabled=!remoteId;
+      $("#terminate-provider-job").disabled=!remoteId;
+      $("#provider-contract-result").textContent=JSON.stringify(result,null,2);
+      toast(`Remote contract ${result.status}.`);
+    }catch(e){showError(e);}
+  };
+  $("#graceful-provider-stop").onclick=async()=>{
+    try{
+      const remoteId=S.providerRemoteJob?.sandbox_id||S.providerRemoteJob?.instance_name;
+      if(!remoteId)throw new Error("No remote training job is selected.");
+      if(!confirm("Request a safe optimizer-boundary stop, full checkpoint, and verified Hub upload?"))return;
+      const result=await post("/api/provider/control",{remote_id:remoteId,mode:"graceful"});
+      $("#provider-contract-result").textContent=JSON.stringify(result,null,2);
+      $("#graceful-provider-stop").disabled=true;
+      toast("Graceful remote stop requested.");
+    }catch(e){showError(e);}
+  };
+  $("#terminate-provider-job").onclick=async()=>{
+    try{
+      const remoteId=S.providerRemoteJob?.sandbox_id||S.providerRemoteJob?.instance_name;
+      if(!remoteId)throw new Error("No remote training job is selected.");
+      if(!confirm("Terminate this remote job immediately? Work since its last completed durable checkpoint can be lost."))return;
+      const result=await post("/api/provider/control",{remote_id:remoteId,mode:"terminate"});
+      $("#provider-contract-result").textContent=JSON.stringify(result,null,2);
+      $("#graceful-provider-stop").disabled=true;$("#terminate-provider-job").disabled=true;
+      toast("Remote job terminated.");
     }catch(e){showError(e);}
   };
 }

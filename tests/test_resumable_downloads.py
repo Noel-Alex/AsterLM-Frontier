@@ -72,6 +72,16 @@ def test_retry_policy_supports_unlimited_mode() -> None:
     assert not RetryPolicy(max_retries=3).permits(4)
 
 
+def test_gated_dataset_access_errors_are_not_retried() -> None:
+    from asterlm.data.resumable import is_retryable_exception
+
+    error = OSError(
+        "Dataset is a gated dataset on the Hub. Visit the dataset page to ask for access."
+    )
+    assert not is_retryable_exception(error)
+    assert is_retryable_exception(TimeoutError("connection timed out"))
+
+
 def test_dclm_uses_official_parquet_mirror() -> None:
     root = Path(__file__).resolve().parents[1]
     for name in ("corpus_pilot_500m.yaml", "corpus_frontier_16b.yaml", "corpus_main_12b.yaml"):
@@ -202,6 +212,20 @@ def test_explicit_hf_token_path_is_not_replaced(tmp_path: Path, monkeypatch) -> 
         SimpleNamespace(hf_home=str(tmp_path / "project-cache"), network_mode="low")
     )
     assert env["HF_TOKEN_PATH"] == str(explicit)
+
+
+def test_selected_hf_home_replaces_inherited_subcaches(tmp_path: Path, monkeypatch) -> None:
+    from types import SimpleNamespace
+
+    module = _load_script_module("download_data")
+    selected = tmp_path / "linux-safe-cache"
+    monkeypatch.setenv("HF_HUB_CACHE", str(tmp_path / "windows-hub-cache"))
+    monkeypatch.setenv("HF_XET_CACHE", str(tmp_path / "windows-xet-cache"))
+
+    env = module.build_environment(SimpleNamespace(hf_home=str(selected), network_mode="low"))
+
+    assert env["HF_HUB_CACHE"] == str(selected.resolve() / "hub")
+    assert env["HF_XET_CACHE"] == str(selected.resolve() / "xet")
 
 
 def test_checkout_guard_rejects_another_checkout_virtualenv(tmp_path: Path) -> None:

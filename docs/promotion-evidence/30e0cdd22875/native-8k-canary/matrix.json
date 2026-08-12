@@ -1,0 +1,440 @@
+{
+  "aggregate": {
+    "k3-final": {
+      "median_gpu_power_w": 101.1,
+      "median_gpu_utilization": 96.0,
+      "median_moe_forward_calls": 2208.0,
+      "median_moe_host_metadata_syncs": 2208.0,
+      "median_moe_host_metadata_syncs_per_forward": 1.0,
+      "median_moe_storage_pack_count": 23.0,
+      "median_moe_storage_pack_gib": 0.2021484375,
+      "median_moe_weight_cache_hits": 4278.0,
+      "median_moe_weight_cache_refresh_gib": 0.0,
+      "median_moe_weight_cache_refreshes": 138.0,
+      "median_peak_allocated_gib": 9.559552192687988,
+      "median_tokens_per_joule": 97.37882396171533,
+      "median_tokens_per_second": 9844.999102529418,
+      "successful_repetitions": 3
+    }
+  },
+  "completed_utc": "2026-08-12T03:17:17.001286+00:00",
+  "created_utc": "2026-08-12T03:14:25.693535+00:00",
+  "execution_checkout": {
+    "commit": "5b59fe93a73a1bdbe141f003b75ef5e7e66f3989",
+    "dirty": false,
+    "observed_commit": "5b59fe93a73a1bdbe141f003b75ef5e7e66f3989",
+    "path": "/tmp/aster-source-5b59fe93a73a-y66gxvdf/checkout",
+    "repository": "/mnt/n/AsterLM-Frontier",
+    "status_porcelain": []
+  },
+  "external_gpu_processes_at_start": "",
+  "git_commit": "5b59fe93a73a1bdbe141f003b75ef5e7e66f3989",
+  "models": {
+    "k3-final": {
+      "moe_implementation": "cutlass",
+      "sealed_path": "/mnt/n/AsterLM-Frontier/runs/promotion-canary/k3-native8k-muon-5b59fe9-20260812/protocol-configs/model-00.yaml",
+      "sha256": "711f393c494ea7d92c50415eaafaf9a5ead17b0855daefc362ee41c2a98541ec",
+      "source_path": "/mnt/n/AsterLM-Frontier/configs/model/aster_k3_latentmoe_270m_a188m.yaml"
+    }
+  },
+  "protocol": {
+    "accum": 16,
+    "batch": 1,
+    "checkpoint_segment_size_override": null,
+    "gpu_sample_interval": 0.5,
+    "gradient_checkpointing_disabled": false,
+    "idle_utilization_ceiling": 12.0,
+    "optimizer_override": "muon_adamw",
+    "order": [
+      [
+        "k3-final"
+      ]
+    ],
+    "precision_override": null,
+    "repetitions": 3,
+    "sequence": 8192,
+    "steps": 2,
+    "warmup": 1
+  },
+  "repository": {
+    "available": true,
+    "commit": "5b59fe93a73a1bdbe141f003b75ef5e7e66f3989",
+    "dirty": false,
+    "note": "Hash covers staged and unstaged tracked changes; status also records untracked paths.",
+    "root": "/mnt/n/AsterLM-Frontier",
+    "status_porcelain": [],
+    "tracked_diff_bytes": 0,
+    "tracked_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "schema_version": 2,
+  "source_provenance": {
+    "dirty": false,
+    "dirty_patch_sha256": null,
+    "expected_repo_root": "/mnt/n/AsterLM-Frontier",
+    "git_commit": "5b59fe93a73a1bdbe141f003b75ef5e7e66f3989",
+    "imported_repo_root": "/mnt/n/AsterLM-Frontier",
+    "source_matches_expected_checkout": true,
+    "tree_manifest_sha256": "21e057cccd62cbb0444a2b1ab89467c46bee353872ce180e9c379795050b0435"
+  },
+  "train_config": {
+    "sealed_path": "/mnt/n/AsterLM-Frontier/runs/promotion-canary/k3-native8k-muon-5b59fe9-20260812/protocol-configs/train.yaml",
+    "sha256": "b8aa3d6c6f947adbd32b733479c608236efec888470d4850f4380d238c46ef25",
+    "source_path": "/mnt/n/AsterLM-Frontier/configs/train/frontier_100b_stage1_8k.yaml"
+  },
+  "trials": [
+    {
+      "command": [
+        "/root/.venvs/asterlm/bin/python",
+        "/tmp/aster-source-5b59fe93a73a-y66gxvdf/checkout/scripts/profile_training.py",
+        "--model",
+        "/mnt/n/AsterLM-Frontier/runs/promotion-canary/k3-native8k-muon-5b59fe9-20260812/protocol-configs/model-00.yaml",
+        "--train-config",
+        "/mnt/n/AsterLM-Frontier/runs/promotion-canary/k3-native8k-muon-5b59fe9-20260812/protocol-configs/train.yaml",
+        "--sequence",
+        "8192",
+        "--batch",
+        "1",
+        "--accum",
+        "16",
+        "--steps",
+        "2",
+        "--warmup",
+        "1",
+        "--gpu-sample-interval",
+        "0.5",
+        "--json",
+        "/mnt/n/AsterLM-Frontier/runs/promotion-canary/k3-native8k-muon-5b59fe9-20260812/r1-k3-final.json",
+        "--optimizer",
+        "muon_adamw"
+      ],
+      "idle_before": {
+        "memory_used_mib": 755.0,
+        "temperature_gpu": 54.0,
+        "utilization_gpu": 0.0
+      },
+      "log": "/mnt/n/AsterLM-Frontier/runs/promotion-canary/k3-native8k-muon-5b59fe9-20260812/r1-k3-final.log",
+      "moe_implementation": "cutlass",
+      "name": "r1-k3-final",
+      "repetition": 1,
+      "result": "/mnt/n/AsterLM-Frontier/runs/promotion-canary/k3-native8k-muon-5b59fe9-20260812/r1-k3-final.json",
+      "returncode": 0,
+      "seconds": 48.32538553799532,
+      "status": "ok",
+      "summary": {
+        "estimated_gpu_energy_joules": 2849.0377314832467,
+        "estimated_gpu_energy_kwh": 0.0007913993698564574,
+        "estimated_gpu_joules_per_token": 0.010868216443951594,
+        "final_memory": {
+          "allocated_gib": 8.89652681350708,
+          "inactive_split_gib": 0.0,
+          "peak_allocated_gib": 9.559552192687988,
+          "peak_reserved_gib": 9.96484375,
+          "reserved_gib": 9.96484375
+        },
+        "fits_11p25_gib_peak": true,
+        "gpu": {
+          "mean_clocks_current_memory": 9001.0,
+          "mean_clocks_current_sm": 2163.6,
+          "mean_memory_used": 11168.8,
+          "mean_power_draw": 112.59039999999999,
+          "mean_temperature_gpu": 84.32,
+          "mean_utilization_gpu": 93.88,
+          "mean_utilization_memory": 58.12,
+          "measured_sample_count": 50,
+          "median_clocks_current_memory": 9001.0,
+          "median_clocks_current_sm": 2160.0,
+          "median_memory_used": 11236.0,
+          "median_power_draw": 114.455,
+          "median_temperature_gpu": 85.0,
+          "median_utilization_gpu": 95.5,
+          "median_utilization_memory": 57.0,
+          "p10_clocks_current_memory": 9001.0,
+          "p10_clocks_current_sm": 2070.0,
+          "p10_memory_used": 11096.0,
+          "p10_power_draw": 107.85,
+          "p10_temperature_gpu": 82.0,
+          "p10_utilization_gpu": 92.0,
+          "p10_utilization_memory": 54.0,
+          "p90_clocks_current_memory": 9001.0,
+          "p90_clocks_current_sm": 2220.0,
+          "p90_memory_used": 11236.0,
+          "p90_power_draw": 115.03,
+          "p90_temperature_gpu": 86.0,
+          "p90_utilization_gpu": 97.0,
+          "p90_utilization_memory": 65.0
+        },
+        "measured_tokens": 262144,
+        "measured_wall_time_seconds": 25.304446306996397,
+        "median_phase_timing": {
+          "cuda_ms": {
+            "backward": 10294.775909423828,
+            "clip_and_finite_gate": 17.2805118560791,
+            "forward": 3312.277519226074,
+            "optimizer": 172.0927734375,
+            "router_balance": 5.657167911529541,
+            "synthetic_data": 0.13361600157804787
+          },
+          "host_submit_or_sync_ms": {
+            "backward": 9265.254645993991,
+            "clip_and_finite_gate": 30.23303450027015,
+            "forward": 3190.5138390102366,
+            "optimizer": 91.08382100021117,
+            "router_balance": 71.79071650170954,
+            "synthetic_data": 2.0372785038489383
+          }
+        },
+        "median_seconds": 12.652223153498198,
+        "median_tokens_per_joule": 90.51244850457034,
+        "median_tokens_per_second": 10359.602293590598,
+        "moe_execution": {
+          "moe_backend_forward_calls": 2208.0,
+          "moe_backend_host_metadata_syncs": 2208.0,
+          "moe_backend_storage_materialization_count": 0.0,
+          "moe_backend_storage_materialization_gib": 0.0,
+          "moe_backend_storage_pack_count": 23.0,
+          "moe_backend_storage_pack_gib": 0.2021484375,
+          "moe_backend_weight_cache_hits": 4278.0,
+          "moe_backend_weight_cache_refresh_gib": 0.0,
+          "moe_backend_weight_cache_refreshes": 138.0
+        }
+      },
+      "variant": "k3-final"
+    },
+    {
+      "command": [
+        "/root/.venvs/asterlm/bin/python",
+        "/tmp/aster-source-5b59fe93a73a-y66gxvdf/checkout/scripts/profile_training.py",
+        "--model",
+        "/mnt/n/AsterLM-Frontier/runs/promotion-canary/k3-native8k-muon-5b59fe9-20260812/protocol-configs/model-00.yaml",
+        "--train-config",
+        "/mnt/n/AsterLM-Frontier/runs/promotion-canary/k3-native8k-muon-5b59fe9-20260812/protocol-configs/train.yaml",
+        "--sequence",
+        "8192",
+        "--batch",
+        "1",
+        "--accum",
+        "16",
+        "--steps",
+        "2",
+        "--warmup",
+        "1",
+        "--gpu-sample-interval",
+        "0.5",
+        "--json",
+        "/mnt/n/AsterLM-Frontier/runs/promotion-canary/k3-native8k-muon-5b59fe9-20260812/r2-k3-final.json",
+        "--optimizer",
+        "muon_adamw"
+      ],
+      "idle_before": {
+        "memory_used_mib": 755.0,
+        "temperature_gpu": 65.0,
+        "utilization_gpu": 0.0
+      },
+      "log": "/mnt/n/AsterLM-Frontier/runs/promotion-canary/k3-native8k-muon-5b59fe9-20260812/r2-k3-final.log",
+      "moe_implementation": "cutlass",
+      "name": "r2-k3-final",
+      "repetition": 2,
+      "result": "/mnt/n/AsterLM-Frontier/runs/promotion-canary/k3-native8k-muon-5b59fe9-20260812/r2-k3-final.json",
+      "returncode": 0,
+      "seconds": 49.06911838599626,
+      "status": "ok",
+      "summary": {
+        "estimated_gpu_energy_joules": 2663.425685231175,
+        "estimated_gpu_energy_kwh": 0.0007398404681197709,
+        "estimated_gpu_joules_per_token": 0.010160162678646755,
+        "final_memory": {
+          "allocated_gib": 8.89652681350708,
+          "inactive_split_gib": 0.0,
+          "peak_allocated_gib": 9.559552192687988,
+          "peak_reserved_gib": 9.96484375,
+          "reserved_gib": 9.96484375
+        },
+        "fits_11p25_gib_peak": true,
+        "gpu": {
+          "mean_clocks_current_memory": 9001.0,
+          "mean_clocks_current_sm": 1986.5094339622642,
+          "mean_memory_used": 11167.32075471698,
+          "mean_power_draw": 100.0267924528302,
+          "mean_temperature_gpu": 85.90566037735849,
+          "mean_utilization_gpu": 93.18867924528301,
+          "mean_utilization_memory": 54.83018867924528,
+          "measured_sample_count": 53,
+          "median_clocks_current_memory": 9001.0,
+          "median_clocks_current_sm": 1980.0,
+          "median_memory_used": 11236.0,
+          "median_power_draw": 101.1,
+          "median_temperature_gpu": 86.0,
+          "median_utilization_gpu": 96.0,
+          "median_utilization_memory": 55.0,
+          "p10_clocks_current_memory": 9001.0,
+          "p10_clocks_current_sm": 1905.0,
+          "p10_memory_used": 11096.0,
+          "p10_power_draw": 95.07,
+          "p10_temperature_gpu": 85.0,
+          "p10_utilization_gpu": 92.0,
+          "p10_utilization_memory": 51.0,
+          "p90_clocks_current_memory": 9001.0,
+          "p90_clocks_current_sm": 2055.0,
+          "p90_memory_used": 11236.0,
+          "p90_power_draw": 107.08,
+          "p90_temperature_gpu": 87.0,
+          "p90_utilization_gpu": 97.0,
+          "p90_utilization_memory": 61.0
+        },
+        "measured_tokens": 262144,
+        "measured_wall_time_seconds": 26.627122792997397,
+        "median_phase_timing": {
+          "cuda_ms": {
+            "backward": 10775.300872802734,
+            "clip_and_finite_gate": 17.38969612121582,
+            "forward": 3550.352363586426,
+            "optimizer": 175.00836181640625,
+            "router_balance": 5.436991930007935,
+            "synthetic_data": 0.15775999915786088
+          },
+          "host_submit_or_sync_ms": {
+            "backward": 9672.025164985826,
+            "clip_and_finite_gate": 31.93188149816706,
+            "forward": 3440.745686995797,
+            "optimizer": 92.92650549832615,
+            "router_balance": 72.45642549969489,
+            "synthetic_data": 2.1847274838364683
+          }
+        },
+        "median_seconds": 13.313561396498699,
+        "median_tokens_per_joule": 97.37882396171533,
+        "median_tokens_per_second": 9844.999102529418,
+        "moe_execution": {
+          "moe_backend_forward_calls": 2208.0,
+          "moe_backend_host_metadata_syncs": 2208.0,
+          "moe_backend_storage_materialization_count": 0.0,
+          "moe_backend_storage_materialization_gib": 0.0,
+          "moe_backend_storage_pack_count": 23.0,
+          "moe_backend_storage_pack_gib": 0.2021484375,
+          "moe_backend_weight_cache_hits": 4278.0,
+          "moe_backend_weight_cache_refresh_gib": 0.0,
+          "moe_backend_weight_cache_refreshes": 138.0
+        }
+      },
+      "variant": "k3-final"
+    },
+    {
+      "command": [
+        "/root/.venvs/asterlm/bin/python",
+        "/tmp/aster-source-5b59fe93a73a-y66gxvdf/checkout/scripts/profile_training.py",
+        "--model",
+        "/mnt/n/AsterLM-Frontier/runs/promotion-canary/k3-native8k-muon-5b59fe9-20260812/protocol-configs/model-00.yaml",
+        "--train-config",
+        "/mnt/n/AsterLM-Frontier/runs/promotion-canary/k3-native8k-muon-5b59fe9-20260812/protocol-configs/train.yaml",
+        "--sequence",
+        "8192",
+        "--batch",
+        "1",
+        "--accum",
+        "16",
+        "--steps",
+        "2",
+        "--warmup",
+        "1",
+        "--gpu-sample-interval",
+        "0.5",
+        "--json",
+        "/mnt/n/AsterLM-Frontier/runs/promotion-canary/k3-native8k-muon-5b59fe9-20260812/r3-k3-final.json",
+        "--optimizer",
+        "muon_adamw"
+      ],
+      "idle_before": {
+        "memory_used_mib": 755.0,
+        "temperature_gpu": 66.0,
+        "utilization_gpu": 0.0
+      },
+      "log": "/mnt/n/AsterLM-Frontier/runs/promotion-canary/k3-native8k-muon-5b59fe9-20260812/r3-k3-final.log",
+      "moe_implementation": "cutlass",
+      "name": "r3-k3-final",
+      "repetition": 3,
+      "result": "/mnt/n/AsterLM-Frontier/runs/promotion-canary/k3-native8k-muon-5b59fe9-20260812/r3-k3-final.json",
+      "returncode": 0,
+      "seconds": 51.238219331004075,
+      "status": "ok",
+      "summary": {
+        "estimated_gpu_energy_joules": 2630.0656633079693,
+        "estimated_gpu_energy_kwh": 0.0007305737953633248,
+        "estimated_gpu_joules_per_token": 0.010032904294235112,
+        "final_memory": {
+          "allocated_gib": 8.89652681350708,
+          "inactive_split_gib": 0.0,
+          "peak_allocated_gib": 9.559552192687988,
+          "peak_reserved_gib": 9.9453125,
+          "reserved_gib": 9.9453125
+        },
+        "fits_11p25_gib_peak": true,
+        "gpu": {
+          "mean_clocks_current_memory": 9001.0,
+          "mean_clocks_current_sm": 1918.3333333333333,
+          "mean_memory_used": 11158.25925925926,
+          "mean_power_draw": 96.96777777777778,
+          "mean_temperature_gpu": 85.98148148148148,
+          "mean_utilization_gpu": 94.07407407407408,
+          "mean_utilization_memory": 53.870370370370374,
+          "measured_sample_count": 54,
+          "median_clocks_current_memory": 9001.0,
+          "median_clocks_current_sm": 1927.5,
+          "median_memory_used": 11216.0,
+          "median_power_draw": 96.20500000000001,
+          "median_temperature_gpu": 86.0,
+          "median_utilization_gpu": 96.0,
+          "median_utilization_memory": 53.0,
+          "p10_clocks_current_memory": 9001.0,
+          "p10_clocks_current_sm": 1785.0,
+          "p10_memory_used": 11096.0,
+          "p10_power_draw": 93.34,
+          "p10_temperature_gpu": 85.0,
+          "p10_utilization_gpu": 90.0,
+          "p10_utilization_memory": 48.0,
+          "p90_clocks_current_memory": 9001.0,
+          "p90_clocks_current_sm": 2025.0,
+          "p90_memory_used": 11216.0,
+          "p90_power_draw": 99.99,
+          "p90_temperature_gpu": 87.0,
+          "p90_utilization_gpu": 97.0,
+          "p90_utilization_memory": 58.0
+        },
+        "measured_tokens": 262144,
+        "measured_wall_time_seconds": 27.12308896399918,
+        "median_phase_timing": {
+          "cuda_ms": {
+            "backward": 10988.322692871094,
+            "clip_and_finite_gate": 17.21183967590332,
+            "forward": 3604.6220932006836,
+            "optimizer": 178.0853729248047,
+            "router_balance": 5.756576061248779,
+            "synthetic_data": 0.1823040011804551
+          },
+          "host_submit_or_sync_ms": {
+            "backward": 9869.852809992153,
+            "clip_and_finite_gate": 31.669683496147627,
+            "forward": 3488.306390507205,
+            "optimizer": 94.81315949960845,
+            "router_balance": 73.65401749848388,
+            "synthetic_data": 1.9106134932371788
+          }
+        },
+        "median_seconds": 13.56154448199959,
+        "median_tokens_per_joule": 100.46230296596747,
+        "median_tokens_per_second": 9664.975856840902,
+        "moe_execution": {
+          "moe_backend_forward_calls": 2208.0,
+          "moe_backend_host_metadata_syncs": 2208.0,
+          "moe_backend_storage_materialization_count": 0.0,
+          "moe_backend_storage_materialization_gib": 0.0,
+          "moe_backend_storage_pack_count": 23.0,
+          "moe_backend_storage_pack_gib": 0.2021484375,
+          "moe_backend_weight_cache_hits": 4278.0,
+          "moe_backend_weight_cache_refresh_gib": 0.0,
+          "moe_backend_weight_cache_refreshes": 138.0
+        }
+      },
+      "variant": "k3-final"
+    }
+  ]
+}

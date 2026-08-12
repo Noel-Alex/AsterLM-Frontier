@@ -9,8 +9,9 @@ import os
 import sqlite3
 import time
 from collections import Counter
+from collections.abc import Iterator
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any
 
 from tqdm import tqdm
 
@@ -202,6 +203,11 @@ def main() -> None:
     parser.add_argument("--input", required=True)
     parser.add_argument("--output", required=True)
     parser.add_argument(
+        "--dedup-db",
+        default=None,
+        help="Optional shared SQLite path for exact/near deduplication across sources",
+    )
+    parser.add_argument(
         "--validation-output",
         default=None,
         help="Optional disjoint deterministic validation output directory",
@@ -231,7 +237,9 @@ def main() -> None:
 
     output = Path(args.output)
     output.mkdir(parents=True, exist_ok=True)
-    connection = init_db(output / "dedup.sqlite")
+    dedup_db = Path(args.dedup_db) if args.dedup_db else output / "dedup.sqlite"
+    dedup_db.parent.mkdir(parents=True, exist_ok=True)
+    connection = init_db(dedup_db)
     writer = ShardWriter(output, args.shard_mb)
     validation_writer = (
         ShardWriter(Path(args.validation_output), args.shard_mb) if args.validation_output else None
@@ -312,6 +320,7 @@ def main() -> None:
         "benchmark_hashes": len(benchmark_hashes),
         "elapsed_seconds": time.time() - started,
         "arguments": vars(args),
+        "dedup_db": str(dedup_db),
     }
     (output / "cleaning_report.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
     print(json.dumps(report, indent=2))

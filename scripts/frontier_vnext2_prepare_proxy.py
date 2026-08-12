@@ -8,8 +8,8 @@ import io
 import json
 import random
 from collections import defaultdict
+from collections.abc import Iterator
 from pathlib import Path
-from typing import Iterator
 
 import pyarrow.parquet as pq
 import yaml
@@ -17,15 +17,20 @@ import yaml
 from asterlm.data.tokenizer import SPECIAL_TOKENS, AsterTokenizer
 
 ROOT = Path.cwd().resolve()
-RUN = ROOT / "runs/frontier-vnext2/proxy-data"
-ARTIFACTS = ROOT / "artifacts"
+DEFAULT_RUN = ROOT / "runs/frontier-vnext2/proxy-data"
+DEFAULT_TOKENIZER = ROOT / "artifacts/tokenizer_proxy.json"
 
 SOURCE_ALIASES = {
     "fineweb_edu": ("fineweb_edu", "fineweb-edu", "fineweb"),
     "dclm": ("dclm",),
     "finemath_4plus": ("finemath_4plus", "finemath-4plus", "finemath"),
-    "stack_edu": ("stack_edu", "stack-edu", "stack", "code"),
     "cosmopedia_v2": ("cosmopedia_v2", "cosmopedia-v2", "cosmopedia"),
+}
+DEFAULT_SOURCE_WEIGHTS = {
+    "fineweb_edu": 35,
+    "dclm": 15,
+    "finemath_4plus": 20,
+    "cosmopedia_v2": 10,
 }
 RECORD_SUFFIXES = (
     ".jsonl", ".jsonl.gz", ".jsonl.zst", ".json", ".parquet", ".txt", ".md", ".markdown"
@@ -107,15 +112,12 @@ def iter_file(path: Path) -> Iterator[str]:
         return
     if low.endswith(".jsonl.gz"):
         ctx = gzip.open(path, "rt", encoding="utf-8", errors="replace")
-        mode = "jsonl"
     elif low.endswith(".jsonl.zst"):
         import zstandard as zstd
         raw = path.open("rb")
         ctx = io.TextIOWrapper(zstd.ZstdDecompressor().stream_reader(raw), encoding="utf-8", errors="replace")
-        mode = "jsonl"
     elif low.endswith(".jsonl"):
         ctx = path.open("r", encoding="utf-8", errors="replace")
-        mode = "jsonl"
     elif low.endswith(".json"):
         try:
             obj = json.loads(path.read_text(encoding="utf-8", errors="replace"))
@@ -175,9 +177,11 @@ def digest(text: str) -> str:
     return hashlib.blake2b(text.encode("utf-8", errors="ignore"), digest_size=16).hexdigest()
 
 
-def build_tokenizer_sample(sources: dict[str, Path], target_bytes: int, seed: int) -> Path:
-    RUN.mkdir(parents=True, exist_ok=True)
-    sample = RUN / "tokenizer_sample.txt"
+def build_tokenizer_sample(
+    sources: dict[str, Path], target_bytes: int, seed: int, output_dir: Path
+) -> Path:
+    output_dir.mkdir(parents=True, exist_ok=True)
+    sample = output_dir / "tokenizer_sample.txt"
     if sample.is_file() and sample.stat().st_size >= int(target_bytes * 0.9):
         return sample
     iterators = {n: iter_source(p, seed + 1009 * i) for i, (n, p) in enumerate(sorted(sources.items()))}
@@ -204,9 +208,8 @@ def build_tokenizer_sample(sources: dict[str, Path], target_bytes: int, seed: in
     return sample
 
 
-def train_proxy_tokenizer(sample: Path, vocab_size: int) -> Path:
-    ARTIFACTS.mkdir(parents=True, exist_ok=True)
-    output = ARTIFACTS / "tokenizer_proxy.json"
+def train_proxy_tokenizer(sample: Path, vocab_size: int, output: Path) -> Path:
+    output.parent.mkdir(parents=True, exist_ok=True)
     if output.is_file():
         try:
             tok = AsterTokenizer(output)
@@ -234,7 +237,13 @@ def train_proxy_tokenizer(sample: Path, vocab_size: int) -> Path:
 
 
 def materialize_proxy(
-    sources: dict[str, Path], tokenizer_path: Path, train_target: int, val_target: int, seed: int
+    sources: dict[str, Path],
+    tokenizer_path: Path,
+    train_target: int,
+    val_target: int,
+    seed: int,
+    output_dir: Path,
+    source_weights: dict[str, int],
 ) -> tuple[Path, Path, dict]:
     """Materialize a hash-disjoint proxy corpus with *token* quotas per source.
 
@@ -245,9 +254,14 @@ def materialize_proxy(
     comparisons then see essentially the same token mixture instead of a doc-length
     confound.
     """
-    train_file = RUN / "train.jsonl"
-    val_file = RUN / "val.jsonl"
-    meta_file = RUN / "manifest.json"
+    train_file = output_dir / "train.jsonl"
+    val_file = output_dir / "val.jsonl"
+    meta_file = output_dir / "manifest.json"
+    names = [name for name in source_weights if name in sources]
+    if len(names) < 2:
+        raise RuntimeError(f"Need at least two local corpus families, found {names}")
+    total_weight = sum(source_weights[name] for name in names)
+    normalized = {name: source_weights[name] / total_weight for name in names}
     if meta_file.is_file() and train_file.is_file() and val_file.is_file():
         try:
             meta = json.loads(meta_file.read_text())
@@ -255,25 +269,13 @@ def materialize_proxy(
                 meta.get("train_tokens", 0) >= train_target
                 and meta.get("val_tokens", 0) >= val_target
                 and meta.get("quota_mode") == "per_source_tokens_v2"
+                and meta.get("source_weights_normalized") == normalized
             ):
                 return train_file, val_file, meta
         except Exception:
             pass
 
     tok = AsterTokenizer(tokenizer_path)
-    source_weights = {
-        "fineweb_edu": 35,
-        "dclm": 15,
-        "finemath_4plus": 20,
-        "stack_edu": 20,
-        "cosmopedia_v2": 10,
-    }
-    names = [n for n in source_weights if n in sources]
-    if len(names) < 2:
-        raise RuntimeError(f"Need at least two local corpus families, found {names}")
-    total_weight = sum(source_weights[n] for n in names)
-    normalized = {n: source_weights[n] / total_weight for n in names}
-
     def quotas(total: int) -> dict[str, int]:
         q = {n: int(total * normalized[n]) for n in names}
         # Assign integer-rounding remainder deterministically to the largest weights.
@@ -383,6 +385,7 @@ def materialize_proxy(
         "source_tokens": dict(source_tokens),
         "source_quotas": quota_report,
         "source_weights_normalized": normalized,
+        "excluded_sources": sorted(set(DEFAULT_SOURCE_WEIGHTS) - set(source_weights)),
         "sources": {k: str(v) for k, v in sources.items()},
         "dedup_hashes": len(seen),
         "split_rule": "blake2b128(text) first32bits mod10 == 0 => validation",
@@ -393,8 +396,16 @@ def materialize_proxy(
     return train_file, val_file, meta
 
 
-def write_data_config(train: Path, val: Path) -> Path:
-    out = RUN / "data-proxy.yaml"
+def _portable_repo_path(path: Path) -> str:
+    resolved = path.resolve()
+    try:
+        return resolved.relative_to(ROOT).as_posix()
+    except ValueError:
+        return str(resolved)
+
+
+def write_data_config(train: Path, val: Path, output_dir: Path) -> Path:
+    out = output_dir / "data-proxy.yaml"
     payload = {
         "data": {
             "seed": 1337,
@@ -404,8 +415,13 @@ def write_data_config(train: Path, val: Path) -> Path:
             "quality_filters": True,
             "add_eos_between_documents": True,
             "mask_cross_document_loss": True,
-            "sources": [{"path": str(train), "text_field": "text", "weight": 1.0}],
-            "validation_sources": [{"path": str(val), "text_field": "text", "weight": 1.0}],
+            "manifest_path": _portable_repo_path(output_dir / "manifest.json"),
+            "sources": [
+                {"path": _portable_repo_path(train), "text_field": "text", "weight": 1.0}
+            ],
+            "validation_sources": [
+                {"path": _portable_repo_path(val), "text_field": "text", "weight": 1.0}
+            ],
         }
     }
     out.write_text(yaml.safe_dump(payload, sort_keys=False), encoding="utf-8")
@@ -419,26 +435,52 @@ def main() -> None:
     parser.add_argument("--train-tokens", type=int, default=20_000_000)
     parser.add_argument("--val-tokens", type=int, default=2_000_000)
     parser.add_argument("--seed", type=int, default=1337)
+    parser.add_argument("--output", type=Path, default=DEFAULT_RUN)
+    parser.add_argument("--tokenizer-output", type=Path, default=DEFAULT_TOKENIZER)
+    parser.add_argument(
+        "--exclude-source",
+        action="append",
+        default=[],
+        choices=sorted(SOURCE_ALIASES),
+        help="Exclude a corpus family from tokenizer and proxy materialization; repeatable.",
+    )
     args = parser.parse_args()
-    sources = discover_sources()
-    RUN.mkdir(parents=True, exist_ok=True)
-    (RUN / "source-discovery.json").write_text(
+    output_dir = args.output.resolve()
+    tokenizer_output = args.tokenizer_output.resolve()
+    discovered = discover_sources()
+    excluded = set(args.exclude_source)
+    sources = {name: path for name, path in discovered.items() if name not in excluded}
+    source_weights = {
+        name: weight for name, weight in DEFAULT_SOURCE_WEIGHTS.items() if name not in excluded
+    }
+    output_dir.mkdir(parents=True, exist_ok=True)
+    (output_dir / "source-discovery.json").write_text(
         json.dumps({k: str(v) for k, v in sources.items()}, indent=2), encoding="utf-8"
     )
     print("proxy sources:", {k: str(v) for k, v in sources.items()})
-    sample = build_tokenizer_sample(sources, args.tokenizer_sample_mib * 2**20, args.seed)
-    tokenizer = train_proxy_tokenizer(sample, args.vocab_size)
-    train, val, meta = materialize_proxy(
-        sources, tokenizer, args.train_tokens, args.val_tokens, args.seed
+    sample = build_tokenizer_sample(
+        sources, args.tokenizer_sample_mib * 2**20, args.seed, output_dir
     )
-    data = write_data_config(train, val)
+    tokenizer = train_proxy_tokenizer(sample, args.vocab_size, tokenizer_output)
+    train, val, meta = materialize_proxy(
+        sources,
+        tokenizer,
+        args.train_tokens,
+        args.val_tokens,
+        args.seed,
+        output_dir,
+        source_weights,
+    )
+    data = write_data_config(train, val, output_dir)
     result = {
         "status": "ok",
         "tokenizer": str(tokenizer),
         "data_config": str(data),
         "manifest": meta,
     }
-    (RUN / "prepare_result.json").write_text(json.dumps(result, indent=2), encoding="utf-8")
+    (output_dir / "prepare_result.json").write_text(
+        json.dumps(result, indent=2), encoding="utf-8"
+    )
     print(json.dumps(result, indent=2))
 
 

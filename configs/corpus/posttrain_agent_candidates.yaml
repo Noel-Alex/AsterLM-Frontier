@@ -1,0 +1,17 @@
+records:
+  # Agent traces stay physically and logically separate from general SFT. They
+  # are verbose, tool-protocol-specific candidates and must not shape the base
+  # assistant style unless an agent-only quality campaign promotes them.
+  output_dir: data/posttrain-agent-candidates
+  shard_size_mb: 256
+  state_flush_records: 250
+  checkpoint_seconds: 180
+  checkpoint_records: 2500
+  sources:
+    - id: openthoughts_agent_sft_100k
+      path: open-thoughts/OpenThoughts-Agent-SFT-100K
+      revision: 45fb28fcc38d352133cb28a1c8a43a2f14fea97b
+      split: train
+      target_records: null
+      keep_fields: [agent, conversations, task, trace_source, result, date, model, model_provider]
+      shuffle_seed: 2407

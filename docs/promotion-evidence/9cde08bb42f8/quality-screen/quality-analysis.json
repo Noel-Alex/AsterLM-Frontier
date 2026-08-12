@@ -1,0 +1,792 @@
+{
+  "schema_version": 1,
+  "campaign": "/mnt/n/AsterLM-Frontier/runs/architecture-campaign/quality-mb4-rejection-16m8-two-seed-metrics-v2-20260811/quality-campaign.json",
+  "campaign_status": "complete",
+  "analysis_status": "complete",
+  "expected_runs": 6,
+  "complete_runs": 6,
+  "common_budgets_by_seed": {
+    "1337": {
+      "wall_clock_total_seconds": 1293.851946355,
+      "estimated_cumulative_flops": 1.88781106692096e+16
+    },
+    "2027": {
+      "wall_clock_total_seconds": 1291.251504635,
+      "estimated_cumulative_flops": 1.88781106692096e+16
+    }
+  },
+  "common_target_loss_by_seed": {
+    "1337": 5.3886309415102005,
+    "2027": 5.377031862735748
+  },
+  "candidates": {
+    "tier0-dense-mla-220m:torch-sdpa-bf16": {
+      "candidate_id": "tier0-dense-mla-220m",
+      "execution_variant": "torch-sdpa-bf16",
+      "complete_seed_count": 2,
+      "expected_seed_count": 2,
+      "final_eval_loss_mean": 5.379433356225491,
+      "final_eval_loss_stdev": 0.00799335001762148,
+      "token_curve_auc_mean": 5.889128946832248,
+      "wall_curve_auc_mean": 5.893198599763384,
+      "equal_wall_loss_mean": 5.379433356225491,
+      "equal_active_flops_loss_mean": 5.415135737955932,
+      "time_to_common_loss_seconds_mean": 1290.0671739499876,
+      "tokens_to_common_loss_mean": 16745678.205297347,
+      "active_flops_to_common_loss_mean": 1.9229328927390764e+16,
+      "median_training_tokens_per_second": 13669.610684307758,
+      "mean_gpu_util_percent": 90.98529411764706,
+      "peak_vram_gib": 2.270273208618164
+    },
+    "tier1-dense-kda3-mla-h128-samewidth-220m:fla-kda-bf16": {
+      "candidate_id": "tier1-dense-kda3-mla-h128-samewidth-220m",
+      "execution_variant": "fla-kda-bf16",
+      "complete_seed_count": 2,
+      "expected_seed_count": 2,
+      "final_eval_loss_mean": 5.382831402122974,
+      "final_eval_loss_stdev": 0.008201787256932106,
+      "token_curve_auc_mean": 6.074648475008352,
+      "wall_curve_auc_mean": 6.07868073238315,
+      "equal_wall_loss_mean": 5.41402625480857,
+      "equal_active_flops_loss_mean": 5.519149865903071,
+      "time_to_common_loss_seconds_mean": 1312.4633955339996,
+      "tokens_to_common_loss_mean": 16777216.0,
+      "active_flops_to_common_loss_mean": 2.02242003959808e+16,
+      "median_training_tokens_per_second": 13415.439628229953,
+      "mean_gpu_util_percent": 90.94117647058823,
+      "peak_vram_gib": 2.4041600227355957
+    },
+    "tier2-k3-stable-latentmoe-220m:cutlass-grouped-bf16": {
+      "candidate_id": "tier2-k3-stable-latentmoe-220m",
+      "execution_variant": "cutlass-grouped-bf16",
+      "complete_seed_count": 2,
+      "expected_seed_count": 2,
+      "final_eval_loss_mean": 5.373940087854862,
+      "final_eval_loss_stdev": 0.002021162657052051,
+      "token_curve_auc_mean": 6.046112486294337,
+      "wall_curve_auc_mean": 6.062374066145437,
+      "equal_wall_loss_mean": 5.733934625699065,
+      "equal_active_flops_loss_mean": 5.373940087854862,
+      "time_to_common_loss_seconds_mean": 1628.7966656280255,
+      "tokens_to_common_loss_mean": 16699945.522528,
+      "active_flops_to_common_loss_mean": 1.878945931070181e+16,
+      "median_training_tokens_per_second": 10751.839623342321,
+      "mean_gpu_util_percent": 82.9264705882353,
+      "peak_vram_gib": 9.790865898132324
+    }
+  },
+  "runs": [
+    {
+      "seed": 1337,
+      "candidate_id": "tier0-dense-mla-220m",
+      "execution_variant": "torch-sdpa-bf16",
+      "run_dir": "seed-1337/tier0-dense-mla-220m/torch-sdpa-bf16",
+      "status": "ok",
+      "status_reason": null,
+      "run_id": "torch-sdpa-bf16-20260811T090629Z-67100bdb",
+      "tokens_seen": 16777216,
+      "eval_main_loss": 5.385085508227348,
+      "eval_perplexity": 218.12875511323455,
+      "eval_tokens": 16777216,
+      "median_training_tokens_per_second": 13705.601465340878,
+      "mean_gpu_util_percent": 90.70588235294117,
+      "peak_vram_gib": 2.270273208618164,
+      "wall_clock_total_seconds": 1293.851946355,
+      "learning_curve": [
+        {
+          "step": 128,
+          "tokens_seen": 2097152,
+          "eval_main_loss": 6.617262691259384,
+          "eval_perplexity": 747.8950728972218,
+          "milestone_tokens": null,
+          "wall_clock_total_seconds": 152.2389527129999,
+          "estimated_cumulative_flops": 2266618323271680.0
+        },
+        {
+          "step": 256,
+          "tokens_seen": 4194304,
+          "eval_main_loss": 6.266495943069458,
+          "eval_perplexity": 526.6288037051339,
+          "milestone_tokens": null,
+          "wall_clock_total_seconds": 322.87716499199996,
+          "estimated_cumulative_flops": 4722121506816000.0
+        },
+        {
+          "step": 256,
+          "tokens_seen": 4194304,
+          "eval_main_loss": 6.266495943069458,
+          "eval_perplexity": 526.6288037051339,
+          "milestone_tokens": 4194304,
+          "wall_clock_total_seconds": 322.87716499199996,
+          "estimated_cumulative_flops": 4722121506816000.0
+        },
+        {
+          "step": 384,
+          "tokens_seen": 6291456,
+          "eval_main_loss": 6.0100560784339905,
+          "eval_perplexity": 407.5061719411165,
+          "milestone_tokens": null,
+          "wall_clock_total_seconds": 488.0910405780014,
+          "estimated_cumulative_flops": 7177624690360320.0
+        },
+        {
+          "step": 512,
+          "tokens_seen": 8388608,
+          "eval_main_loss": 5.870421811938286,
+          "eval_perplexity": 354.39843823612955,
+          "milestone_tokens": null,
+          "wall_clock_total_seconds": 650.4502877539999,
+          "estimated_cumulative_flops": 9633127873904640.0
+        },
+        {
+          "step": 512,
+          "tokens_seen": 8388608,
+          "eval_main_loss": 5.870421811938286,
+          "eval_perplexity": 354.39843823612955,
+          "milestone_tokens": 8388608,
+          "wall_clock_total_seconds": 650.4502877539999,
+          "estimated_cumulative_flops": 9633127873904640.0
+        },
+        {
+          "step": 640,
+          "tokens_seen": 10485760,
+          "eval_main_loss": 5.737193986773491,
+          "eval_perplexity": 310.19278360077385,
+          "milestone_tokens": null,
+          "wall_clock_total_seconds": 811.9251235740012,
+          "estimated_cumulative_flops": 1.208863105744896e+16
+        },
+        {
+          "step": 768,
+          "tokens_seen": 12582912,
+          "eval_main_loss": 5.754107549786568,
+          "eval_perplexity": 315.48386820500264,
+          "milestone_tokens": null,
+          "wall_clock_total_seconds": 966.8306203970005,
+          "estimated_cumulative_flops": 1.435524938072064e+16
+        },
+        {
+          "step": 896,
+          "tokens_seen": 14680064,
+          "eval_main_loss": 5.617387518286705,
+          "eval_perplexity": 275.1695679277511,
+          "milestone_tokens": null,
+          "wall_clock_total_seconds": 1130.2922267250015,
+          "estimated_cumulative_flops": 1.681075256426496e+16
+        },
+        {
+          "step": 1024,
+          "tokens_seen": 16777216,
+          "eval_main_loss": 5.385085508227348,
+          "eval_perplexity": 218.12875511323455,
+          "milestone_tokens": null,
+          "wall_clock_total_seconds": 1293.851946355,
+          "estimated_cumulative_flops": 1.926625574780928e+16
+        },
+        {
+          "step": 1024,
+          "tokens_seen": 16777216,
+          "eval_main_loss": 5.385085508227348,
+          "eval_perplexity": 218.12875511323455,
+          "milestone_tokens": 16777216,
+          "wall_clock_total_seconds": 1293.851946355,
+          "estimated_cumulative_flops": 1.926625574780928e+16
+        }
+      ]
+    },
+    {
+      "seed": 1337,
+      "candidate_id": "tier1-dense-kda3-mla-h128-samewidth-220m",
+      "execution_variant": "fla-kda-bf16",
+      "run_dir": "seed-1337/tier1-dense-kda3-mla-h128-samewidth-220m/fla-kda-bf16",
+      "status": "ok",
+      "status_reason": null,
+      "run_id": "fla-kda-bf16-20260811T092956Z-47144c9b",
+      "tokens_seen": 16777216,
+      "eval_main_loss": 5.3886309415102005,
+      "eval_perplexity": 218.90348863302387,
+      "eval_tokens": 16777216,
+      "median_training_tokens_per_second": 13273.084848932758,
+      "mean_gpu_util_percent": 89.96078431372548,
+      "peak_vram_gib": 2.4041600227355957,
+      "wall_clock_total_seconds": 1324.6831961869993,
+      "learning_curve": [
+        {
+          "step": 128,
+          "tokens_seen": 2097152,
+          "eval_main_loss": 7.320253059267998,
+          "eval_perplexity": 1510.5861892344283,
+          "milestone_tokens": null,
+          "wall_clock_total_seconds": 153.13626812800067,
+          "estimated_cumulative_flops": 2379317693644800.0
+        },
+        {
+          "step": 256,
+          "tokens_seen": 4194304,
+          "eval_main_loss": 6.694735020399094,
+          "eval_perplexity": 808.1397652841072,
+          "milestone_tokens": null,
+          "wall_clock_total_seconds": 325.0415448599997,
+          "estimated_cumulative_flops": 4956911861760000.0
+        },
+        {
+          "step": 256,
+          "tokens_seen": 4194304,
+          "eval_main_loss": 6.694735020399094,
+          "eval_perplexity": 808.1397652841072,
+          "milestone_tokens": 4194304,
+          "wall_clock_total_seconds": 325.0415448599997,
+          "estimated_cumulative_flops": 4956911861760000.0
+        },
+        {
+          "step": 384,
+          "tokens_seen": 6291456,
+          "eval_main_loss": 6.207957550883293,
+          "eval_perplexity": 496.68575920420477,
+          "milestone_tokens": null,
+          "wall_clock_total_seconds": 493.00555483599965,
+          "estimated_cumulative_flops": 7534506029875200.0
+        },
+        {
+          "step": 512,
+          "tokens_seen": 8388608,
+          "eval_main_loss": 6.0088808089494705,
+          "eval_perplexity": 407.02752369791233,
+          "milestone_tokens": null,
+          "wall_clock_total_seconds": 667.1191253440011,
+          "estimated_cumulative_flops": 1.01121001979904e+16
+        },
+        {
+          "step": 512,
+          "tokens_seen": 8388608,
+          "eval_main_loss": 6.0088808089494705,
+          "eval_perplexity": 407.02752369791233,
+          "milestone_tokens": 8388608,
+          "wall_clock_total_seconds": 667.1191253440011,
+          "estimated_cumulative_flops": 1.01121001979904e+16
+        },
+        {
+          "step": 640,
+          "tokens_seen": 10485760,
+          "eval_main_loss": 5.816313713788986,
+          "eval_perplexity": 335.73216489169744,
+          "milestone_tokens": null,
+          "wall_clock_total_seconds": 839.1170155159998,
+          "estimated_cumulative_flops": 1.26896943661056e+16
+        },
+        {
+          "step": 768,
+          "tokens_seen": 12582912,
+          "eval_main_loss": 5.803161546587944,
+          "eval_perplexity": 331.3454698315644,
+          "milestone_tokens": null,
+          "wall_clock_total_seconds": 998.4602633750001,
+          "estimated_cumulative_flops": 1.50690120597504e+16
+        },
+        {
+          "step": 896,
+          "tokens_seen": 14680064,
+          "eval_main_loss": 5.652856528759003,
+          "eval_perplexity": 285.1047135517554,
+          "milestone_tokens": null,
+          "wall_clock_total_seconds": 1158.61764701,
+          "estimated_cumulative_flops": 1.76466062278656e+16
+        },
+        {
+          "step": 1024,
+          "tokens_seen": 16777216,
+          "eval_main_loss": 5.3886309415102005,
+          "eval_perplexity": 218.90348863302387,
+          "milestone_tokens": null,
+          "wall_clock_total_seconds": 1324.6831961869993,
+          "estimated_cumulative_flops": 2.02242003959808e+16
+        },
+        {
+          "step": 1024,
+          "tokens_seen": 16777216,
+          "eval_main_loss": 5.3886309415102005,
+          "eval_perplexity": 218.90348863302387,
+          "milestone_tokens": 16777216,
+          "wall_clock_total_seconds": 1324.6831961869993,
+          "estimated_cumulative_flops": 2.02242003959808e+16
+        }
+      ]
+    },
+    {
+      "seed": 1337,
+      "candidate_id": "tier2-k3-stable-latentmoe-220m",
+      "execution_variant": "cutlass-grouped-bf16",
+      "run_dir": "seed-1337/tier2-k3-stable-latentmoe-220m/cutlass-grouped-bf16",
+      "status": "ok",
+      "status_reason": null,
+      "run_id": "cutlass-grouped-bf16-20260811T095341Z-deaefa21",
+      "tokens_seen": 16777216,
+      "eval_main_loss": 5.375369265675545,
+      "eval_perplexity": 216.01962621772387,
+      "eval_tokens": 16777216,
+      "median_training_tokens_per_second": 10817.857778375557,
+      "mean_gpu_util_percent": 82.76470588235294,
+      "peak_vram_gib": 9.785006523132324,
+      "wall_clock_total_seconds": 1644.3748565329988,
+      "learning_curve": [
+        {
+          "step": 128,
+          "tokens_seen": 2097152,
+          "eval_main_loss": 7.302592366933823,
+          "eval_perplexity": 1484.1423865488432,
+          "milestone_tokens": null,
+          "wall_clock_total_seconds": 202.12650098700033,
+          "estimated_cumulative_flops": 2220954196377600.0
+        },
+        {
+          "step": 256,
+          "tokens_seen": 4194304,
+          "eval_main_loss": 6.6429378390312195,
+          "eval_perplexity": 767.3460239173035,
+          "milestone_tokens": null,
+          "wall_clock_total_seconds": 429.01441414500005,
+          "estimated_cumulative_flops": 4626987909120000.0
+        },
+        {
+          "step": 256,
+          "tokens_seen": 4194304,
+          "eval_main_loss": 6.6429378390312195,
+          "eval_perplexity": 767.3460239173035,
+          "milestone_tokens": 4194304,
+          "wall_clock_total_seconds": 429.01441414500005,
+          "estimated_cumulative_flops": 4626987909120000.0
+        },
+        {
+          "step": 384,
+          "tokens_seen": 6291456,
+          "eval_main_loss": 6.179797127842903,
+          "eval_perplexity": 482.8939806713449,
+          "milestone_tokens": null,
+          "wall_clock_total_seconds": 649.5413374740001,
+          "estimated_cumulative_flops": 7033021621862400.0
+        },
+        {
+          "step": 512,
+          "tokens_seen": 8388608,
+          "eval_main_loss": 5.987767517566681,
+          "eval_perplexity": 398.5239184233366,
+          "milestone_tokens": null,
+          "wall_clock_total_seconds": 850.7256159799999,
+          "estimated_cumulative_flops": 9439055334604800.0
+        },
+        {
+          "step": 512,
+          "tokens_seen": 8388608,
+          "eval_main_loss": 5.987767517566681,
+          "eval_perplexity": 398.5239184233366,
+          "milestone_tokens": 8388608,
+          "wall_clock_total_seconds": 850.7256159799999,
+          "estimated_cumulative_flops": 9439055334604800.0
+        },
+        {
+          "step": 640,
+          "tokens_seen": 10485760,
+          "eval_main_loss": 5.790522202849388,
+          "eval_perplexity": 327.1838361043912,
+          "milestone_tokens": null,
+          "wall_clock_total_seconds": 1050.692680143,
+          "estimated_cumulative_flops": 1.18450890473472e+16
+        },
+        {
+          "step": 768,
+          "tokens_seen": 12582912,
+          "eval_main_loss": 5.781333222985268,
+          "eval_perplexity": 324.19112147782846,
+          "milestone_tokens": null,
+          "wall_clock_total_seconds": 1246.491765843999,
+          "estimated_cumulative_flops": 1.40660432437248e+16
+        },
+        {
+          "step": 896,
+          "tokens_seen": 14680064,
+          "eval_main_loss": 5.619074895977974,
+          "eval_perplexity": 275.6342748757959,
+          "milestone_tokens": null,
+          "wall_clock_total_seconds": 1445.274285947,
+          "estimated_cumulative_flops": 1.64720769564672e+16
+        },
+        {
+          "step": 1024,
+          "tokens_seen": 16777216,
+          "eval_main_loss": 5.375369265675545,
+          "eval_perplexity": 216.01962621772387,
+          "milestone_tokens": null,
+          "wall_clock_total_seconds": 1644.3748565329988,
+          "estimated_cumulative_flops": 1.88781106692096e+16
+        },
+        {
+          "step": 1024,
+          "tokens_seen": 16777216,
+          "eval_main_loss": 5.375369265675545,
+          "eval_perplexity": 216.01962621772387,
+          "milestone_tokens": 16777216,
+          "wall_clock_total_seconds": 1644.3748565329988,
+          "estimated_cumulative_flops": 1.88781106692096e+16
+        }
+      ]
+    },
+    {
+      "seed": 2027,
+      "candidate_id": "tier0-dense-mla-220m",
+      "execution_variant": "torch-sdpa-bf16",
+      "run_dir": "seed-2027/tier0-dense-mla-220m/torch-sdpa-bf16",
+      "status": "ok",
+      "status_reason": null,
+      "run_id": "torch-sdpa-bf16-20260811T102304Z-6b5124d9",
+      "tokens_seen": 16777216,
+      "eval_main_loss": 5.373781204223633,
+      "eval_perplexity": 215.6768460265144,
+      "eval_tokens": 16777216,
+      "median_training_tokens_per_second": 13633.619903274637,
+      "mean_gpu_util_percent": 91.26470588235294,
+      "peak_vram_gib": 2.270273208618164,
+      "wall_clock_total_seconds": 1291.251504635,
+      "learning_curve": [
+        {
+          "step": 128,
+          "tokens_seen": 2097152,
+          "eval_main_loss": 6.601282134652138,
+          "eval_perplexity": 736.0382847152192,
+          "milestone_tokens": null,
+          "wall_clock_total_seconds": 148.79496181800096,
+          "estimated_cumulative_flops": 2266618323271680.0
+        },
+        {
+          "step": 256,
+          "tokens_seen": 4194304,
+          "eval_main_loss": 6.264101654291153,
+          "eval_perplexity": 525.3694105471783,
+          "milestone_tokens": null,
+          "wall_clock_total_seconds": 318.72749218600075,
+          "estimated_cumulative_flops": 4722121506816000.0
+        },
+        {
+          "step": 256,
+          "tokens_seen": 4194304,
+          "eval_main_loss": 6.264101654291153,
+          "eval_perplexity": 525.3694105471783,
+          "milestone_tokens": 4194304,
+          "wall_clock_total_seconds": 318.72749218600075,
+          "estimated_cumulative_flops": 4722121506816000.0
+        },
+        {
+          "step": 384,
+          "tokens_seen": 6291456,
+          "eval_main_loss": 5.987961068749428,
+          "eval_perplexity": 398.60106066434554,
+          "milestone_tokens": null,
+          "wall_clock_total_seconds": 481.2489996630011,
+          "estimated_cumulative_flops": 7177624690360320.0
+        },
+        {
+          "step": 512,
+          "tokens_seen": 8388608,
+          "eval_main_loss": 5.868304282426834,
+          "eval_perplexity": 353.6487830729347,
+          "milestone_tokens": null,
+          "wall_clock_total_seconds": 645.0736354140008,
+          "estimated_cumulative_flops": 9633127873904640.0
+        },
+        {
+          "step": 512,
+          "tokens_seen": 8388608,
+          "eval_main_loss": 5.868304282426834,
+          "eval_perplexity": 353.6487830729347,
+          "milestone_tokens": 8388608,
+          "wall_clock_total_seconds": 645.0736354140008,
+          "estimated_cumulative_flops": 9633127873904640.0
+        },
+        {
+          "step": 640,
+          "tokens_seen": 10485760,
+          "eval_main_loss": 5.732516258955002,
+          "eval_perplexity": 308.74517458791485,
+          "milestone_tokens": null,
+          "wall_clock_total_seconds": 809.4380164600007,
+          "estimated_cumulative_flops": 1.208863105744896e+16
+        },
+        {
+          "step": 768,
+          "tokens_seen": 12582912,
+          "eval_main_loss": 5.75734968483448,
+          "eval_perplexity": 316.5083693993605,
+          "milestone_tokens": null,
+          "wall_clock_total_seconds": 961.2082436920009,
+          "estimated_cumulative_flops": 1.435524938072064e+16
+        },
+        {
+          "step": 896,
+          "tokens_seen": 14680064,
+          "eval_main_loss": 5.593203648924828,
+          "eval_perplexity": 268.5947260466441,
+          "milestone_tokens": null,
+          "wall_clock_total_seconds": 1124.333438656,
+          "estimated_cumulative_flops": 1.681075256426496e+16
+        },
+        {
+          "step": 1024,
+          "tokens_seen": 16777216,
+          "eval_main_loss": 5.373781204223633,
+          "eval_perplexity": 215.6768460265144,
+          "milestone_tokens": null,
+          "wall_clock_total_seconds": 1291.251504635,
+          "estimated_cumulative_flops": 1.926625574780928e+16
+        },
+        {
+          "step": 1024,
+          "tokens_seen": 16777216,
+          "eval_main_loss": 5.373781204223633,
+          "eval_perplexity": 215.6768460265144,
+          "milestone_tokens": 16777216,
+          "wall_clock_total_seconds": 1291.251504635,
+          "estimated_cumulative_flops": 1.926625574780928e+16
+        }
+      ]
+    },
+    {
+      "seed": 2027,
+      "candidate_id": "tier1-dense-kda3-mla-h128-samewidth-220m",
+      "execution_variant": "fla-kda-bf16",
+      "run_dir": "seed-2027/tier1-dense-kda3-mla-h128-samewidth-220m/fla-kda-bf16",
+      "status": "ok",
+      "status_reason": null,
+      "run_id": "fla-kda-bf16-20260811T113708Z-d7913cf7",
+      "tokens_seen": 16777216,
+      "eval_main_loss": 5.377031862735748,
+      "eval_perplexity": 216.37907854260834,
+      "eval_tokens": 16777216,
+      "median_training_tokens_per_second": 13557.794407527146,
+      "mean_gpu_util_percent": 91.92156862745098,
+      "peak_vram_gib": 2.4041600227355957,
+      "wall_clock_total_seconds": 1300.243594881,
+      "learning_curve": [
+        {
+          "step": 128,
+          "tokens_seen": 2097152,
+          "eval_main_loss": 7.358825594186783,
+          "eval_perplexity": 1569.9916724978389,
+          "milestone_tokens": null,
+          "wall_clock_total_seconds": 146.18972244399998,
+          "estimated_cumulative_flops": 2379317693644800.0
+        },
+        {
+          "step": 256,
+          "tokens_seen": 4194304,
+          "eval_main_loss": 6.697731211781502,
+          "eval_perplexity": 810.5647377112631,
+          "milestone_tokens": null,
+          "wall_clock_total_seconds": 311.927414887,
+          "estimated_cumulative_flops": 4956911861760000.0
+        },
+        {
+          "step": 256,
+          "tokens_seen": 4194304,
+          "eval_main_loss": 6.697731211781502,
+          "eval_perplexity": 810.5647377112631,
+          "milestone_tokens": 4194304,
+          "wall_clock_total_seconds": 311.927414887,
+          "estimated_cumulative_flops": 4956911861760000.0
+        },
+        {
+          "step": 384,
+          "tokens_seen": 6291456,
+          "eval_main_loss": 6.208387270569801,
+          "eval_perplexity": 496.8992407182626,
+          "milestone_tokens": null,
+          "wall_clock_total_seconds": 476.944912235,
+          "estimated_cumulative_flops": 7534506029875200.0
+        },
+        {
+          "step": 512,
+          "tokens_seen": 8388608,
+          "eval_main_loss": 6.005977377295494,
+          "eval_perplexity": 405.8474610461821,
+          "milestone_tokens": null,
+          "wall_clock_total_seconds": 643.4551976600001,
+          "estimated_cumulative_flops": 1.01121001979904e+16
+        },
+        {
+          "step": 512,
+          "tokens_seen": 8388608,
+          "eval_main_loss": 6.005977377295494,
+          "eval_perplexity": 405.8474610461821,
+          "milestone_tokens": 8388608,
+          "wall_clock_total_seconds": 643.4551976600001,
+          "estimated_cumulative_flops": 1.01121001979904e+16
+        },
+        {
+          "step": 640,
+          "tokens_seen": 10485760,
+          "eval_main_loss": 5.80457878112793,
+          "eval_perplexity": 331.8153969959256,
+          "milestone_tokens": null,
+          "wall_clock_total_seconds": 813.9961207050001,
+          "estimated_cumulative_flops": 1.26896943661056e+16
+        },
+        {
+          "step": 768,
+          "tokens_seen": 12582912,
+          "eval_main_loss": 5.787256076931953,
+          "eval_perplexity": 326.11695572876675,
+          "milestone_tokens": null,
+          "wall_clock_total_seconds": 967.018642857,
+          "estimated_cumulative_flops": 1.50690120597504e+16
+        },
+        {
+          "step": 896,
+          "tokens_seen": 14680064,
+          "eval_main_loss": 5.634872034192085,
+          "eval_perplexity": 280.02308163770243,
+          "milestone_tokens": null,
+          "wall_clock_total_seconds": 1126.367651927,
+          "estimated_cumulative_flops": 1.76466062278656e+16
+        },
+        {
+          "step": 1024,
+          "tokens_seen": 16777216,
+          "eval_main_loss": 5.377031862735748,
+          "eval_perplexity": 216.37907854260834,
+          "milestone_tokens": null,
+          "wall_clock_total_seconds": 1300.243594881,
+          "estimated_cumulative_flops": 2.02242003959808e+16
+        },
+        {
+          "step": 1024,
+          "tokens_seen": 16777216,
+          "eval_main_loss": 5.377031862735748,
+          "eval_perplexity": 216.37907854260834,
+          "milestone_tokens": 16777216,
+          "wall_clock_total_seconds": 1300.243594881,
+          "estimated_cumulative_flops": 2.02242003959808e+16
+        }
+      ]
+    },
+    {
+      "seed": 2027,
+      "candidate_id": "tier2-k3-stable-latentmoe-220m",
+      "execution_variant": "cutlass-grouped-bf16",
+      "run_dir": "seed-2027/tier2-k3-stable-latentmoe-220m/cutlass-grouped-bf16",
+      "status": "ok",
+      "status_reason": null,
+      "run_id": "cutlass-grouped-bf16-20260811T120059Z-de355dd1",
+      "tokens_seen": 16777216,
+      "eval_main_loss": 5.37251091003418,
+      "eval_perplexity": 215.4030469217312,
+      "eval_tokens": 16777216,
+      "median_training_tokens_per_second": 10685.821468309085,
+      "mean_gpu_util_percent": 83.08823529411765,
+      "peak_vram_gib": 9.790865898132324,
+      "wall_clock_total_seconds": 1628.130212672,
+      "learning_curve": [
+        {
+          "step": 128,
+          "tokens_seen": 2097152,
+          "eval_main_loss": 7.304457470774651,
+          "eval_perplexity": 1486.9130491979336,
+          "milestone_tokens": null,
+          "wall_clock_total_seconds": 201.41325601099993,
+          "estimated_cumulative_flops": 2220954196377600.0
+        },
+        {
+          "step": 256,
+          "tokens_seen": 4194304,
+          "eval_main_loss": 6.608907699584961,
+          "eval_perplexity": 741.672446981633,
+          "milestone_tokens": null,
+          "wall_clock_total_seconds": 412.3776180269999,
+          "estimated_cumulative_flops": 4626987909120000.0
+        },
+        {
+          "step": 256,
+          "tokens_seen": 4194304,
+          "eval_main_loss": 6.608907699584961,
+          "eval_perplexity": 741.672446981633,
+          "milestone_tokens": 4194304,
+          "wall_clock_total_seconds": 412.3776180269999,
+          "estimated_cumulative_flops": 4626987909120000.0
+        },
+        {
+          "step": 384,
+          "tokens_seen": 6291456,
+          "eval_main_loss": 6.168316081166267,
+          "eval_perplexity": 477.3815570869105,
+          "milestone_tokens": null,
+          "wall_clock_total_seconds": 622.781105664,
+          "estimated_cumulative_flops": 7033021621862400.0
+        },
+        {
+          "step": 512,
+          "tokens_seen": 8388608,
+          "eval_main_loss": 5.991310313344002,
+          "eval_perplexity": 399.9383112517741,
+          "milestone_tokens": null,
+          "wall_clock_total_seconds": 831.618459602,
+          "estimated_cumulative_flops": 9439055334604800.0
+        },
+        {
+          "step": 512,
+          "tokens_seen": 8388608,
+          "eval_main_loss": 5.991310313344002,
+          "eval_perplexity": 399.9383112517741,
+          "milestone_tokens": 8388608,
+          "wall_clock_total_seconds": 831.618459602,
+          "estimated_cumulative_flops": 9439055334604800.0
+        },
+        {
+          "step": 640,
+          "tokens_seen": 10485760,
+          "eval_main_loss": 5.797957003116608,
+          "eval_perplexity": 329.62544777712975,
+          "milestone_tokens": null,
+          "wall_clock_total_seconds": 1040.722867183,
+          "estimated_cumulative_flops": 1.18450890473472e+16
+        },
+        {
+          "step": 768,
+          "tokens_seen": 12582912,
+          "eval_main_loss": 5.793113827705383,
+          "eval_perplexity": 328.03287358462325,
+          "milestone_tokens": null,
+          "wall_clock_total_seconds": 1219.1850435150002,
+          "estimated_cumulative_flops": 1.40660432437248e+16
+        },
+        {
+          "step": 896,
+          "tokens_seen": 14680064,
+          "eval_main_loss": 5.607072070240974,
+          "eval_perplexity": 272.3456605216869,
+          "milestone_tokens": null,
+          "wall_clock_total_seconds": 1416.585799619,
+          "estimated_cumulative_flops": 1.64720769564672e+16
+        },
+        {
+          "step": 1024,
+          "tokens_seen": 16777216,
+          "eval_main_loss": 5.37251091003418,
+          "eval_perplexity": 215.4030469217312,
+          "milestone_tokens": null,
+          "wall_clock_total_seconds": 1628.130212672,
+          "estimated_cumulative_flops": 1.88781106692096e+16
+        },
+        {
+          "step": 1024,
+          "tokens_seen": 16777216,
+          "eval_main_loss": 5.37251091003418,
+          "eval_perplexity": 215.4030469217312,
+          "milestone_tokens": 16777216,
+          "wall_clock_total_seconds": 1628.130212672,
+          "estimated_cumulative_flops": 1.88781106692096e+16
+        }
+      ]
+    }
+  ],
+  "selection": {
+    "status": "not_selected",
+    "reason": "Architecture mechanism still requires long-context and native-scale promotion gates"
+  }
+}

@@ -1,0 +1,49 @@
+schema_version: 1
+updated_utc: 2026-08-11T06:45:00Z
+policy:
+  downloaded_is_not_promoted: true
+  require_license_review: true
+  require_schema_and_content_audit: true
+  require_benchmark_decontamination: true
+  require_quality_ablation: true
+  concise_behavior_gate: true
+  energy_affects_ranking: false
+sources:
+  smol_smoltalk:
+    repository: HuggingFaceTB/smol-smoltalk
+    revision: f73fe857d519ff6ac5af2ea67c4d3834da7b8bcc
+    last_modified_utc: 2025-02-06T10:35:19Z
+    license: apache-2.0
+    intended_stage: broad_sft_candidate
+    status: audit_required
+  smoltalk2_current:
+    repository: HuggingFaceTB/smoltalk2
+    revision: fc6cc2103c066455aade5d7fbb346039ae36ca5e
+    last_modified_utc: 2025-10-31T13:49:55Z
+    license: split_dependent
+    intended_stage: sft_and_preference_candidate
+    status: audit_required
+    notes: New dataset-card sources are Apache-2.0; inherited sources require upstream review.
+  openthoughts_114k:
+    repository: open-thoughts/OpenThoughts-114k
+    revision: bd093c3994fd54d2390985b66988ddf282a55eb6
+    last_modified_utc: 2025-08-31T00:24:46Z
+    license: apache-2.0
+    intended_stage: reasoning_sft_candidate
+    status: audit_required
+  ultrafeedback_binarized:
+    repository: HuggingFaceH4/ultrafeedback_binarized
+    revision: 3949bf5f8c17c394422ccfab0c31ea9c20bdeb85
+    last_modified_utc: 2024-10-16T11:49:06Z
+    license: mit
+    intended_stage: legacy_preference_control
+    status: control_only
+    risks: [older_teacher_distribution, known_historical_label_fixes, public_benchmark_overlap]
+  openthoughts_agent_sft_100k:
+    repository: open-thoughts/OpenThoughts-Agent-SFT-100K
+    revision: 45fb28fcc38d352133cb28a1c8a43a2f14fea97b
+    last_modified_utc: 2026-06-08T07:01:02Z
+    license: apache-2.0
+    intended_stage: isolated_agent_sft_candidate
+    status: audit_required
+    risks: [verbose_tool_protocol, narrow_terminal_domain, failed_trajectory_filtering_required]

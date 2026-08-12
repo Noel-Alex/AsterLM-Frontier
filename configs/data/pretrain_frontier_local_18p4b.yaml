@@ -1,4 +1,6 @@
 data:
+  # Legacy filename retained for compatibility. Stack-Edu is retired, so this
+  # is the active four-source frontier tranche rather than an 18.4B mixture.
   seed: 1337
   shuffle_buffer: 20000
   min_chars: 128
@@ -7,29 +9,24 @@ data:
   add_eos_between_documents: true
   mask_cross_document_loss: true
   # Sampling weights are intentionally not identical to stored-token proportions:
-  # math/code/structured synthetic text are moderately upsampled for a sub-billion model.
+  # math and structured synthetic text are moderately upsampled for a sub-billion model.
   sources:
     - path: data/corpus-frontier-16b/fineweb_edu
       split: train
       text_field: text
-      weight: 0.53
+      weight: 0.616279
     - path: data/corpus-frontier-16b/dclm
       split: train
       text_field: text
-      weight: 0.11
+      weight: 0.127907
     - path: data/corpus-frontier-16b/cosmopedia_v2
       split: train
       text_field: text
-      weight: 0.09
+      weight: 0.104651
     - path: data/corpus-frontier-16b/finemath_4plus
       split: train
       text_field: text
-      weight: 0.13
-    - path: data/stack-edu-frontier-2p4b
-      split: train
-      text_field: text
-      fim_rate: 0.5
-      weight: 0.14
+      weight: 0.151163
   validation_sources:
     # Pipeline validation only. The data-prep audit creates true domain holdouts.
     - path: HuggingFaceTB/smollm-corpus

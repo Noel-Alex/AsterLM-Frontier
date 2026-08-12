@@ -125,6 +125,15 @@ def test_local_reader_ignores_control_and_cursor_files(tmp_path: Path):
     (root / "part-00000.jsonl").write_text(json.dumps({"text": "usable"}) + "\n", encoding="utf-8")
     (root / "state.json").write_text(json.dumps({"text": "must not train"}), encoding="utf-8")
     (root / "manifest.json").write_text(json.dumps({"text": "must not train"}), encoding="utf-8")
+    (root / "cleaning_report.json").write_text(
+        json.dumps({"text": "must not train"}), encoding="utf-8"
+    )
+    (root / "prepare_summary.json").write_text(
+        json.dumps({"text": "must not train"}), encoding="utf-8"
+    )
+    (root / "clean_manifest.json").write_text(
+        json.dumps({"text": "must not train"}), encoding="utf-8"
+    )
     (root / "cursor-00000001.pkl").write_bytes(pickle.dumps({"text": "binary state"}))
 
     source = SourceConfig(path=str(root), weight=1.0)
@@ -159,6 +168,94 @@ def test_local_records_are_sharded_without_duplication(monkeypatch, tmp_path: Pa
 
     assert {row["text"] for row in first}.isdisjoint({row["text"] for row in second})
     assert sorted(first + second, key=lambda row: row["text"]) == sorted(rows, key=lambda row: row["text"])
+
+
+def test_packed_data_cursor_resumes_exactly_without_replaying_prior_batches(tmp_path: Path):
+    import json
+
+    from asterlm.config import DataConfig, SourceConfig
+    from asterlm.data.packing import PackedTokenDataset
+
+    class FakeTokenizer:
+        def token_to_id(self, token: str) -> int:
+            return 3
+
+        def encode(self, text: str) -> list[int]:
+            return [ord(char) for char in text]
+
+    source = tmp_path / "source"
+    source.mkdir()
+    rows = [{"text": f"document-{index:03d}-" + "abcdef" * 5} for index in range(40)]
+    (source / "part-000.jsonl").write_text(
+        "".join(json.dumps(row) + "\n" for row in rows), encoding="utf-8"
+    )
+    config = DataConfig(
+        sources=[SourceConfig(path=str(source), weight=1.0, fim_rate=0.5)],
+        quality_filters=False,
+        min_chars=1,
+        shuffle_buffer=1,
+    )
+
+    uninterrupted = PackedTokenDataset(FakeTokenizer(), config, sequence_length=16)
+    uninterrupted_iterator = iter(uninterrupted)
+    expected = [next(uninterrupted_iterator) for _ in range(14)]
+
+    before = PackedTokenDataset(FakeTokenizer(), config, sequence_length=16)
+    before_iterator = iter(before)
+    actual = [next(before_iterator) for _ in range(6)]
+    cursor = before.state_dict()
+    assert cursor["buffer"]
+    source_cursor = cursor["text_mixture"]["records"]["sources"][0]
+    assert source_cursor["file_index"] == 0
+    assert source_cursor["record_index"] > 0
+
+    after = PackedTokenDataset(FakeTokenizer(), config, sequence_length=16)
+    after.load_state_dict(cursor)
+    after_iterator = iter(after)
+    actual.extend(next(after_iterator) for _ in range(8))
+
+    for expected_batch, actual_batch in zip(expected, actual, strict=True):
+        assert actual_batch["input_ids"].tolist() == expected_batch["input_ids"].tolist()
+        assert actual_batch["labels"].tolist() == expected_batch["labels"].tolist()
+
+
+def test_packed_cursor_rejects_changed_local_shard_list(tmp_path: Path):
+    import json
+
+    import pytest
+
+    from asterlm.config import DataConfig, SourceConfig
+    from asterlm.data.packing import PackedTokenDataset
+
+    class FakeTokenizer:
+        def token_to_id(self, token: str) -> int:
+            return 3
+
+        def encode(self, text: str) -> list[int]:
+            return [ord(char) for char in text]
+
+    source = tmp_path / "source"
+    source.mkdir()
+    (source / "part-000.jsonl").write_text(
+        json.dumps({"text": "a sufficiently long record for packing"}) + "\n",
+        encoding="utf-8",
+    )
+    config = DataConfig(
+        sources=[SourceConfig(path=str(source), weight=1.0)],
+        quality_filters=False,
+        min_chars=1,
+        shuffle_buffer=1,
+    )
+    dataset = PackedTokenDataset(FakeTokenizer(), config, sequence_length=8)
+    next(iter(dataset))
+    cursor = dataset.state_dict()
+    (source / "part-001.jsonl").write_text(
+        json.dumps({"text": "a newly injected shard"}) + "\n", encoding="utf-8"
+    )
+    restored = PackedTokenDataset(FakeTokenizer(), config, sequence_length=8)
+    restored.load_state_dict(cursor)
+    with pytest.raises(ValueError, match="shard list changed"):
+        iter(restored)
 
 
 def test_validation_routing_is_deterministic_and_monotonic():

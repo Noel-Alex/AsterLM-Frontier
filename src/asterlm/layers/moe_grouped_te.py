@@ -97,17 +97,13 @@ class TEGroupedRoutedExperts:
         num_assignments = num_tokens * top_k
 
         expert_ids = top_idx.reshape(-1).to(torch.long)
-        assignment_token_idx = (
-            torch.arange(num_tokens, device=flat.device, dtype=torch.long)
-            .unsqueeze(1)
-            .expand(num_tokens, top_k)
-            .reshape(-1)
-        )
         assignment_weight = top_weight.reshape(-1)
 
-        order = torch.argsort(expert_ids)
-        sorted_expert_ids = expert_ids.index_select(0, order)
-        sorted_token_idx = assignment_token_idx.index_select(0, order)
+        # Sort once and derive token indices from the token-major flattened route
+        # position. The older path allocated an expanded [tokens, top_k] index tensor
+        # and then gathered from it on every MoE layer.
+        sorted_expert_ids, order = torch.sort(expert_ids)
+        sorted_token_idx = torch.div(order, top_k, rounding_mode="floor")
         sorted_weight = assignment_weight.index_select(0, order)
 
         counts = torch.bincount(expert_ids, minlength=self.num_experts).to(torch.long)
@@ -133,8 +129,7 @@ class TEGroupedRoutedExperts:
             (num_assignments + self.align - 1) // self.align
         ) * self.align
         capacity = aligned_assignments + self.num_experts * self.align
-        capacity_tensor = torch.as_tensor(capacity, device=flat.device, dtype=torch.long)
-        slack = capacity_tensor - padded_counts.sum()
+        slack = capacity - padded_counts.sum()
         split_sizes_long = padded_counts.clone()
         split_sizes_long[-1] = split_sizes_long[-1] + slack
 
@@ -156,7 +151,6 @@ class TEGroupedRoutedExperts:
         if top_idx.ndim != 2 or top_weight.shape != top_idx.shape:
             raise ValueError("top_idx and top_weight must have matching [N, top_k] shapes")
 
-        self._bind_authoritative_weights()
         packed, split_sizes, real_positions, sorted_token_idx, sorted_weight = self._dispatch_and_pad(
             flat, top_idx, top_weight
         )

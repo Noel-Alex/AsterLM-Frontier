@@ -8,7 +8,7 @@ Start with [START_HERE.md](START_HERE.md), then use the authoritative [training 
 
 ## Core design hypothesis
 
-The current leading candidate is a **3:1 KDA/latent-attention hybrid MoE**:
+The principal research candidate is a **3:1 KDA/latent-attention hybrid MoE**, but it is not yet the accepted design:
 
 - 75% Kimi Delta Attention layers with fixed-size recurrent state
 - 25% exact content-addressable MLA-inspired global-attention layers
@@ -23,7 +23,7 @@ The current leading candidate is a **3:1 KDA/latent-attention hybrid MoE**:
 - optional LoQT-style packed INT4 FFN/expert bases with low-rank updates
 - hot BF16 + cold Hadamard-rotated INT4 latent cache
 
-This architecture must beat a 661M dense control before it is accepted.
+This architecture must beat matched dense controls on quality, time-to-quality, training throughput, peak memory, stability, and inference latency before it is accepted. Energy remains recorded as observational telemetry but is never a promotion criterion. Current vNext2 profiling shows a material single-GPU MoE utilization deficit, so the repository does not call it the winner yet.
 
 ## Model candidates
 
@@ -98,7 +98,7 @@ Conventional RMSNorm remains available for controlled comparisons.
 
 ## Data and curriculum
 
-The supplied full pretraining plan targets roughly 18.4B raw tokens:
+The original frontier plan targeted roughly 18.4B raw tokens. A progressive 50B/100B research tier was added later; the live on-disk status, not this historical table, is authoritative:
 
 | Source | Target | Purpose |
 |---|---:|---|
@@ -106,7 +106,9 @@ The supplied full pretraining plan targets roughly 18.4B raw tokens:
 | DCLM baseline | 2.4B | distribution diversity and web coverage |
 | Cosmopedia-v2 | 1.4B | synthetic textbook/expository material |
 | FineMath-4+ | 1.8B | mathematical language and problem solving |
-| Stack-Edu permissive code | 2.4B | Python/C++/JS/TS/Java/SQL/Rust/Go/Shell/C# |
+| Audited replacement code tranche | not promoted | code capability and FIM; candidate pool is isolated |
+
+As of 2026-08-11, about 84.032B active raw pretraining tokens are materialized: 54B FineWeb-Edu, 16B DCLM, 6B Cosmopedia-v2, and 8.032B FineMath-4+. FineMath exhausted its pinned source 2.968B short of its 11B target. Stack-Edu is permanently retired from active plans; its small historical local shard is provenance only. A replacement math/code tranche must be licensed, audited and promoted before this can honestly be called a final 100B mixture.
 
 The repository also downloads SmolTalk, selected SmolTalk2 splits, OpenThoughts and UltraFeedback for post-training. Data is validated before materialization, then normalized, filtered, secret/PII checked, deduplicated, benchmark-decontaminated, split into disjoint local train/validation holdouts, provenance-preserved and audited.
 
@@ -183,10 +185,20 @@ tests/          correctness and regression tests
 
 ## Quick verification
 
+Windows control plane:
+
+```powershell
+.\ASTER_STUDIO.ps1
+```
+
+Linux/WSL CUDA environment:
+
 ```bash
 PYTHON_BIN=python3.12 bash scripts/setup_linux.sh \
   --with-apollo --with-torchao --with-tracking --with-reasoning
 source .venv/bin/activate
+python scripts/capture_runtime_manifest.py --output runs/setup/runtime-manifest.json
+python scripts/frontier_vnext_capabilities.py --json runs/setup/capabilities.json
 python scripts/system_check.py --model configs/model/aster_moe_frontier_893m_a484m.yaml
 pytest
 python scripts/smoke_train.py
@@ -196,7 +208,10 @@ python scripts/download_data.py --profile all --validate-first --network-mode lo
 
 ## Honest limitations
 
-- The artifact was validated in a CPU-only environment. FLA CUDA kernels, Transformer Engine FP8, TorchAO CUDA optimizer behavior, thermals, real peak VRAM and throughput must be tested on the RTX 4080 laptop.
+- Core CUDA execution is now validated on the RTX 4080 Laptop GPU in WSL: Transformer Engine 2.17 FP8, grouped MoE, FLA 0.5.2 AttnRes, FlexAttention, and fused linear cross entropy. Fedora CUDA 13.1 remains a distinct supported target and must retain its own runtime manifest.
+- Current matched profiles confirm that the grouped and latent MoE screens substantially underutilize this single Ada GPU compared with dense controls. Kernel/operator profiling and matched dense-KDA experiments are still in progress.
+- Official FlashKDA and DeepSeek FlashMLA published kernels target newer GPU architectures than SM89, so their datacenter speedups cannot simply be enabled on this laptop.
+- TorchAO optimizer behavior, complete long-run thermals, and final-campaign throughput still require targeted validation.
 - The Hadamard INT4 cache is portable reference code, not yet a fused TurboQuant kernel.
 - The LoQT branch is a practical packed-base/low-rank implementation; it is not claimed to reproduce every gradient-SVD refresh detail of the research paper.
 - A 1.5B or 1.9B configuration existing in YAML does not prove that its complete optimizer/activation footprint fits.
@@ -204,4 +219,4 @@ python scripts/download_data.py --profile all --validate-first --network-mode lo
 
 ## 100B-token research campaign
 
-AsterLM now includes progressive 50B and 100B mostly-unique corpus tiers, permanent token milestones, MoE pathway/grokking telemetry, dense compute/system diagnostics and resumable private Hugging Face checkpoint backups. The existing 500M pilot is reused in place. See [docs/100B_EXPERIMENT.md](docs/100B_EXPERIMENT.md).
+AsterLM includes progressive 50B and 100B corpus tiers, permanent token milestones, MoE pathway/grokking telemetry, dense compute/system diagnostics and resumable private Hugging Face checkpoint backups. About 84.032B raw tokens are currently materialized, but the math shortfall and nearly empty code allocation must be resolved before the final mixture is declared ready. A 100B run is a budgeted research campaign, not a guarantee of grokking or frontier-model quality. See [START_HERE.md](START_HERE.md) and [docs/100B_EXPERIMENT.md](docs/100B_EXPERIMENT.md).

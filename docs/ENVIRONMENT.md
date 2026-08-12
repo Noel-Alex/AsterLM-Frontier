@@ -26,6 +26,37 @@ PYTHON_BIN=python3.12 bash scripts/setup_linux.sh \
 
 Do not force the example CUDA wheel if a newer compatible PyTorch installation already works.
 
+The original Fedora workstation used a CUDA 13.1 system toolkit. That is a supported
+project target. A PyTorch wheel's suffix describes the CUDA runtime bundled with that
+wheel; it does not need to be textually identical to the system toolkit version. What
+matters is that the NVIDIA driver is new enough and every compiled extension passes a
+real forward/backward capability test.
+
+For an existing CUDA 13.1 Fedora environment, preserve the working PyTorch build and
+compile Transformer Engine explicitly against that toolkit:
+
+```bash
+export CUDA_HOME=/usr/local/cuda-13.1
+ASTERLM_VENV_PATH="$VIRTUAL_ENV" \
+  bash scripts/install_transformer_engine_linux.sh
+PYTHONPATH=src python scripts/frontier_vnext_capabilities.py \
+  --output runs/setup/capabilities-fedora-cuda-13.1.json
+```
+
+In the recovered WSL environment, PyTorch reports CUDA runtime 13.0. A transient
+NVCC/CCCL 13.3 plus CUDA-header 13.0 mixture was proven incompatible when compiling
+TileLang. The validated KDA probe instead uses an isolated CUDA 13.0.88 compiler
+prefix selected through `CUDA_HOME`; it does not replace PyTorch's runtime packages.
+This is a separate validation environment, not a claim that the Fedora machine used
+those versions. Never combine a compiler from one CUDA minor with another toolkit's
+headers merely because import-only checks pass.
+
+The experimental Ada dropless-MoE path additionally pins the Apache-2.0
+`nv_grouped_gemm` source commit
+`efe8c40eaf4c8ef57191e0ea9aa4117aa5b1a8f2`. Its extension must be compiled for the
+exact PyTorch ABI, CUDA toolkit and SM capability, then pass
+`tests/test_moe_cutlass_cuda.py`. A wheel/import alone is not acceptance evidence.
+
 ## Verify
 
 ```bash
@@ -34,6 +65,18 @@ python scripts/system_check.py --model configs/model/aster_moe_frontier_893m_a48
 pytest
 python scripts/smoke_train.py
 ```
+
+The active editable install must resolve to the checkout running the command. Profilers
+and the trainer now fail when `asterlm` imports from a different clone than the script
+repository. For the recovered shared WSL environment, bind it deliberately with:
+
+```bash
+uv pip install --python /root/.venvs/asterlm/bin/python --no-deps -e /mnt/n/AsterLM-Frontier
+```
+
+Compiled CUDA dependencies may be shared; Python model/config source may not silently
+come from another checkout. Every new profile records both the imported source root and
+Git provenance.
 
 ## Ada precision reality
 
@@ -62,9 +105,27 @@ export TOKENIZERS_PARALLELISM=false
 
 ## FLA and Transformer Engine
 
-FLA/KDA and TE are optional compiled research dependencies. ABI/version mismatch is common. The setup script tests imports, but the definitive test is a forward/backward profiler run.
+FLA/KDA and TE are optional compiled research dependencies. ABI/version mismatch is common. An import alone is insufficient: run `scripts/frontier_vnext_capabilities.py`, which executes FP8 delayed/current scaling, FLA CUDA, and grouped-MoE forward/backward probes.
 
 If Transformer Engine fails, use the shape-identical Torch model and BF16. If FLA fails, the PyTorch KDA fallback can debug correctness but is not a viable serious-training speed path.
+
+## Remote provider clients
+
+Install the optional remote-control clients into the isolated environment rather than the system
+Python. Modal is pinned to the currently validated 1.5 client series:
+
+```bash
+python -m pip install -e '.[remote]'
+modal profile list --json
+```
+
+Modal profiles represent authorized Workspaces. Select one per process with `MODAL_PROFILE`; never
+copy token values into Studio settings, run contracts, logs, or Git. Workspace membership/invites are
+the supported collaboration path when friends contribute compute.
+
+On Windows, `ASTER_STUDIO.ps1` maps the existing `%USERPROFILE%\.modal.toml` into WSL through
+`MODAL_CONFIG_PATH`. This keeps one provider-native credential store, makes every authorized profile
+alias visible in Studio, and avoids copying secrets into the repository or WSL home directory.
 
 ## OOM escalation
 

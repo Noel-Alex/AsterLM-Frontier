@@ -1,4 +1,6 @@
 data:
+  # Legacy filename retained for compatibility. This active configuration
+  # excludes the permanently retired Stack-Edu source.
   seed: 1337
   shuffle_buffer: 10000
   min_chars: 128
@@ -10,21 +12,16 @@ data:
     - path: data/corpus-main-12b/fineweb_edu
       split: train
       text_field: text
-      weight: 0.65
+      weight: 0.722222
     - path: data/corpus-main-12b/dclm
       split: train
       text_field: text
-      weight: 0.10
+      weight: 0.111111
     - path: data/corpus-main-12b/cosmopedia_v2
       split: train
       text_field: text
-      weight: 0.08
+      weight: 0.088889
     - path: data/corpus-main-12b/finemath_4plus
       split: train
       text_field: text
-      weight: 0.07
-    - path: data/stack-edu-multilang
-      split: train
-      text_field: text
-      fim_rate: 0.5
-      weight: 0.10
+      weight: 0.077778

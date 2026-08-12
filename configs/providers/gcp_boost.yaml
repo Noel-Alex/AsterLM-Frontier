@@ -1,0 +1,34 @@
+schema_version: 1
+profiles:
+  google-credit:
+    gcloud_configuration: google-credit
+    project_id: SET_AFTER_GCLOUD_LOGIN
+    region: us-central1
+    zones: [us-central1-a, us-central1-b, us-central1-c]
+    # Exact custom host image, not a moving image family. Its numeric image ID is
+    # verified before allocation. The image must contain the qualified NVIDIA
+    # driver, Docker, gcloud CLI, and Cloud Storage FUSE toolchain.
+    host_image_project: SET_AFTER_GCP_HOST_IMAGE_BUILD
+    host_image: SET_AFTER_GCP_HOST_IMAGE_BUILD
+    host_image_id: SET_AFTER_GCP_HOST_IMAGE_BUILD
+    artifact_image: SET_AFTER_ARTIFACT_REGISTRY_SETUP
+    bucket: SET_AFTER_CLOUD_STORAGE_SETUP
+    service_account: SET_AFTER_IAM_SETUP
+    billing_mode: free_trial_unactivated
+    gpu_quota_confirmed: false
+    dispatch_enabled: false
+    max_spend_usd_per_job: 30.0
+    timeout_minutes: 180
+    cost_contingency: 1.25
+    provisioning_models: [STANDARD]
+    machine_candidates:
+      # Conservative dispatch guards, not live quotes. Refresh from Cloud Billing
+      # immediately before enabling dispatch; actual cost/token decides promotion.
+      - {machine_type: a3-highgpu-1g, accelerator: h100-80gb, role: primary_training_benchmark, cost_guard_usd_per_hour: 15.0}
+      - {machine_type: a2-ultragpu-1g, accelerator: a100-80gb, role: price_per_token_control, cost_guard_usd_per_hour: 7.0}
+      - {machine_type: g2-standard-4, accelerator: l4-24gb, role: small_model_cost_control, cost_guard_usd_per_hour: 2.0}
+    boot_disk_gb: 200
+    checkpoint_prefix: checkpoints
+    dataset_prefix: datasets
+    hf_secret: aster-hf-token
+    wandb_secret: aster-wandb-api-key

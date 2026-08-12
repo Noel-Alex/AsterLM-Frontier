@@ -1,0 +1,62 @@
+train:
+  output_dir: runs/architecture-campaign/quality
+  seed: 1337
+  deterministic_named_initialization: true
+  device: cuda
+  dtype: bfloat16
+  matmul_precision: high
+  execution_backend: aster_local
+  compile: true
+  compile_mode: default
+  precision_backend: amp
+  activation_offload: false
+
+  sequence_length: 2048
+  # Keep the 16,384-token optimizer update fixed while exposing enough concurrent
+  # expert work to saturate the RTX 4080 Laptop. The earlier 1 x 8 geometry was a
+  # conservative correctness probe and materially underfilled grouped MoE kernels.
+  micro_batch_size: 4
+  gradient_accumulation_steps: 2
+  max_steps: 100000
+  max_tokens: 16777216
+
+  optimizer: adamw
+  adam_lr: 0.0003
+  min_lr_ratio: 0.1
+  warmup_steps: 128
+  schedule_type: wsd
+  decay_fraction: 0.1
+  decay_shape: cosine
+  weight_decay: 0.1
+  adam_betas: [0.9, 0.95]
+  adam_eps: 1.0e-8
+  max_grad_norm: 1.0
+
+  qk_clip_interval: 100
+  log_interval: 10
+  eval_interval: 128
+  eval_batches: 32
+  save_interval: 512
+  keep_last_checkpoints: 2
+  # Architecture selection is metrics-first. Multi-gigabyte weights are retained
+  # only when a candidate is explicitly promoted for downstream evaluation.
+  checkpoint_policy: none
+  milestone_tokens: [4194304, 8388608, 16777216]
+  milestone_eval: true
+
+  num_workers: 0
+  pin_memory: true
+  prefetch_factor: null
+  tokenizer_path: artifacts/tokenizer_proxy.json
+  tensorboard: true
+  jsonl_metrics: true
+  system_metrics_interval: 1.0
+  diagnostic_interval: 100
+  save_diagnostic_bundle: true
+
+  wandb_project: null
+  hub_repo_id: null
+  hub_upload_every_save: false
+  hub_upload_milestones: true
+  hub_upload_final: true
+  hub_include_optimizer: true

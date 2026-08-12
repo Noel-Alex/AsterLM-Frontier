@@ -1,0 +1,55 @@
+schema_version: 1
+download_root: /root/.cache/asterlm/upstreams
+sources:
+  - id: megatron_core
+    repository: https://github.com/NVIDIA/Megatron-LM.git
+    commit: 24bad8e677d22625d86ef2a54c9506b6e4992c93
+    purpose: distributed training engine, MoE dispatch, grouped GEMM, MLA, FP8, Muon, checkpointing
+  - id: torchtitan
+    repository: https://github.com/pytorch/torchtitan.git
+    commit: 5c0b804cecd54313d7cfea41a386b3da1a1d19dc
+    purpose: PyTorch-native distributed execution, compile, checkpointing, data and observability patterns
+  - id: deepspeed
+    repository: https://github.com/microsoft/DeepSpeed.git
+    commit: cf44300453eb0af79ed84ed8f1cb49d57478bd76
+    purpose: ZeRO, offload and distributed baseline candidate
+  - id: transformer_engine
+    repository: https://github.com/NVIDIA/TransformerEngine.git
+    commit: 32f7096a355ca803e7151da0d0f4aa65ac4ba46b
+    purpose: Ada FP8 linears, fused operations and grouped-expert reference
+  - id: kimi_linear
+    repository: https://github.com/MoonshotAI/Kimi-Linear.git
+    commit: 8c1d85eb6b5f8fcefb15758691b0ce50b0827ce3
+    purpose: KDA equations, geometry, training recipe and kernels
+  - id: kimi_k3
+    repository: https://github.com/MoonshotAI/Kimi-K3.git
+    commit: 3cb39dfd32e51c3328e2e4b4af21341247d06c43
+    purpose: Stable LatentMoE, SiTU-GLU, Quantile Balancing, KDA/MLA, AttnRes and per-head Muon reference
+  - id: deepseek_v4_reference
+    repository: https://huggingface.co/deepseek-ai/DeepSeek-V4-Pro
+    commit: b5968e9190ef611bbf34a7229255be88a0e937c1
+    purpose: official CSA/HCA compression, sparse indexer, mHC and TileLang inference reference
+  - id: tilekernels
+    repository: https://github.com/deepseek-ai/TileKernels.git
+    commit: 36d9e45d38e204ebb87e6f6e833821eee0482fe5
+    purpose: DeepSeek kernel algorithms and future architecture-specific ports
+  - id: deepgemm
+    repository: https://github.com/deepseek-ai/DeepGEMM.git
+    commit: 559d79fb6994a58b8a15b4b93bf13ccc16edf247
+    purpose: Hopper grouped and FP8 GEMM reference, not an Ada runtime dependency
+  - id: flashmla
+    repository: https://github.com/deepseek-ai/FlashMLA.git
+    commit: 15f13e5030374295491c5ce31b02d7e63a7772c6
+    purpose: optimized MLA decode and prefill reference with explicit hardware gating
+  - id: megablocks
+    repository: https://github.com/databricks/megablocks.git
+    commit: 952db33d6eac334d22c61e47a0d5d41446298784
+    purpose: dropless MoE and grouped GEMM comparison
+  - id: sglang
+    repository: https://github.com/sgl-project/sglang.git
+    commit: ec9babe36cc172cb5d7f3882547718e99ddb2e0c
+    purpose: post-training rollout and inference-serving integration
+  - id: vllm
+    repository: https://github.com/vllm-project/vllm.git
+    commit: 3a749ce81600f67e609eeb4a9b2b8da52dac16f2
+    purpose: inference engine and serving comparison

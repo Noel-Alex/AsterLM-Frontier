@@ -7,6 +7,8 @@ import shutil
 from pathlib import Path
 from typing import Any
 
+from asterlm.training.checkpoint import resolve_checkpoint
+
 
 def read_json(path: Path) -> dict[str, Any] | None:
     try:
@@ -51,11 +53,7 @@ def main() -> None:
     payload = {
         "run": str(root.resolve()),
         "last_metric": last_jsonl(root / "metrics.jsonl"),
-        "latest_checkpoint": (
-            (root / "latest.txt").read_text(encoding="utf-8").strip()
-            if (root / "latest.txt").exists()
-            else None
-        ),
+        "latest_checkpoint": str(resolve_checkpoint(root)) if (root / "latest.txt").exists() else None,
         "hub_sync": read_json(root / "hub_sync_state.json"),
         "checkpoints": checkpoints,
         "permanent_milestones": [item for item in checkpoints if item["permanent"]],

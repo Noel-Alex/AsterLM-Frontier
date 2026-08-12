@@ -1,0 +1,484 @@
+schema_version: 2
+objective: measured_quality_efficiency_pareto
+context_lengths: [4096, 8192, 16384, 32768, 65536, 131072]
+comparison_axes: [equal_tokens, equal_active_flops, equal_wall_time, equal_cost]
+size_frontier:
+  - {total_params: 900000000, active_params_min: 450000000, active_params_max: 500000000}
+  - {total_params: 1500000000, active_params_min: 550000000, active_params_max: 650000000}
+  - {total_params: 1900000000, active_params_min: 700000000, active_params_max: 800000000}
+execution_variants:
+  torch-sdpa-bf16:
+    description: Eager PyTorch SDPA and BF16 control.
+    comparison_role: numerical_control
+    numerical_family: bf16-torch
+    model_overrides: {attention_train_backend: sdpa, linear_backend: torch, ffn_linear_backend: torch}
+    train_overrides: {compile: false, precision_backend: amp}
+    environment: {}
+  torch-compile-bf16:
+    description: Static-shape torch.compile SDPA and BF16 path.
+    comparison_role: system_recipe
+    numerical_family: bf16-torch
+    model_overrides: {attention_train_backend: sdpa, linear_backend: torch, ffn_linear_backend: torch}
+    train_overrides: {compile: true, precision_backend: amp}
+    environment: {}
+  fla-kda-bf16:
+    description: Source-pinned FLA KDA in eager BF16 execution.
+    comparison_role: numerical_control
+    numerical_family: bf16-torch
+    model_overrides: {kda_backend: fla, linear_backend: torch, ffn_linear_backend: torch}
+    train_overrides: {compile: false, precision_backend: amp}
+    environment: {}
+  fla-kda-compile-bf16:
+    description: Source-pinned FLA KDA with static-shape torch.compile.
+    comparison_role: system_recipe
+    numerical_family: bf16-torch
+    model_overrides: {kda_backend: fla, linear_backend: torch, ffn_linear_backend: torch}
+    train_overrides: {compile: true, precision_backend: amp}
+    environment: {}
+  fla-gdn2-bf16:
+    description: Source-pinned FLA GDN2 in eager BF16 execution.
+    comparison_role: numerical_control
+    numerical_family: bf16-torch
+    model_overrides: {linear_backend: torch, ffn_linear_backend: torch}
+    train_overrides: {compile: false, precision_backend: amp}
+    environment: {}
+  fla-gdn2-compile-bf16:
+    description: Source-pinned FLA GDN2 with static-shape torch.compile.
+    comparison_role: system_recipe
+    numerical_family: bf16-torch
+    model_overrides: {linear_backend: torch, ffn_linear_backend: torch}
+    train_overrides: {compile: true, precision_backend: amp}
+    environment: {}
+  torch-reference:
+    description: Reference per-expert PyTorch MoE execution in BF16.
+    comparison_role: numerical_control
+    numerical_family: bf16-torch
+    model_overrides: {linear_backend: torch, ffn_linear_backend: torch}
+    train_overrides: {compile: false, precision_backend: amp, moe_implementation: reference}
+    environment: {}
+  transformer-engine-grouped:
+    description: Transformer Engine grouped experts with the validated FP8 surroundings.
+    comparison_role: system_recipe
+    numerical_family: fp8-transformer-engine
+    model_overrides: {linear_backend: transformer_engine, ffn_linear_backend: transformer_engine}
+    train_overrides: {compile: false, precision_backend: transformer_engine_fp8, moe_implementation: grouped}
+    environment: {}
+  cutlass-grouped:
+    description: Current Ada winner using cached CUTLASS grouped expert GEMMs and BF16 expert weights.
+    comparison_role: system_recipe
+    numerical_family: fp8-transformer-engine
+    model_overrides: {linear_backend: transformer_engine, ffn_linear_backend: transformer_engine}
+    train_overrides: {compile: false, precision_backend: transformer_engine_fp8, moe_implementation: cutlass}
+    environment: {}
+  cutlass-grouped-bf16:
+    description: CUTLASS grouped expert GEMMs with the same BF16 PyTorch surroundings as torch-reference for numerical parity.
+    comparison_role: numerical_control
+    numerical_family: bf16-torch
+    model_overrides: {linear_backend: torch, ffn_linear_backend: torch}
+    train_overrides: {compile: false, precision_backend: amp, moe_implementation: cutlass}
+    environment: {}
+  liger-experts-bf16:
+    description: Liger 0.8 fused Triton grouped-GEMM, SwiGLU and token aggregation with memory-efficient backward.
+    comparison_role: system_recipe
+    numerical_family: bf16-torch
+    model_overrides: {linear_backend: torch, ffn_linear_backend: torch}
+    train_overrides: {compile: false, precision_backend: amp, moe_implementation: liger}
+    environment: {}
+  torch-grouped:
+    description: GPU-resident native PyTorch grouped experts with jagged offsets and no host expert-size synchronization.
+    comparison_role: system_recipe
+    numerical_family: fp8-transformer-engine
+    model_overrides: {linear_backend: transformer_engine, ffn_linear_backend: transformer_engine}
+    train_overrides: {compile: false, precision_backend: transformer_engine_fp8, moe_implementation: torch_grouped}
+    environment: {}
+  cutlass-grouped-k3-muon:
+    description: Ada CUTLASS grouped experts with Kimi K3 per-head Muon and cosine schedule; requires independent hyperparameter tuning before comparison.
+    comparison_role: recipe_research
+    numerical_family: fp8-transformer-engine
+    model_overrides: {linear_backend: transformer_engine, ffn_linear_backend: transformer_engine}
+    train_overrides: {compile: false, precision_backend: transformer_engine_fp8, moe_implementation: cutlass, optimizer: muon_adamw, muon_per_head: true, schedule_type: cosine}
+    environment: {}
+  torch-grouped-k3-muon:
+    description: GPU-resident native grouped experts with Kimi K3 per-head Muon and independently tuned cosine schedule.
+    comparison_role: recipe_research
+    numerical_family: fp8-transformer-engine
+    model_overrides: {linear_backend: transformer_engine, ffn_linear_backend: transformer_engine}
+    train_overrides: {compile: false, precision_backend: transformer_engine_fp8, moe_implementation: torch_grouped, optimizer: muon_adamw, muon_per_head: true, schedule_type: cosine}
+    environment: {}
+  compressed-reference-bf16:
+    description: Portable full-precision CSA/HCA correctness path; never a production throughput result.
+    comparison_role: numerical_control
+    numerical_family: bf16-torch
+    model_overrides: {linear_backend: torch, ffn_linear_backend: torch, compressed_attention_backend: reference}
+    train_overrides: {compile: false, precision_backend: amp}
+    environment: {}
+  compressed-triton-bf16:
+    description: Ada Triton indexed shared-KV attention with fused online softmax and custom backward.
+    comparison_role: system_recipe
+    numerical_family: bf16-torch
+    model_overrides: {linear_backend: torch, ffn_linear_backend: torch, compressed_attention_backend: triton}
+    train_overrides: {compile: false, precision_backend: amp}
+    environment: {}
+candidates:
+  - id: tier0-dense-mla-220m
+    tier: 0
+    hypothesis: Dense MLA is the small-scale quality and recipe reference before expensive 480M confirmation.
+    base_model: configs/model/aster_220m.yaml
+    model_overrides:
+      ffn_type: dense
+      kda_ratio: 0
+      mtp_depth: 0
+      norm_type: rmsnorm
+      embedding_projection: false
+      use_block_attnres: false
+      cache_dtype: bfloat16
+      rope_scaling_type: none
+      linear_backend: torch
+      ffn_linear_backend: torch
+    execution_variants: [torch-sdpa-bf16, torch-compile-bf16]
+  - id: tier1-dense-kda3-mla-220m
+    tier: 1
+    hypothesis: Compact 12x64 KDA provides the historical small-scale recurrent quality reference.
+    base_model: configs/model/aster_220m.yaml
+    model_overrides:
+      ffn_type: dense
+      kda_ratio: 3
+      mtp_depth: 0
+      norm_type: rmsnorm
+      embedding_projection: false
+      use_block_attnres: false
+      cache_dtype: bfloat16
+      rope_scaling_type: none
+      linear_backend: torch
+      ffn_linear_backend: torch
+    execution_variants: [fla-kda-bf16, fla-kda-compile-bf16]
+  - id: tier1-dense-kda3-mla-h128-samewidth-220m
+    tier: 1
+    hypothesis: 6x128 KDA isolates recurrent state geometry at the compact 768-wide projection budget.
+    base_model: configs/model/aster_220m.yaml
+    model_overrides:
+      ffn_type: dense
+      kda_ratio: 3
+      kda_num_heads: 6
+      kda_head_dim: 128
+      kda_safe_gate: true
+      kda_lower_bound: -5.0
+      mtp_depth: 0
+      norm_type: rmsnorm
+      embedding_projection: false
+      use_block_attnres: false
+      cache_dtype: bfloat16
+      rope_scaling_type: none
+      linear_backend: torch
+      ffn_linear_backend: torch
+    execution_variants: [fla-kda-bf16, fla-kda-compile-bf16]
+  - id: tier1-dense-kda3-mla-h128-expanded-reference-gate-220m
+    tier: 1
+    hypothesis: 12x128 expanded KDA tests whether Kimi-like state capacity repays its additional active compute at small scale.
+    base_model: configs/model/aster_220m.yaml
+    model_overrides:
+      ffn_type: dense
+      kda_ratio: 3
+      kda_num_heads: 12
+      kda_head_dim: 128
+      kda_safe_gate: false
+      kda_lower_bound: null
+      mtp_depth: 0
+      norm_type: rmsnorm
+      embedding_projection: false
+      use_block_attnres: false
+      cache_dtype: bfloat16
+      rope_scaling_type: none
+      linear_backend: torch
+      ffn_linear_backend: torch
+    execution_variants: [fla-kda-bf16, fla-kda-compile-bf16]
+  - id: tier1-dense-gdn2-mla-220m
+    tier: 1
+    hypothesis: A matched 3:1 GDN2/MLA hybrid beats dense MLA or KDA/MLA on quality per token or wall time.
+    base_model: configs/model/aster_220m.yaml
+    model_overrides:
+      ffn_type: dense
+      layer_pattern: [gdn2, gdn2, gdn2, latent, gdn2, gdn2, gdn2, latent, gdn2, gdn2, gdn2, latent, gdn2, gdn2, gdn2, latent, gdn2, gdn2, gdn2, latent, gdn2, gdn2, gdn2, latent]
+      mtp_depth: 0
+      norm_type: rmsnorm
+      embedding_projection: false
+      use_block_attnres: false
+      cache_dtype: bfloat16
+      rope_scaling_type: none
+      linear_backend: torch
+      ffn_linear_backend: torch
+    execution_variants: [fla-gdn2-bf16, fla-gdn2-compile-bf16]
+  - id: tier2-k3-stable-latentmoe-220m
+    tier: 2
+    hypothesis: The complete scaled Stable LatentMoE recipe improves sparse capacity and stability without the utilization collapse of the legacy latent path.
+    base_model: configs/model/aster_220m.yaml
+    model_overrides:
+      ffn_type: latent_moe
+      moe_first_dense_layers: 1
+      moe_every: 1
+      moe_num_experts: 8
+      moe_top_k: 2
+      moe_shared_experts: 2
+      moe_expert_hidden: 512
+      latent_moe_dim: 384
+      latent_moe_post_norm: true
+      moe_activation: situ_glu
+      moe_situ_beta_gate: 4.0
+      moe_situ_beta_up: 25.0
+      moe_router_score: sigmoid
+      moe_balance_strategy: quantile
+      moe_aux_loss_weight: 0.0
+      moe_router_z_loss_weight: 0.00001
+      kda_ratio: 3
+      kda_num_heads: 6
+      kda_head_dim: 128
+      kda_safe_gate: true
+      kda_lower_bound: -5.0
+      mtp_depth: 0
+      norm_type: rmsnorm
+      embedding_projection: false
+      use_block_attnres: false
+      cache_dtype: bfloat16
+      rope_scaling_type: none
+      linear_backend: torch
+      ffn_linear_backend: torch
+    execution_variants: [torch-reference, cutlass-grouped-bf16, cutlass-grouped, torch-grouped, cutlass-grouped-k3-muon, torch-grouped-k3-muon]
+  - id: tier3-k3-composite-220m
+    tier: 3
+    hypothesis: Stable LatentMoE and eight-block AttnRes compose with the 3:1 KDA/Gated-MLA hybrid after each component clears its isolated gate.
+    base_model: configs/model/aster_220m.yaml
+    model_overrides:
+      ffn_type: latent_moe
+      moe_first_dense_layers: 1
+      moe_every: 1
+      moe_num_experts: 8
+      moe_top_k: 2
+      moe_shared_experts: 2
+      moe_expert_hidden: 512
+      latent_moe_dim: 384
+      latent_moe_post_norm: true
+      moe_activation: situ_glu
+      moe_situ_beta_gate: 4.0
+      moe_situ_beta_up: 25.0
+      moe_router_score: sigmoid
+      moe_balance_strategy: quantile
+      moe_aux_loss_weight: 0.0
+      moe_router_z_loss_weight: 0.00001
+      kda_ratio: 3
+      kda_num_heads: 6
+      kda_head_dim: 128
+      kda_safe_gate: true
+      kda_lower_bound: -5.0
+      attention_gate: true
+      mtp_depth: 0
+      norm_type: rmsnorm
+      embedding_projection: false
+      use_block_attnres: true
+      attnres_block_size: 3
+      cache_dtype: bfloat16
+      rope_scaling_type: none
+      linear_backend: torch
+      ffn_linear_backend: torch
+    execution_variants: [torch-reference, cutlass-grouped-bf16, cutlass-grouped, torch-grouped, cutlass-grouped-k3-muon, torch-grouped-k3-muon]
+  - id: tier4-dense-csa-hca-220m
+    tier: 4
+    hypothesis: A scale-adapted V4 CSA/HCA alternation improves native long-context retrieval and quality per active FLOP after its optimized sparse backend crosses over.
+    base_model: configs/model/aster_220m.yaml
+    model_overrides:
+      ffn_type: dense
+      layer_pattern: [hca, hca, csa, hca, csa, hca, csa, hca, csa, hca, csa, hca, csa, hca, csa, hca, csa, hca, csa, hca, csa, hca, csa, hca]
+      q_lora_rank: 192
+      compressed_attention_local_window: 128
+      compressed_attention_hca_ratio: 128
+      compressed_attention_index_topk: 1024
+      compressed_attention_index_n_heads: 64
+      compressed_attention_index_head_dim: 128
+      compressed_attention_output_groups: 4
+      compressed_attention_output_lora_rank: 208
+      compressed_attention_rope_theta: 160000.0
+      mtp_depth: 0
+      norm_type: rmsnorm
+      embedding_projection: false
+      use_block_attnres: false
+      rope_scaling_type: none
+      linear_backend: torch
+      ffn_linear_backend: torch
+    execution_variants: [compressed-reference-bf16, compressed-triton-bf16]
+  - id: tier5-dense-mla-mhc-220m
+    tier: 5
+    hypothesis: Four-stream mHC improves optimization or final quality at matched parameters enough to repay its residual mixing compute.
+    base_model: configs/model/aster_220m.yaml
+    model_overrides:
+      ffn_type: dense
+      ffn_hidden: 1984
+      kda_ratio: 0
+      residual_architecture: mhc
+      mhc_streams: 4
+      mhc_sinkhorn_iterations: 20
+      mhc_eps: 0.000001
+      mtp_depth: 0
+      norm_type: rmsnorm
+      embedding_projection: false
+      use_block_attnres: false
+      cache_dtype: bfloat16
+      rope_scaling_type: none
+      linear_backend: torch
+      ffn_linear_backend: torch
+    execution_variants: [torch-sdpa-bf16]
+  - id: tier0-dense-mla-480m
+    tier: 0
+    hypothesis: Dense MLA is the gold correctness and systems reference.
+    base_model: configs/model/aster_480m.yaml
+    model_overrides:
+      ffn_type: dense
+      kda_ratio: 0
+      mtp_depth: 0
+      norm_type: rmsnorm
+      embedding_projection: false
+      use_block_attnres: false
+      cache_dtype: bfloat16
+      rope_scaling_type: none
+      linear_backend: torch
+      ffn_linear_backend: torch
+    execution_variants: [torch-sdpa-bf16, torch-compile-bf16]
+  - id: tier1-dense-mla-mtp-480m
+    tier: 1
+    hypothesis: MTP improves quality or future decode utility enough to repay training overhead.
+    base_model: configs/model/aster_480m.yaml
+    model_overrides:
+      ffn_type: dense
+      kda_ratio: 0
+      mtp_depth: 2
+      norm_type: rmsnorm
+      embedding_projection: false
+      use_block_attnres: false
+      cache_dtype: bfloat16
+      rope_scaling_type: none
+      linear_backend: torch
+      ffn_linear_backend: torch
+    execution_variants: [torch-sdpa-bf16, torch-compile-bf16]
+  - id: tier1-dense-kda3-mla-480m
+    tier: 1
+    hypothesis: A 3:1 KDA/MLA hybrid crosses the dense MLA Pareto frontier as context grows.
+    base_model: configs/model/aster_480m.yaml
+    model_overrides:
+      ffn_type: dense
+      kda_ratio: 3
+      mtp_depth: 0
+      norm_type: rmsnorm
+      embedding_projection: false
+      use_block_attnres: false
+      cache_dtype: bfloat16
+      rope_scaling_type: none
+      linear_backend: torch
+      ffn_linear_backend: torch
+    execution_variants: [fla-kda-bf16, fla-kda-compile-bf16]
+  - id: tier1-dense-kda3-mla-mtp-480m
+    tier: 1
+    hypothesis: KDA/MLA and MTP benefits compose without unacceptable overhead or instability.
+    base_model: configs/model/aster_480m.yaml
+    model_overrides:
+      ffn_type: dense
+      kda_ratio: 3
+      mtp_depth: 2
+      norm_type: rmsnorm
+      embedding_projection: false
+      use_block_attnres: false
+      cache_dtype: bfloat16
+      rope_scaling_type: none
+      linear_backend: torch
+      ffn_linear_backend: torch
+    execution_variants: [fla-kda-bf16, fla-kda-compile-bf16]
+  - id: tier1-dense-kda3-mla-h128-samewidth-480m
+    tier: 1
+    hypothesis: 128-wide KDA state heads recover recurrent quality without expanding projection width.
+    base_model: configs/model/aster_480m.yaml
+    model_overrides:
+      ffn_type: dense
+      kda_ratio: 3
+      kda_num_heads: 8
+      kda_head_dim: 128
+      kda_safe_gate: true
+      kda_lower_bound: -5.0
+      mtp_depth: 0
+      norm_type: rmsnorm
+      embedding_projection: false
+      use_block_attnres: false
+      cache_dtype: bfloat16
+      rope_scaling_type: none
+      linear_backend: torch
+      ffn_linear_backend: torch
+    execution_variants: [fla-kda-bf16, fla-kda-compile-bf16]
+  - id: tier1-dense-kda3-mla-h128-expanded-reference-gate-480m
+    tier: 1
+    hypothesis: Published Kimi-like 128-wide expanded KDA geometry and unclamped gate recover quality enough to repay added active compute.
+    base_model: configs/model/aster_480m.yaml
+    model_overrides:
+      ffn_type: dense
+      kda_ratio: 3
+      kda_num_heads: 16
+      kda_head_dim: 128
+      kda_safe_gate: false
+      kda_lower_bound: null
+      mtp_depth: 0
+      norm_type: rmsnorm
+      embedding_projection: false
+      use_block_attnres: false
+      cache_dtype: bfloat16
+      rope_scaling_type: none
+      linear_backend: torch
+      ffn_linear_backend: torch
+    execution_variants: [fla-kda-bf16, fla-kda-compile-bf16]
+  - id: tier2-moe-e4k2
+    tier: 2
+    hypothesis: Coarser expert batches recover Ada utilization while retaining sparse capacity.
+    base_model: configs/model/aster_moe_frontier_893m_a484m.yaml
+    model_overrides:
+      moe_num_experts: 4
+      moe_top_k: 2
+      moe_shared_experts: 0
+    execution_variants: [torch-reference, cutlass-grouped-bf16, liger-experts-bf16, transformer-engine-grouped, cutlass-grouped, torch-grouped]
+  - id: tier2-moe-e8k2
+    tier: 2
+    hypothesis: Eight routed experts without shared compute improve capacity at competitive time-to-quality.
+    base_model: configs/model/aster_moe_frontier_893m_a484m.yaml
+    model_overrides:
+      moe_num_experts: 8
+      moe_top_k: 2
+      moe_shared_experts: 0
+    execution_variants: [torch-reference, cutlass-grouped-bf16, liger-experts-bf16, transformer-engine-grouped, cutlass-grouped, torch-grouped]
+  - id: tier2-moe-e8k2-shared
+    tier: 2
+    hypothesis: The shared expert earns its always-on compute through quality per wall time.
+    base_model: configs/model/aster_moe_frontier_893m_a484m.yaml
+    model_overrides:
+      moe_num_experts: 8
+      moe_top_k: 2
+      moe_shared_experts: 1
+    execution_variants: [torch-reference, cutlass-grouped-bf16, liger-experts-bf16, transformer-engine-grouped, cutlass-grouped, torch-grouped]
+  - id: tier2-k3-latentmoe-868m-a483m
+    tier: 2
+    hypothesis: The promoted K3 mechanism scales to the first laptop frontier with matched active compute and practical grouped expert shapes.
+    base_model: configs/model/aster_k3_latentmoe_868m_a483m.yaml
+    model_overrides: {}
+    execution_variants: [torch-reference, cutlass-grouped-bf16, cutlass-grouped, torch-grouped, cutlass-grouped-k3-muon, torch-grouped-k3-muon]
+  - id: tier2-k3-latentmoe-1p45b-a568m
+    tier: 2
+    hypothesis: Additional sparse capacity at 1.45B total improves quality enough to repay reduced laptop update rate.
+    base_model: configs/model/aster_k3_latentmoe_1p45b_a568m.yaml
+    model_overrides: {}
+    execution_variants: [torch-reference, cutlass-grouped-bf16, cutlass-grouped, torch-grouped, cutlass-grouped-k3-muon, torch-grouped-k3-muon]
+  - id: tier2-k3-latentmoe-1p95b-a766m
+    tier: 2
+    hypothesis: The 1.95B stretch tier is the maximum-quality candidate if its full training state fits and its time-to-quality beats smaller tiers.
+    base_model: configs/model/aster_k3_latentmoe_1p95b_a766m.yaml
+    model_overrides: {}
+    execution_variants: [torch-reference, cutlass-grouped-bf16, cutlass-grouped, torch-grouped, cutlass-grouped-k3-muon, torch-grouped-k3-muon]
+research_queue:
+  - {tier: 3, id: longcat-zero-compute-expert, prerequisite: tier2_routing_profile}
+  - {tier: 4, id: deepseek-v4-csa-hca, prerequisite: semantic_reference_and_retrieval_harness}
+  - {tier: 4, id: kda3-csa-hca-composition, prerequisite: isolated_csa_hca_and_kda3_promotion}
+  - {tier: 4, id: deepseek-dsa-nsa-index-reuse, prerequisite: physical_sparse_kernel}
+  - {tier: 5, id: mhc-residual, prerequisite: standard_residual_fixed_loss_baseline}
+  - {tier: 3, id: kimi-k3-per-head-muon, prerequisite: stable_latentmoe_adamw_control}
+  - {tier: 3, id: cosine-vs-wsd-independent-tuning, prerequisite: fixed_architecture_proxy_scaling}

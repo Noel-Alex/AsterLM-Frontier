@@ -6,9 +6,10 @@ import os
 import pickle
 import random
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Iterable, Iterator
+from typing import Any
 
 
 @dataclass(slots=True)
@@ -78,6 +79,10 @@ def is_retryable_exception(exc: BaseException) -> bool:
         text = str(exc).lower()
         permanent_markers = (
             "permission denied",
+            "gated dataset",
+            "ask for access",
+            "unauthorized",
+            "authentication required",
             "no space left",
             "read-only file system",
             "not supported",

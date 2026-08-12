@@ -23,10 +23,11 @@
         <button class="nav-item" data-page="pipeline"><span>03</span>Pipeline</button>
         <button class="nav-item" data-page="architecture"><span>04</span>Architecture</button>
         <button class="nav-item" data-page="training"><span>05</span>Training</button>
-        <button class="nav-item" data-page="experiments"><span>06</span>Experiments</button>
-        <button class="nav-item" data-page="inference"><span>07</span>Inference</button>
-        <button class="nav-item" data-page="logs"><span>08</span>Logs</button>
-        <button class="nav-item" data-page="settings"><span>09</span>Settings</button>
+        <button class="nav-item" data-page="providers"><span>06</span>Compute</button>
+        <button class="nav-item" data-page="experiments"><span>07</span>Experiments</button>
+        <button class="nav-item" data-page="inference"><span>08</span>Inference</button>
+        <button class="nav-item" data-page="logs"><span>09</span>Logs</button>
+        <button class="nav-item" data-page="settings"><span>10</span>Settings</button>
       </nav>
       <div class="rail-foot">
         <div class="live-dot"></div>
@@ -214,7 +215,7 @@
           <div class="panel-head">
             <div><div class="eyebrow">2–3 / CLEANING PLAN</div><h3>Build the actual train mixture</h3></div>
           </div>
-          <p class="muted">Weights below are independent from raw token counts. Default “materialized” weights use each source’s existing token count. Stack-Edu can simply be omitted.</p>
+          <p class="muted">Weights below are independent from raw token counts. Default “materialized” weights use each active source’s existing token count. Retired sources are provenance-only and cannot enter the plan.</p>
           <div id="clean-source-grid" class="clean-grid"></div>
           <div class="form-grid cols-4">
             <label>Plan name<input id="clean-name" value="aster-materialized"/></label>
@@ -266,6 +267,15 @@
 
         <div id="capability-summary" class="stats-grid"></div>
         <div id="capability-table" class="capability-grid"></div>
+
+        <article class="paper-panel">
+          <div class="panel-head">
+            <div><div class="eyebrow">TRAINING EXECUTION</div><h3>Source, package, adapter, promotion</h3></div>
+            <span class="status-pill ref">live evidence</span>
+          </div>
+          <p class="muted">A cloned framework is not a working Aster engine. Each card keeps the pinned source, installed runtime, implemented adapter, validated topology and final promotion decision separate.</p>
+          <div id="execution-backend-grid" class="capability-grid"></div>
+        </article>
 
         <article class="paper-panel">
           <div class="panel-head">
@@ -331,9 +341,9 @@
           <article class="paper-panel">
             <div class="panel-head"><div><div class="eyebrow">PREFLIGHT</div><h3>Prove the run can start</h3></div></div>
             <div class="stack-form">
-              <label>Model config<input id="train-model" value="configs/model/aster_moe_frontier_893m_a484m.yaml"/></label>
+              <label>Model config<input id="train-model" value="configs/model/aster_k3_latentmoe_270m_a188m.yaml"/></label>
               <label>Train config<input id="train-config" value="configs/train/frontier_100b_stage1_8k.yaml"/></label>
-              <label>Data config<input id="train-data" value="configs/data/pretrain_frontier_clean.yaml"/></label>
+              <label>Data config<input id="train-data" value="data/clean-frontier/pretrain_data.yaml"/></label>
             </div>
             <div class="button-row"><button id="training-preflight" class="ghost">Run preflight</button></div>
           </article>
@@ -349,6 +359,18 @@
             <div class="button-row"><button id="start-pretrain" class="ink">Start pretraining</button></div>
           </article>
         </div>
+
+        <article class="paper-panel">
+          <div class="panel-head"><div><div class="eyebrow">UNATTENDED PROGRAM</div><h3>Launch the frozen 100B K3 curriculum</h3></div><span class="status-pill warning">fail closed</span></div>
+          <p class="muted">Runs 8K, then 16K, then 32K; resumes an interrupted stage exactly, initializes each continuation from the prior completed checkpoint, and stops on any failed preflight or missing durable final state.</p>
+          <div class="form-grid cols-4">
+            <label class="span-2">Private Hugging Face repository<input id="campaign-hub-repo" placeholder="namespace/aster-k3-private"/></label>
+            <label>W&B entity (optional)<input id="campaign-wandb-entity" placeholder="account or team"/></label>
+            <label class="toggle-label"><input id="campaign-verify-hashes" type="checkbox" checked/><span>Full clean-corpus hash verification</span></label>
+          </div>
+          <div class="warning-box">This is the real long-running launch control. It will allocate the local GPU only after every protected-run contract passes. Remote boost jobs remain separate, explicit provider contracts.</div>
+          <div class="button-row"><button id="start-pretraining-campaign" class="ink">Start frozen 100B campaign</button></div>
+        </article>
 
         <article class="paper-panel">
           <div class="panel-head">
@@ -381,6 +403,85 @@
         </article>
       </section>
 
+      <section class="page" id="page-providers">
+        <div class="editorial-lede compute-lede">
+          <div>
+            <div class="kicker">COMPUTE FABRIC</div>
+            <h2>Burst outward.<br/>Return with evidence.</h2>
+          </div>
+          <p>Local CUDA remains the dependable baseline. Authorized Modal profiles, Lightning, Hugging Face Jobs, research grants and multi-cloud backends are presented as one compute fabric—with explicit cost gates and checkpoint handoffs.</p>
+        </div>
+
+        <div class="compute-strip">
+          <div><span>LOCAL BASELINE</span><strong>RTX 4080 Laptop</strong><small>profiling · pilots · resume</small></div>
+          <div class="compute-arrow">→</div>
+          <div><span>BURST WINDOW</span><strong>Remote GPU job</strong><small>bounded timeout · cost ceiling</small></div>
+          <div class="compute-arrow">→</div>
+          <div><span>DURABLE RETURN</span><strong>HF checkpoint + ledger</strong><small>hash verified · lineage retained</small></div>
+        </div>
+
+        <article class="paper-panel provider-control">
+          <div class="panel-head">
+            <div><div class="eyebrow">DISPATCH POLICY</div><h3>Spend and identity stay explicit</h3></div>
+            <span class="status-pill warning">credentials never enter Studio</span>
+          </div>
+          <div class="form-grid cols-4">
+            <label>Preferred backend<select id="provider-preferred"><option value="local">Local</option><option value="modal">Modal</option><option value="lightning">Lightning AI</option><option value="huggingface_jobs">Hugging Face Jobs</option><option value="skypilot">SkyPilot</option></select></label>
+            <label>Maximum spend / job (USD)<input id="provider-max-spend" type="number" min="0" step="1" value="30"/></label>
+            <label class="toggle-label"><input id="provider-confirm-cost" type="checkbox" checked/><span>Require cost confirmation</span></label>
+          </div>
+          <div class="button-row"><button id="save-provider-policy" class="ink">Save dispatch policy</button></div>
+        </article>
+
+        <div class="section-heading">
+          <div><div class="kicker">BACKENDS</div><h2>Readiness, not promises.</h2></div>
+          <p>A backend is “ready” only when its command and provider-native authentication store are both present. Profile names are safe aliases; tokens are never returned by the API.</p>
+        </div>
+        <div id="provider-grid" class="provider-grid"></div>
+
+        <div class="two-col">
+          <article class="paper-panel">
+            <div class="panel-head"><div><div class="eyebrow">PROFILE ROUTING</div><h3>Authorized workspaces</h3></div></div>
+            <div id="provider-profile-ledger" class="profile-ledger"></div>
+            <div class="form-grid cols-2 compact-form">
+              <label>Modal profile<select id="modal-auth-profile"></select></label>
+              <div class="button-row"><button id="modal-auth-start" class="secondary">Log in to selected Modal account</button></div>
+            </div>
+            <div class="microcopy">This opens Modal's official browser authentication flow and stores the token only in Modal's native profile store. Studio sees the alias, never the token.</div>
+            <div class="warning-box">Separate profiles are for workspaces you are authorized to use. Studio will not create accounts, obtain promotional credits, or evade provider limits.</div>
+          </article>
+          <article class="paper-panel">
+            <div class="panel-head"><div><div class="eyebrow">RUN CONTRACT</div><h3>Every remote launch must carry</h3></div></div>
+            <div class="contract-list">
+              <div><span>01</span><strong>Immutable code + config hashes</strong></div>
+              <div><span>02</span><strong>Timeout and dollar ceiling</strong></div>
+              <div><span>03</span><strong>Provider/profile alias in experiment.json</strong></div>
+              <div><span>04</span><strong>Periodic verified checkpoint upload</strong></div>
+              <div><span>05</span><strong>Metrics, exit reason and lineage on return</strong></div>
+            </div>
+            <div class="form-grid cols-2 compact-form">
+              <label>Provider<select id="contract-provider"><option value="modal">Modal</option><option value="huggingface_jobs">Hugging Face Jobs</option><option value="lightning">Lightning AI</option><option value="skypilot">SkyPilot</option></select></label>
+              <label>Profile alias<input id="contract-profile" placeholder="authorized-profile"/></label>
+              <label>Model config<input id="contract-model" value="configs/model/aster_k3_latentmoe_270m_a188m.yaml"/></label>
+              <label>Train config<input id="contract-train" value="configs/train/frontier_100b_stage1_8k.yaml"/></label>
+              <label>Data config<input id="contract-data" value="configs/data/pretrain_frontier_local_18p4b.yaml"/></label>
+              <label>Checkpoint repository<input id="contract-hub-repo" placeholder="namespace/private-checkpoints"/></label>
+              <label>Exact GPU / machine<input id="contract-gpu" placeholder="Modal: H100!; GCP: a3-highgpu-1g"/></label>
+              <label>Provider zone<input id="contract-zone" placeholder="GCP only, e.g. us-central1-a"/></label>
+              <label>Provisioning model<select id="contract-provisioning"><option value="">Provider default / not applicable</option><option value="STANDARD">GCP Standard</option><option value="SPOT">GCP Spot</option></select></label>
+              <label>Resume checkpoint folder<input id="contract-resume-hub-path" placeholder="optional runs/name/checkpoints/tokens-N"/></label>
+              <label>Resume repository<input id="contract-resume-hub-repo" placeholder="optional; defaults to checkpoint repository"/></label>
+              <label>Resume revision<input id="contract-resume-hub-revision" value="main"/></label>
+              <label>Timeout (minutes)<input id="contract-timeout" type="number" min="1" max="10080" value="180"/></label>
+              <label>Estimated spend (USD)<input id="contract-spend" type="number" min="0" step="0.01" value="0"/></label>
+              <label class="toggle-label"><input id="contract-cost-confirmed" type="checkbox"/><span>I confirm this estimated spend</span></label>
+            </div>
+            <div class="button-row"><button id="create-provider-contract" class="ink">Create immutable run contract</button><button id="plan-provider-launch" class="secondary" disabled>Build launch plan</button><button id="dispatch-provider-launch" class="secondary" disabled>Dispatch contract</button><button id="graceful-provider-stop" class="secondary" disabled>Safe stop + checkpoint</button><button id="terminate-provider-job" class="danger" disabled>Emergency terminate</button></div>
+            <pre id="provider-contract-result" class="contract-result">No remote contract created in this session.</pre>
+          </article>
+        </div>
+      </section>
+
       <section class="page" id="page-experiments">
         <div class="editorial-lede">
           <div>
@@ -389,6 +490,15 @@
           </div>
           <p>Inspect tokens/sec, data wait, forward/backward/optimizer time, gradients, MoE routing, LR, VRAM, temperature, power, eval loss and permanent token milestones from the same page.</p>
         </div>
+
+        <article class="paper-panel" id="campaign-live-panel">
+          <div class="panel-head"><div><div class="eyebrow">FROZEN PRETRAINING PROGRAM</div><h3 id="campaign-live-title">Aster K3 · 100B tokens</h3></div><span id="campaign-live-state" class="status-pill warning">preflight</span></div>
+          <div id="campaign-live-metrics" class="metric-snapshot"></div>
+          <div id="campaign-stage-ledger" class="checkpoint-table"></div>
+          <div class="panel-head compact"><div><div class="eyebrow">LAUNCH READINESS</div><h4>Fail-closed pretraining gates</h4></div><span id="campaign-readiness-count" class="status-pill warning">checking</span></div>
+          <div id="campaign-readiness-ledger" class="checkpoint-table"></div>
+          <div id="campaign-architecture" class="warning-box"></div>
+        </article>
 
         <div class="experiment-layout">
           <aside class="run-sidebar">
@@ -410,6 +520,11 @@
             <article class="paper-panel">
               <div class="panel-head"><div><div class="eyebrow">CHECKPOINTS</div><h3>Durable model history</h3></div></div>
               <div id="checkpoint-table" class="checkpoint-table"></div>
+            </article>
+            <article class="paper-panel">
+              <div class="panel-head"><div><div class="eyebrow">SYSTEMS MATRICES</div><h3>Reproducible performance evidence</h3></div></div>
+              <p class="muted">Nested diagnostic matrices remain separate from long training runs, with protocol, Git revision, failures and aggregate measurements intact.</p>
+              <div id="diagnostic-matrix-list" class="diagnostic-matrix-list"><div class="empty-state">Loading diagnostic matrices…</div></div>
             </article>
             <article class="paper-panel">
               <div class="panel-head"><div><div class="eyebrow">EXPERIMENT TOOLS</div><h3>Before & after the long run</h3></div></div>
@@ -540,8 +655,8 @@
       </section>
 
       <footer>
-        <span>AsterLM Studio 1.1</span>
-        <span>local-first · additive · research controls</span>
+        <span>AsterLM Studio 1.2</span>
+        <span>experiment flight recorder · local first · burst ready</span>
       </footer>
     </main>
   </div>

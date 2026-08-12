@@ -1,0 +1,7 @@
+# Coherent extension-build stack for the PyTorch cu130 WSL research environment.
+# Keep compiler, headers, CRT, NVVM and linker on the same CUDA minor release.
+nvidia-cuda-cccl==13.0.85
+nvidia-cuda-crt==13.0.88
+nvidia-cuda-nvcc==13.0.88
+nvidia-nvjitlink==13.0.88
+nvidia-nvvm==13.0.88

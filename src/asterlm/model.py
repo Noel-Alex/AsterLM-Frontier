@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import math
 import os
 from dataclasses import dataclass
@@ -13,13 +14,15 @@ from torch.utils.checkpoint import checkpoint
 from .cache import AsterCache
 from .config import AsterConfig
 from .layers.attnres_vnext import AttnResMix
-from .layers.gdn2 import GDN2
+from .layers.compressed_sparse_attention import CompressedSparseAttentionReference
+from .layers.deepseek_v4_reference import MHCHeadReducer, MHCResidualMixer
 from .layers.ffn import SwiGLU
+from .layers.gdn2 import GDN2
 from .layers.kda import KDA
 from .layers.latent_attention import LatentAttention
 from .layers.latent_moe import LatentMoE
-from .layers.mtp import MultiTokenPredictor
 from .layers.moe import DeepSeekStyleMoE
+from .layers.mtp import MultiTokenPredictor
 from .layers.norm import build_norm
 
 
@@ -51,6 +54,7 @@ def _aster_activation_checkpoint(
     config: AsterConfig,
     function,
     *args: torch.Tensor,
+    use_reentrant: bool = False,
 ):
     # Use TE-aware activation recomputation when Transformer Engine is active.
     uses_te = (
@@ -68,13 +72,20 @@ def _aster_activation_checkpoint(
         return te.distributed.checkpoint(
             function,
             *args,
-            use_reentrant=False,
+            use_reentrant=use_reentrant,
         )
-    return checkpoint(function, *args, use_reentrant=False)
+    return checkpoint(function, *args, use_reentrant=use_reentrant)
 
 
 class AsterBlock(nn.Module):
-    def __init__(self, config: AsterConfig, kind: str, layer_idx: int, kda_idx: int | None) -> None:
+    def __init__(
+        self,
+        config: AsterConfig,
+        kind: str,
+        layer_idx: int,
+        kda_idx: int | None,
+        moe_implementation: str,
+    ) -> None:
         super().__init__()
         self.kind = kind
         self.layer_idx = layer_idx
@@ -90,6 +101,27 @@ class AsterBlock(nn.Module):
             self.mixer = GDN2(config, kda_idx)
         elif kind == "latent":
             self.mixer = LatentAttention(config, layer_idx)
+        elif kind in {"csa", "hca"}:
+            self.mixer = CompressedSparseAttentionReference(
+                input_dim=config.d_model,
+                n_heads=config.n_heads,
+                head_dim=config.head_dim,
+                rope_dim=config.rope_dim,
+                max_seq_len=config.max_seq_len,
+                local_window=config.compressed_attention_local_window,
+                compress_ratio=(
+                    4 if kind == "csa" else config.compressed_attention_hca_ratio
+                ),
+                index_topk=config.compressed_attention_index_topk,
+                q_lora_rank=config.q_lora_rank,
+                index_n_heads=config.compressed_attention_index_n_heads,
+                index_head_dim=config.compressed_attention_index_head_dim,
+                output_groups=config.compressed_attention_output_groups,
+                output_lora_rank=config.compressed_attention_output_lora_rank,
+                norm_eps=config.rms_eps,
+                rope_theta=config.compressed_attention_rope_theta,
+                backend=config.compressed_attention_backend,
+            )
         else:
             raise ValueError(f"Unknown block kind: {kind}")
         use_moe = (
@@ -110,13 +142,18 @@ class AsterBlock(nn.Module):
                 balance_strategy=config.moe_balance_strategy,
                 bias_update_speed=config.moe_router_bias_update_speed,
                 linear_backend=config.ffn_backend,
-                moe_impl=os.environ.get("ASTER_MOE_IMPL", "reference").strip().lower(),
+                moe_impl=moe_implementation,
                 loqt_rank=config.loqt_rank,
                 loqt_alpha=config.loqt_alpha,
                 loqt_group_size=config.loqt_group_size,
                 init_std=config.init_std,
                 norm_eps=config.rms_eps,
                 post_norm=config.latent_moe_post_norm,
+                activation=config.moe_activation,
+                situ_beta_gate=config.moe_situ_beta_gate,
+                situ_beta_up=config.moe_situ_beta_up,
+                quantile_bins=config.moe_quantile_bins,
+                quantile_margin_bound=config.moe_quantile_margin_bound,
             )
         elif use_moe:
             self.ffn = DeepSeekStyleMoE(
@@ -134,6 +171,7 @@ class AsterBlock(nn.Module):
                 config.loqt_alpha,
                 config.loqt_group_size,
                 config.init_std,
+                moe_implementation,
             )
         else:
             self.ffn = SwiGLU(
@@ -147,6 +185,25 @@ class AsterBlock(nn.Module):
                 init_std=config.init_std,
             )
         self.residual_dropout = nn.Dropout(config.residual_dropout)
+        self.use_mhc = config.residual_architecture == "mhc"
+        if self.use_mhc:
+            self.mhc_attention = MHCResidualMixer(
+                config.d_model,
+                streams=config.mhc_streams,
+                iterations=config.mhc_sinkhorn_iterations,
+                norm_eps=config.rms_eps,
+                sinkhorn_eps=config.mhc_eps,
+            )
+            self.mhc_ffn = MHCResidualMixer(
+                config.d_model,
+                streams=config.mhc_streams,
+                iterations=config.mhc_sinkhorn_iterations,
+                norm_eps=config.rms_eps,
+                sinkhorn_eps=config.mhc_eps,
+            )
+        else:
+            self.mhc_attention = None
+            self.mhc_ffn = None
         self.use_attnres = config.use_block_attnres
         if self.use_attnres:
             self.attn_res_mix = AttnResMix(config.d_model, config.rms_eps)
@@ -162,9 +219,46 @@ class AsterBlock(nn.Module):
         cache: AsterCache | None = None,
         use_cache: bool = False,
     ) -> torch.Tensor:
+        if self.use_mhc:
+            assert self.mhc_attention is not None and self.mhc_ffn is not None
+            residual = hidden
+            attention_input, post, combination = self.mhc_attention.reduce(hidden)
+            normed = self.norm_mixer(attention_input)
+            if self.kind in {"kda", "gdn2"}:
+                mixed = self.mixer(normed, cache=cache, use_cache=use_cache)
+            elif self.kind in {"csa", "hca"}:
+                if cache is not None or use_cache:
+                    raise RuntimeError(
+                        "CSA/HCA cached decoding is unavailable until the optimized "
+                        "backend passes reference parity"
+                    )
+                mixed = self.mixer(normed)
+            else:
+                layer_cache = None if cache is None else cache.latent_layer(self.layer_idx)
+                mixed = self.mixer(
+                    normed, position_ids, cache=layer_cache, use_cache=use_cache
+                )
+            hidden = self.mhc_attention.expand(
+                self.residual_dropout(mixed), residual, post, combination
+            )
+
+            residual = hidden
+            ffn_input, post, combination = self.mhc_ffn.reduce(hidden)
+            ffn_output = self.ffn(self.norm_ffn(ffn_input))
+            return self.mhc_ffn.expand(
+                self.residual_dropout(ffn_output), residual, post, combination
+            )
+
         normed = self.norm_mixer(hidden)
         if self.kind in {"kda", "gdn2"}:
             mixed = self.mixer(normed, cache=cache, use_cache=use_cache)
+        elif self.kind in {"csa", "hca"}:
+            if cache is not None or use_cache:
+                raise RuntimeError(
+                    "CSA/HCA cached decoding is unavailable until the optimized "
+                    "backend passes reference parity"
+                )
+            mixed = self.mixer(normed)
         else:
             layer_cache = None if cache is None else cache.latent_layer(self.layer_idx)
             mixed = self.mixer(normed, position_ids, cache=layer_cache, use_cache=use_cache)
@@ -208,6 +302,13 @@ class AsterBlock(nn.Module):
 
         if self.kind in {"kda", "gdn2"}:
             mixed = self.mixer(attn_input, cache=cache, use_cache=use_cache)
+        elif self.kind in {"csa", "hca"}:
+            if cache is not None or use_cache:
+                raise RuntimeError(
+                    "CSA/HCA cached decoding is unavailable until the optimized "
+                    "backend passes reference parity"
+                )
+            mixed = self.mixer(attn_input)
         else:
             layer_cache = None if cache is None else cache.latent_layer(self.layer_idx)
             mixed = self.mixer(attn_input, position_ids, cache=layer_cache, use_cache=use_cache)
@@ -226,9 +327,20 @@ class AsterBlock(nn.Module):
 
 
 class AsterLM(nn.Module):
-    def __init__(self, config: AsterConfig) -> None:
+    def __init__(
+        self,
+        config: AsterConfig,
+        *,
+        named_initialization_seed: int | None = None,
+        moe_implementation: str | None = None,
+    ) -> None:
         super().__init__()
         self.config = config
+        self.moe_implementation = (
+            moe_implementation
+            if moe_implementation is not None
+            else os.environ.get("ASTER_MOE_IMPL", "reference").strip().lower()
+        )
         self.token_embedding = nn.Embedding(config.vocab_size, config.d_model)
         self.embedding_in_proj = (
             nn.Linear(config.d_model, config.d_model, bias=False)
@@ -248,7 +360,9 @@ class AsterLM(nn.Module):
         self.n_gdn2_layers = 0
         for layer_idx, kind in enumerate(config.pattern):
             idx = recurrent_idx if kind in {"kda", "gdn2"} else None
-            blocks.append(AsterBlock(config, kind, layer_idx, idx))
+            blocks.append(
+                AsterBlock(config, kind, layer_idx, idx, self.moe_implementation)
+            )
             if kind in {"kda", "gdn2"}:
                 recurrent_idx += 1
             if kind == "kda":
@@ -260,6 +374,17 @@ class AsterLM(nn.Module):
         self.use_block_attnres = config.use_block_attnres
         self.attnres_block_size = config.attnres_block_size
         self.final_attnres = AttnResMix(config.d_model, config.rms_eps) if self.use_block_attnres else None
+        self.use_mhc = config.residual_architecture == "mhc"
+        self.final_mhc = (
+            MHCHeadReducer(
+                config.d_model,
+                streams=config.mhc_streams,
+                norm_eps=config.rms_eps,
+                eps=config.mhc_eps,
+            )
+            if self.use_mhc
+            else None
+        )
 
         self.final_norm = build_norm(config.d_model, config.rms_eps, config.norm_type)
         self.lm_head = nn.Linear(config.d_model, config.vocab_size, bias=False)
@@ -301,9 +426,13 @@ class AsterLM(nn.Module):
                     config.mtp_block_kind,
                     config.n_layers,
                     recurrent_idx if config.mtp_block_kind in {"kda", "gdn2"} else None,
+                    self.moe_implementation,
                 )
                 self.mtp_final_norm = build_norm(config.d_model, config.rms_eps, config.norm_type)
-        self.apply(self._initialize_module)
+        if named_initialization_seed is None:
+            self.apply(self._initialize_module)
+        else:
+            self._initialize_modules_by_name(named_initialization_seed)
         self._initialize_embedding_projections()
         self._scale_residual_projections()
 
@@ -325,6 +454,31 @@ class AsterLM(nn.Module):
                 nn.init.zeros_(module.bias)
         elif isinstance(module, nn.Embedding):
             nn.init.normal_(module.weight, mean=0.0, std=self.config.init_std)
+
+    @staticmethod
+    def _qualified_initialization_seed(base_seed: int, module_name: str) -> int:
+        digest = hashlib.blake2b(
+            f"{base_seed}:{module_name}".encode(), digest_size=8
+        ).digest()
+        return int.from_bytes(digest, "little") % (2**63 - 1)
+
+    def _initialize_modules_by_name(self, base_seed: int) -> None:
+        """Initialize shared projections identically across architecture variants.
+
+        KDA/FLA-specific time constants and other specialized tensors retain their
+        upstream initialization. Only the same ordinary modules reset by Aster's
+        historical ``apply`` pass are made name-deterministic.
+        """
+
+        for name, module in self.named_modules():
+            is_linear = isinstance(module, nn.Linear) or getattr(
+                module, "_aster_linear", False
+            )
+            if not is_linear and not isinstance(module, nn.Embedding):
+                continue
+            with torch.random.fork_rng(devices=[]):
+                torch.manual_seed(self._qualified_initialization_seed(base_seed, name))
+                self._initialize_module(module)
 
     def _scale_residual_projections(self) -> None:
         scale = self.config.residual_init_scale
@@ -357,10 +511,15 @@ class AsterLM(nn.Module):
         return sum(p.numel() for p in params)
 
     def effective_parameter_count(self) -> int:
-        """Count full logical matrices even when LoQT stores them packed in buffers."""
+        """Count production logical parameters independent of control backends."""
         from .quantization.loqt import effective_parameter_count
 
-        return effective_parameter_count(self)
+        total = effective_parameter_count(self)
+        for block in self.blocks:
+            if isinstance(block.mixer, KDA):
+                total -= effective_parameter_count(block.mixer)
+                total += block.mixer.logical_parameter_count()
+        return total
 
     @torch.no_grad()
     def folded_embedding_weights(self) -> tuple[torch.Tensor, torch.Tensor]:
@@ -446,8 +605,19 @@ class AsterLM(nn.Module):
                 h = segment_block(h, p, cache=None, use_cache=False)
             return h
 
+        # TE's non-reentrant path records saved-tensor hooks throughout the whole
+        # callable and cannot early-stop recomputation. Across multiple FP8 blocks
+        # that path can retain enough state to oversubscribe a laptop GPU. The
+        # reentrant path saves only the segment inputs and is valid here because
+        # hidden requires gradients and the segment returns one gradient-bearing
+        # tensor. Per-block and tuple-valued AttnRes checkpoints remain
+        # non-reentrant.
         return _aster_activation_checkpoint(
-            self.config, custom_forward, hidden, position_ids
+            self.config,
+            custom_forward,
+            hidden,
+            position_ids,
+            use_reentrant=True,
         )
 
     def _projected_cross_entropy(
@@ -529,6 +699,8 @@ class AsterLM(nn.Module):
         position_ids = torch.arange(start, start + seq_len, device=input_ids.device).unsqueeze(0).expand(bsz, -1)
 
         hidden = self.embedding_dropout(self.embedding_in_proj(self.token_embedding(input_ids)))
+        if self.use_mhc:
+            hidden = hidden.unsqueeze(2).expand(-1, -1, self.config.mhc_streams, -1).contiguous()
         depth_states: list[torch.Tensor] | None = None
         if (
             not self.use_block_attnres
@@ -558,6 +730,9 @@ class AsterLM(nn.Module):
         if self.use_block_attnres:
             assert self.final_attnres is not None
             hidden = self.final_attnres([*(depth_states or []), hidden])
+        if self.use_mhc:
+            assert self.final_mhc is not None
+            hidden = self.final_mhc(hidden)
         # Keep the raw backbone state for faithful sequential MTP. The main LM head
         # still consumes the ordinary final-normalized state.
         backbone_hidden = hidden
@@ -757,7 +932,7 @@ class AsterLM(nn.Module):
 
 
     @torch.no_grad()
-    def update_moe_router_biases(self) -> dict[str, float]:
+    def update_moe_router_biases(self, *, collect_stats: bool = True) -> dict[str, float]:
         loads = []
         biases = []
         candidate_moe = [
@@ -774,7 +949,7 @@ class AsterLM(nn.Module):
             if load is not None:
                 loads.append(load)
                 biases.append(moe.routing_bias)
-        if not loads:
+        if not loads or not collect_stats:
             return {}
         load = torch.stack(loads).mean(dim=0)
         bias = torch.stack(biases).mean(dim=0)
@@ -785,6 +960,60 @@ class AsterLM(nn.Module):
             "moe_load_cv": float(load.std(unbiased=False) / load.mean().clamp_min(1e-9)),
             "moe_routing_bias_absmax": float(bias.abs().max()),
         }
+
+    def moe_execution_stats(self) -> dict[str, float]:
+        """Aggregate cumulative grouped-MoE launch/copy diagnostics across layers."""
+
+        totals: dict[str, float] = {}
+        ffn_modules = [block.ffn for block in self.blocks]
+        if self.mtp_deepseek_block is not None:
+            ffn_modules.append(self.mtp_deepseek_block.ffn)
+        for ffn in ffn_modules:
+            if not isinstance(ffn, (DeepSeekStyleMoE, LatentMoE)):
+                continue
+            bridge = getattr(ffn, "_grouped_routed", None)
+            diagnostics = getattr(bridge, "diagnostics", None)
+            if not callable(diagnostics):
+                continue
+            for name, value in diagnostics().items():
+                totals[name] = totals.get(name, 0.0) + float(value)
+        return totals
+
+    def pack_grouped_expert_storage(self) -> dict[str, float]:
+        """Pack grouped-expert weights once while preserving Parameter identities/keys."""
+
+        totals: dict[str, float] = {}
+        ffn_modules = [block.ffn for block in self.blocks]
+        if self.mtp_deepseek_block is not None:
+            ffn_modules.append(self.mtp_deepseek_block.ffn)
+        for ffn in ffn_modules:
+            if not isinstance(ffn, (DeepSeekStyleMoE, LatentMoE)):
+                continue
+            bridge = getattr(ffn, "_grouped_routed", None)
+            pack = getattr(bridge, "pack_parameter_storage", None)
+            if not callable(pack):
+                continue
+            for name, value in pack().items():
+                totals[name] = totals.get(name, 0.0) + float(value)
+        return totals
+
+    def materialize_grouped_expert_storage(self) -> dict[str, float]:
+        """Make grouped-expert tensors independently serializable until repacked."""
+
+        totals: dict[str, float] = {}
+        ffn_modules = [block.ffn for block in self.blocks]
+        if self.mtp_deepseek_block is not None:
+            ffn_modules.append(self.mtp_deepseek_block.ffn)
+        for ffn in ffn_modules:
+            if not isinstance(ffn, (DeepSeekStyleMoE, LatentMoE)):
+                continue
+            bridge = getattr(ffn, "_grouped_routed", None)
+            materialize = getattr(bridge, "materialize_parameter_storage", None)
+            if not callable(materialize):
+                continue
+            for name, value in materialize().items():
+                totals[name] = totals.get(name, 0.0) + float(value)
+        return totals
 
     @torch.no_grad()
     def apply_qk_clip(self, tau: float | None = None) -> dict[str, float]:
@@ -802,7 +1031,7 @@ class AsterLM(nn.Module):
         """Logical parameters used for one token, accounting for sparse MoE routing."""
         from .quantization.loqt import effective_parameter_count
 
-        total = effective_parameter_count(self)
+        total = self.effective_parameter_count()
         for block in self.blocks:
             if isinstance(block.ffn, (DeepSeekStyleMoE, LatentMoE)):
                 total -= effective_parameter_count(block.ffn)
@@ -816,6 +1045,10 @@ class AsterLM(nn.Module):
             "effective_parameters": self.effective_parameter_count(),
             "layers": len(pattern),
             "kda_layers": pattern.count("kda"),
+            "kda_num_heads": self.config.kda_num_heads or self.config.n_heads,
+            "kda_head_dim": self.config.kda_head_dim or self.config.head_dim,
+            "kda_projection_width": (self.config.kda_num_heads or self.config.n_heads)
+            * (self.config.kda_head_dim or self.config.head_dim),
             "gdn2_layers": pattern.count("gdn2"),
             "latent_attention_layers": pattern.count("latent"),
             "mtp_depth": self.config.mtp_depth,
@@ -825,6 +1058,7 @@ class AsterLM(nn.Module):
             "max_sequence_length": self.config.max_seq_len,
             "ffn_type": self.config.ffn_type,
             "moe_layers": sum(isinstance(block.ffn, (DeepSeekStyleMoE, LatentMoE)) for block in self.blocks),
+            "moe_implementation": self.moe_implementation,
             "active_parameters_estimate": self.active_parameter_count(),
             "attention_window": self.config.attention_window,
             "latent_cache_width": self.config.latent_rank + self.config.rope_dim,

@@ -1,0 +1,101 @@
+{
+  "schema_version": 1,
+  "status": "passed",
+  "imported_at_utc": "2026-08-12T03:20:12.663769+00:00",
+  "importer_git_commit": "30e0cdd22875ebad64cd91af438eb998b97ca259",
+  "source_matrix": {
+    "path": "docs/promotion-evidence/30e0cdd22875/native-8k-canary/matrix.json",
+    "sha256": "91d2e16bda9c1dbfe7915ca10847dcdfe82894178002257c8ec7749d544be3ac"
+  },
+  "assertions": {
+    "source_execution_commit": "5b59fe93a73a1bdbe141f003b75ef5e7e66f3989",
+    "hardware": "NVIDIA GeForce RTX 4080 Laptop GPU (Ada SM89, 12 GiB)",
+    "protocol": {
+      "sequence": 8192,
+      "batch": 1,
+      "accum": 16,
+      "steps": 2,
+      "warmup": 1,
+      "repetitions": 3,
+      "optimizer_override": "muon_adamw"
+    },
+    "trials": [
+      {
+        "name": "r1-k3-final",
+        "result_sha256": "90d346a66b7109ce05c02b6c6bb2d6d8a42752d066717b4a56f099319e5438a6",
+        "median_tokens_per_second": 10359.602293590598,
+        "mean_gpu_utilization": 93.88,
+        "median_gpu_utilization": 95.5,
+        "p10_gpu_utilization": 92.0,
+        "peak_allocated_gib": 9.559552192687988,
+        "peak_reserved_gib": 9.96484375,
+        "estimated_gpu_energy_kwh": 0.0007913993698564574,
+        "estimated_gpu_joules_per_token": 0.010868216443951594,
+        "host_metadata_syncs_per_forward": 1.0
+      },
+      {
+        "name": "r2-k3-final",
+        "result_sha256": "55db04654b31ae2e025f8a26111e732f9b1fc5dc64848a1895e91ccfb1b19bdd",
+        "median_tokens_per_second": 9844.999102529418,
+        "mean_gpu_utilization": 93.18867924528301,
+        "median_gpu_utilization": 96.0,
+        "p10_gpu_utilization": 92.0,
+        "peak_allocated_gib": 9.559552192687988,
+        "peak_reserved_gib": 9.96484375,
+        "estimated_gpu_energy_kwh": 0.0007398404681197709,
+        "estimated_gpu_joules_per_token": 0.010160162678646755,
+        "host_metadata_syncs_per_forward": 1.0
+      },
+      {
+        "name": "r3-k3-final",
+        "result_sha256": "dbbbb8fb48e3b351f98fd97f9c59586036d5c966be3f2be1063711a9dbd49840",
+        "median_tokens_per_second": 9664.975856840902,
+        "mean_gpu_utilization": 94.07407407407408,
+        "median_gpu_utilization": 96.0,
+        "p10_gpu_utilization": 90.0,
+        "peak_allocated_gib": 9.559552192687988,
+        "peak_reserved_gib": 9.9453125,
+        "estimated_gpu_energy_kwh": 0.0007305737953633248,
+        "estimated_gpu_joules_per_token": 0.010032904294235112,
+        "host_metadata_syncs_per_forward": 1.0
+      }
+    ],
+    "aggregate": {
+      "median_gpu_power_w": 101.1,
+      "median_gpu_utilization": 96.0,
+      "median_moe_forward_calls": 2208.0,
+      "median_moe_host_metadata_syncs": 2208.0,
+      "median_moe_host_metadata_syncs_per_forward": 1.0,
+      "median_moe_storage_pack_count": 23.0,
+      "median_moe_storage_pack_gib": 0.2021484375,
+      "median_moe_weight_cache_hits": 4278.0,
+      "median_moe_weight_cache_refresh_gib": 0.0,
+      "median_moe_weight_cache_refreshes": 138.0,
+      "median_peak_allocated_gib": 9.559552192687988,
+      "median_tokens_per_joule": 97.37882396171533,
+      "median_tokens_per_second": 9844.999102529418,
+      "successful_repetitions": 3
+    },
+    "thresholds": {
+      "minimum_median_gpu_utilization_percent": 90.0,
+      "maximum_peak_allocated_gib": 11.25,
+      "minimum_trial_p10_gpu_utilization_percent": 85.0
+    },
+    "diagnostics": {
+      "remaining_host_metadata_syncs_per_forward": 1.0,
+      "interpretation": "The native 8K workload sustains high GPU occupancy; one host metadata sync per MoE forward remains a measurable optimization target but no longer starves the GPU."
+    }
+  },
+  "certified_gates": [
+    "repeated_warm_throughput",
+    "gpu_utilization_root_cause",
+    "vram",
+    "energy_and_power"
+  ],
+  "not_certified": [
+    "equal_wall_clock",
+    "long_context_retrieval",
+    "interrupted_laptop_recovery",
+    "laptop_inference"
+  ]
+}
