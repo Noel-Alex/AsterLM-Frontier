@@ -25,7 +25,34 @@ def load_campaign(path: str | Path) -> dict[str, Any]:
         raise ValueError("Pretraining campaign requires schema_version=1 and stages")
     if sum(int(stage["tokens"]) for stage in payload["stages"]) != int(payload["goal_tokens"]):
         raise ValueError("Campaign stage tokens do not sum to goal_tokens")
+    for index, stage in enumerate(payload["stages"]):
+        if index == 0:
+            if stage.get("init_from") is not None:
+                raise ValueError("The first pretraining stage cannot declare init_from")
+            continue
+        previous = payload["stages"][index - 1]
+        if str(stage.get("init_from")) != str(previous.get("output_dir")):
+            raise ValueError(
+                f"{stage['id']} must initialize from the immediately preceding "
+                f"stage output {previous.get('output_dir')!r}"
+            )
     return payload
+
+
+def require_launchable_campaign(campaign: dict[str, Any]) -> None:
+    if campaign.get("status") != "ready":
+        raise RuntimeError(
+            "Pretraining campaign is not launchable: "
+            f"status={campaign.get('status')!r}. Complete scale selection and "
+            "write one architecture-compatible model family into every stage first."
+        )
+    architecture = campaign.get("architecture") or {}
+    base_model = architecture.get("base_model")
+    if not base_model:
+        raise RuntimeError("Launchable campaign has no selected architecture.base_model")
+    for stage in campaign["stages"]:
+        if not stage.get("model"):
+            raise RuntimeError(f"Launchable campaign stage {stage['id']} has no model")
 
 
 def stage_command(
@@ -83,6 +110,8 @@ def main() -> None:
 
     campaign_path = (ROOT / args.campaign).resolve()
     campaign = load_campaign(campaign_path)
+    if not args.dry_run:
+        require_launchable_campaign(campaign)
     stages = list(campaign["stages"])
     if args.start_stage:
         indices = [index for index, stage in enumerate(stages) if stage["id"] == args.start_stage]
