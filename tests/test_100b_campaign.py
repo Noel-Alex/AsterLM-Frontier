@@ -55,6 +55,12 @@ def test_100b_train_configs_sum_to_campaign_budget() -> None:
         for config in configs
     )
     assert all(config.hub_upload_milestones for config in configs)
+    assert all(not config.activation_offload for config in configs)
+    assert all(config.optimizer != "torchao_cpu_offload_adamw" for config in configs)
+    assert all(
+        config.loqt_merge_interval == 0 or not config.loqt_merge_on_cpu
+        for config in configs
+    )
 
     campaign = yaml.safe_load(
         (ROOT / "configs/pretraining/frontier_100b_k3.yaml").read_text(encoding="utf-8")
