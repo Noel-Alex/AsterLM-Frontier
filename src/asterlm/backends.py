@@ -89,7 +89,6 @@ def _default_registry() -> BackendRegistry:
                 "transformer_engine_grouped",
                 "cutlass_grouped",
                 "torch_grouped",
-                "torchao_fp8_grouped",
                 "liger_experts",
                 "custom_triton",
             ),
@@ -107,6 +106,7 @@ def _default_registry() -> BackendRegistry:
             moe_candidates=(
                 "transformer_engine_grouped",
                 "cutlass_grouped",
+                "torchao_fp8_grouped",
                 "liger_experts",
                 "deep_gemm",
                 "tile_kernels",
@@ -124,6 +124,7 @@ def _default_registry() -> BackendRegistry:
             attention_candidates=("torch_sdpa", "flash_mla", "tile_kernels"),
             moe_candidates=(
                 "transformer_engine_grouped",
+                "torchao_fp8_grouped",
                 "liger_experts",
                 "deep_gemm",
                 "tile_kernels",

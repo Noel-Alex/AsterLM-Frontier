@@ -23,6 +23,11 @@ def test_grouped_moe_matches_dropless_reference(implementation):
         pytest.skip("nv_grouped_gemm is not installed")
     if implementation == "torchao_fp8" and importlib.util.find_spec("torchao") is None:
         pytest.skip("torchao is not installed")
+    if implementation == "torchao_fp8" and torch.cuda.get_device_capability() not in {
+        (9, 0),
+        (10, 0),
+    }:
+        pytest.skip("torchao scaled grouped MM is limited to SM90/SM100")
     if implementation == "liger" and importlib.util.find_spec("liger_kernel") is None:
         pytest.skip("liger-kernel is not installed")
 

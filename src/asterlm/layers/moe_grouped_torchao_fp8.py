@@ -8,7 +8,7 @@ from .moe_grouped_torch import TorchGroupedRoutedExperts
 
 
 class TorchAOFP8GroupedRoutedExperts(TorchGroupedRoutedExperts):
-    """Dropless TorchAO rowwise-FP8 routed experts for Ada research gates.
+    """Dropless TorchAO rowwise-FP8 routed experts for Hopper/Blackwell gates.
 
     Canonical parameters remain BF16 and keep their ordinary Aster checkpoint
     names. Only the two routed-expert grouped GEMMs dynamically quantize their
@@ -101,8 +101,12 @@ class TorchAOFP8GroupedRoutedExperts(TorchGroupedRoutedExperts):
     ) -> torch.Tensor:
         if not flat.is_cuda:
             raise RuntimeError("TorchAO FP8 grouped MoE is a CUDA-only backend")
-        if torch.cuda.get_device_capability(flat.device) < (8, 9):
-            raise RuntimeError("TorchAO FP8 grouped MoE requires compute capability 8.9+")
+        capability = torch.cuda.get_device_capability(flat.device)
+        if capability not in {(9, 0), (10, 0)}:
+            raise RuntimeError(
+                "TorchAO FP8 grouped MoE requires SM90 or SM100 because PyTorch "
+                f"does not implement torch._scaled_grouped_mm on SM{capability[0]}{capability[1]}"
+            )
         if flat.dtype != torch.bfloat16:
             raise RuntimeError("TorchAO FP8 grouped MoE requires BF16 master activations")
         if flat.ndim != 2 or flat.shape[-1] != self.dim:

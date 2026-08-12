@@ -70,3 +70,21 @@ def test_liger_refuses_to_approximate_k3_situ_activation():
             moe_impl="liger",
             activation="situ_glu",
         )
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA capability gate")
+def test_torchao_fp8_fails_closed_on_unsupported_cuda_capability():
+    if torch.cuda.get_device_capability() in {(9, 0), (10, 0)}:
+        pytest.skip("supported TorchAO grouped-FP8 capability")
+    moe = DeepSeekStyleMoE(
+        dim=128,
+        expert_hidden=128,
+        num_experts=4,
+        top_k=2,
+        shared_experts=0,
+        linear_backend="torch",
+        moe_impl="torchao_fp8",
+    ).cuda().to(torch.bfloat16)
+    x = torch.randn(2, 16, 128, device="cuda", dtype=torch.bfloat16)
+    with pytest.raises(RuntimeError, match="SM90 or SM100"):
+        moe(x)
