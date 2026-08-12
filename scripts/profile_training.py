@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import csv
 import hashlib
 import json
 import os
@@ -21,6 +22,43 @@ from asterlm.optim import build_optimizer
 from asterlm.source_provenance import assert_expected_checkout_source
 from asterlm.training.precision import PrecisionManager
 from asterlm.training.telemetry import static_system_manifest
+
+
+def active_compute_processes(device_index: int) -> list[dict[str, Any]]:
+    """Return GPU compute clients so a benchmark cannot silently share its device."""
+
+    try:
+        output = subprocess.check_output(
+            [
+                "nvidia-smi",
+                "--query-compute-apps=pid,process_name,used_gpu_memory,gpu_uuid",
+                "--format=csv,noheader,nounits",
+                "-i",
+                str(int(device_index)),
+            ],
+            text=True,
+            stderr=subprocess.DEVNULL,
+            timeout=5,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise RuntimeError(f"Cannot audit existing GPU compute processes: {exc}") from exc
+    processes: list[dict[str, Any]] = []
+    for row in csv.reader(output.splitlines()):
+        if not row or not row[0].strip():
+            continue
+        try:
+            pid = int(row[0].strip())
+        except ValueError as exc:
+            raise RuntimeError(f"Invalid nvidia-smi compute-process row: {row!r}") from exc
+        processes.append(
+            {
+                "pid": pid,
+                "process_name": row[1].strip() if len(row) > 1 else "unknown",
+                "used_gpu_memory_mib": row[2].strip() if len(row) > 2 else "unknown",
+                "gpu_uuid": row[3].strip() if len(row) > 3 else "unknown",
+            }
+        )
+    return processes
 
 
 class ContinuousGpuSampler:
@@ -316,6 +354,14 @@ def main() -> None:
     )
     parser.add_argument("--gpu-sample-interval", type=float, default=0.5)
     parser.add_argument(
+        "--allow-shared-gpu",
+        action="store_true",
+        help=(
+            "Permit profiling while another compute process owns a CUDA context. "
+            "Disabled by default because shared VRAM/utilization invalidates fit and timing evidence."
+        ),
+    )
+    parser.add_argument(
         "--torch-trace",
         type=Path,
         default=None,
@@ -384,6 +430,18 @@ def main() -> None:
             raise RuntimeError("CUDA requested but unavailable")
         device = torch.device(train.device)
         if device.type == "cuda":
+            existing_compute = active_compute_processes(device.index or 0)
+            result["gpu_preflight"] = {
+                "exclusive": not existing_compute,
+                "allow_shared_gpu": args.allow_shared_gpu,
+                "existing_compute_processes": existing_compute,
+            }
+            if existing_compute and not args.allow_shared_gpu:
+                raise RuntimeError(
+                    "GPU benchmark refused to share the device with existing compute "
+                    f"processes: {existing_compute}. Stop those workloads or pass "
+                    "--allow-shared-gpu for an explicitly non-exclusive diagnostic."
+                )
             torch.cuda.empty_cache()
             torch.cuda.reset_peak_memory_stats(device)
             torch.backends.cuda.matmul.allow_tf32 = True
