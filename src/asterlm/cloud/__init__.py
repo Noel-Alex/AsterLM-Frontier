@@ -5,6 +5,7 @@ from .gcp import (
     load_gcp_profile,
 )
 from .gcp_cache import build_gcp_cache_stage_plan, execute_gcp_cache_stage
+from .execution_profiles import resolve_gpu_execution_profile
 from .modal import (
     build_modal_qualification_plan,
     build_modal_launch_plan,
@@ -28,4 +29,5 @@ __all__ = [
     "execute_modal_cache_stage",
     "load_gcp_profile",
     "load_modal_profile",
+    "resolve_gpu_execution_profile",
 ]

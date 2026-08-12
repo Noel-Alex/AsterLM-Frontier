@@ -6,6 +6,8 @@ import yaml
 from asterlm import AsterConfig, AsterLM, TrainConfig
 from asterlm.optim import build_hybrid_optimizer
 from asterlm.training.checkpoint import (
+    checkpoint_storage_usage,
+    enforce_checkpoint_storage_budget,
     load_checkpoint,
     load_data_state,
     pin_kda_backend_from_checkpoint,
@@ -179,3 +181,35 @@ def test_checkpoint_pyramid_keeps_dense_recent_and_sparse_history(tmp_path):
         for path in tmp_path.glob("checkpoint-*")
     }
     assert retained_steps == {6, 18, 24, 25, 26, 27, 28, 29, 30}
+
+
+def test_checkpoint_budget_never_evicts_unverified_permanent_or_recent(tmp_path):
+    import json
+
+    for step in range(1, 5):
+        checkpoint = tmp_path / f"checkpoint-{step:08d}"
+        checkpoint.mkdir()
+        (checkpoint / "checkpoint_manifest.json").write_text("{}", encoding="utf-8")
+        (checkpoint / "payload.bin").write_bytes(b"x" * 1024)
+        if step in {1, 2}:
+            (checkpoint / "KEEP").write_text("milestone\n", encoding="utf-8")
+    verification = tmp_path / "hub-verifications"
+    verification.mkdir()
+    (verification / "checkpoint-00000001.json").write_text(
+        json.dumps({"status": "verified", "checkpoint": "checkpoint-00000001"}),
+        encoding="utf-8",
+    )
+    (tmp_path / "latest.txt").write_text("checkpoint-00000004\n", encoding="utf-8")
+
+    result = enforce_checkpoint_storage_budget(
+        tmp_path,
+        max_total_gib=1.5 / 1024 / 1024,
+        keep_last=1,
+    )
+
+    assert not (tmp_path / "checkpoint-00000001").exists()
+    assert (tmp_path / "checkpoint-00000002").exists()
+    assert (tmp_path / "checkpoint-00000004").exists()
+    assert result["within_budget"] is False
+    usage = checkpoint_storage_usage(tmp_path)
+    assert usage["checkpoint_count"] == 2

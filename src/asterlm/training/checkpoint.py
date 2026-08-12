@@ -142,6 +142,11 @@ def save_checkpoint(
         )
 
         durable_files = [model_path, trainer_state, model_config_path, train_config_path]
+        tokenizer_source = Path(train_config.tokenizer_path)
+        if tokenizer_source.is_file():
+            tokenizer_path = staging / "tokenizer.json"
+            shutil.copy2(tokenizer_source, tokenizer_path)
+            durable_files.append(tokenizer_path)
         data_state_path: Path | None = None
         if data_state is not None:
             data_state_path = staging / "data_state.pt"
@@ -244,6 +249,101 @@ def prune_rolling_checkpoints(
         shutil.rmtree(old)
         removed.append(old)
     return removed
+
+
+def checkpoint_storage_usage(output_dir: str | Path) -> dict[str, Any]:
+    """Return exact on-disk usage for complete published checkpoints."""
+
+    root = Path(output_dir)
+    rows: list[dict[str, Any]] = []
+    total = 0
+    for checkpoint in sorted(root.glob("checkpoint-*")):
+        if not checkpoint.is_dir() or not (checkpoint / "checkpoint_manifest.json").is_file():
+            continue
+        size = sum(path.stat().st_size for path in checkpoint.rglob("*") if path.is_file())
+        total += size
+        rows.append(
+            {
+                "name": checkpoint.name,
+                "size_bytes": size,
+                "permanent": (checkpoint / "KEEP").is_file(),
+                "hub_verified": _hub_checkpoint_verified(root, checkpoint.name),
+            }
+        )
+    return {"total_bytes": total, "checkpoint_count": len(rows), "checkpoints": rows}
+
+
+def _hub_checkpoint_verified(root: Path, checkpoint_name: str) -> bool:
+    record = root / "hub-verifications" / f"{checkpoint_name}.json"
+    if not record.is_file():
+        return False
+    try:
+        payload = json.loads(record.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False
+    return payload.get("status") == "verified" and payload.get("checkpoint") == checkpoint_name
+
+
+def enforce_checkpoint_storage_budget(
+    output_dir: str | Path,
+    *,
+    max_total_gib: float,
+    keep_last: int,
+    protected: set[Path] | None = None,
+) -> dict[str, Any]:
+    """Enforce a local cache ceiling without risking the only durable milestone.
+
+    The latest recovery checkpoint and ``keep_last`` newest checkpoints are always
+    retained. A permanent checkpoint is eligible for local eviction only after the
+    corresponding Hub verification ledger proves an exact remote copy exists.
+    """
+
+    if max_total_gib <= 0 or keep_last < 0:
+        raise ValueError("checkpoint budget must be positive and keep_last non-negative")
+    root = Path(output_dir)
+    limit = int(max_total_gib * 1024**3)
+    explicit = {path.resolve() for path in (protected or set())}
+    complete = [
+        path
+        for path in sorted(root.glob("checkpoint-*"))
+        if path.is_dir() and (path / "checkpoint_manifest.json").is_file()
+    ]
+    newest = complete[-keep_last:] if keep_last else []
+    protected_resolved = explicit | {path.resolve() for path in newest}
+    latest = resolve_checkpoint(root)
+    if latest != root and latest.exists():
+        protected_resolved.add(latest.resolve())
+
+    sizes = {
+        path: sum(item.stat().st_size for item in path.rglob("*") if item.is_file())
+        for path in complete
+    }
+    before = sum(sizes.values())
+    total = before
+    removed: list[dict[str, Any]] = []
+    blocked: list[str] = []
+    for checkpoint in complete:
+        if total <= limit:
+            break
+        if checkpoint.resolve() in protected_resolved:
+            blocked.append(checkpoint.name)
+            continue
+        if (checkpoint / "KEEP").exists() and not _hub_checkpoint_verified(root, checkpoint.name):
+            blocked.append(checkpoint.name)
+            continue
+        size = sizes[checkpoint]
+        shutil.rmtree(checkpoint)
+        total -= size
+        removed.append({"name": checkpoint.name, "size_bytes": size})
+
+    return {
+        "limit_bytes": limit,
+        "before_bytes": before,
+        "after_bytes": total,
+        "within_budget": total <= limit,
+        "removed": removed,
+        "blocked_checkpoints": blocked,
+    }
 
 
 def verify_checkpoint(checkpoint: str | Path) -> dict[str, Any]:

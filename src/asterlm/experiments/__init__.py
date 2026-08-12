@@ -14,6 +14,7 @@ from .campaign import (
     materialize_architecture_campaign,
 )
 from .promotion import (
+    MODAL_PROMOTION_GATES,
     REQUIRED_FINAL_RUN_GATES,
     PromotionDecision,
     PromotionEvidence,
@@ -25,6 +26,7 @@ from .registry import ExperimentRegistry
 __all__ = [
     "BENCHMARK_SCHEMA_VERSION",
     "MANDATORY_BENCHMARK_FIELDS",
+    "MODAL_PROMOTION_GATES",
     "REQUIRED_FINAL_RUN_GATES",
     "ArchitectureCampaign",
     "ArchitectureCandidate",

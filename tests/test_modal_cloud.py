@@ -75,7 +75,7 @@ def test_default_modal_profile_is_safely_blocked_and_secret_free(tmp_path):
 def test_modal_profiles_do_not_share_persistent_volumes():
     profiles = [
         load_modal_profile(ROOT / "configs/providers/modal_boost.yaml", alias)
-        for alias in ("noelalex404", "friend-1", "friend-2")
+        for alias in ("noelalex404", "friend1", "friend2")
     ]
     for field in ("dataset_volume", "cache_volume", "checkpoint_volume"):
         assert len({getattr(profile, field) for profile in profiles}) == len(profiles)

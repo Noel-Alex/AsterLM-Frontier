@@ -256,6 +256,15 @@ class StudioTrainer(Trainer):
                 keep_last=self.train_config.keep_last_checkpoints,
                 pyramid_levels=self.train_config.checkpoint_pyramid_levels,
             )
+        if self.train_config.checkpoint_local_budget_gib is not None:
+            from asterlm.training.checkpoint import enforce_checkpoint_storage_budget
+
+            enforce_checkpoint_storage_budget(
+                self.train_config.output_dir,
+                max_total_gib=self.train_config.checkpoint_local_budget_gib,
+                keep_last=self.train_config.keep_last_checkpoints,
+                protected={path} if path.exists() else None,
+            )
         return path
 
 

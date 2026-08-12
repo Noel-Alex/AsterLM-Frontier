@@ -11,9 +11,10 @@ import yaml
 
 from asterlm.config import DataConfig, TrainConfig
 from asterlm.data.clean_manifest import build_clean_corpus_manifest
-from asterlm.experiments import REQUIRED_FINAL_RUN_GATES
+from asterlm.experiments import MODAL_PROMOTION_GATES, REQUIRED_FINAL_RUN_GATES
 from asterlm.training.contracts import (
     TrainingContractError,
+    canonical_data_config_sha256,
     validate_clean_manifest,
     validate_training_contract,
 )
@@ -69,7 +70,7 @@ def _passed_gates(path: Path) -> None:
     evidence = path.parent / "promotion-evidence"
     evidence.mkdir(exist_ok=True)
     records = {}
-    for gate in [*REQUIRED_FINAL_RUN_GATES, "energy_and_power"]:
+    for gate in [*REQUIRED_FINAL_RUN_GATES, *MODAL_PROMOTION_GATES, "energy_and_power"]:
         artifact = evidence / f"{gate}-result.json"
         artifact.write_text(json.dumps({"gate_id": gate, "passed": True}), encoding="utf-8")
         proof = evidence / f"{gate}-proof.json"
@@ -114,6 +115,15 @@ def _passed_gates(path: Path) -> None:
         ]
         + [
             {
+                "id": gate,
+                "required": False,
+                "status": "passed",
+                "evidence": [records[gate]],
+            }
+            for gate in MODAL_PROMOTION_GATES
+        ]
+        + [
+            {
                 "id": "energy_and_power",
                 "required": False,
                 "status": "passed",
@@ -122,6 +132,30 @@ def _passed_gates(path: Path) -> None:
         ],
     }
     path.write_text(yaml.safe_dump(payload, sort_keys=False), encoding="utf-8")
+
+
+def _sealed_tokenizer(tmp_path: Path, data: DataConfig) -> tuple[Path, Path]:
+    tokenizer = tmp_path / "tokenizer.json"
+    tokenizer.write_text('{"test":"tokenizer"}', encoding="utf-8")
+    manifest = tmp_path / "tokenizer_manifest.json"
+    manifest.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "status": "complete",
+                "data_config_sha256": canonical_data_config_sha256(data),
+                "tokenizer": {
+                    "sha256": hashlib.sha256(tokenizer.read_bytes()).hexdigest()
+                },
+                "fertility": [
+                    {"source_index": index, "documents": 1, "tokens": 4}
+                    for index, _ in enumerate(data.sources)
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    return tokenizer, manifest
 
 
 def test_decision_grade_contract_requires_and_validates_sealed_data(tmp_path: Path) -> None:
@@ -143,6 +177,7 @@ def test_decision_grade_contract_requires_and_validates_sealed_data(tmp_path: Pa
 
 def test_final_contract_is_mechanically_promotion_locked(tmp_path: Path) -> None:
     _, data = _sealed_data(tmp_path)
+    tokenizer, tokenizer_manifest = _sealed_tokenizer(tmp_path, data)
     gates = tmp_path / "gates.yaml"
     gates.write_text(
         (Path("configs/experiments/promotion_gates.yaml")).read_text(encoding="utf-8"),
@@ -155,6 +190,10 @@ def test_final_contract_is_mechanically_promotion_locked(tmp_path: Path) -> None
         hub_repo_id="owner/private-checkpoints",
         hub_private=True,
         hub_include_optimizer=True,
+        hub_fail_on_error=True,
+        checkpoint_local_budget_gib=150.0,
+        tokenizer_path=str(tokenizer),
+        tokenizer_manifest_path=str(tokenizer_manifest),
         num_workers=0,
     )
     with pytest.raises(TrainingContractError, match="promotion-locked"):

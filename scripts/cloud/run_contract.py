@@ -9,6 +9,8 @@ import signal
 import subprocess
 from pathlib import Path
 
+import yaml
+
 
 def _file_sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
@@ -103,6 +105,24 @@ def main() -> None:
         digest = _tree_sha256(path) if item.get("kind") == "directory" else _file_sha256(path)
         if digest != item["sha256"]:
             raise RuntimeError(f"Contract input hash mismatch: {path}")
+    if contract.get("gpu"):
+        from asterlm.artifacts import atomic_write_json, atomic_write_text
+        from asterlm.cloud.execution_profiles import resolve_gpu_execution_profile
+
+        train_option = command.index("--train")
+        source_train = Path(command[train_option + 1])
+        resolved, identity = resolve_gpu_execution_profile(
+            source_train,
+            str(contract["gpu"]),
+            profiles_path="configs/providers/gpu_execution_profiles.yaml",
+        )
+        resolved_path = Path("/run/aster/resolved_train.yaml")
+        atomic_write_text(resolved_path, yaml.safe_dump(resolved, sort_keys=False))
+        identity_path = Path("/run/aster/remote_execution_profile.json")
+        atomic_write_json(identity_path, identity)
+        os.environ["ASTERLM_REMOTE_EXECUTION_PROFILE"] = str(identity_path)
+        os.environ["ASTERLM_REMOTE_GPU"] = str(contract["gpu"])
+        command[train_option + 1] = str(resolved_path)
     if "__ASTER_HUB_RESUME__" in command:
         resume_root = Path(os.environ.get("ASTERLM_HUB_RESUME_ROOT", "/var/cache/aster/hub-resume"))
         checkpoint = _materialize_hub_resume(contract, resume_root / contract["contract_id"])

@@ -100,6 +100,8 @@ class HubRunSync:
 
         for path in (
             root / "run_manifest.json",
+            root / "analysis_manifest.json",
+            root / "experiment.json",
             root / "metrics.jsonl",
             root / "latest.txt",
             state_path,

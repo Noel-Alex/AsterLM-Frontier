@@ -24,6 +24,8 @@ from asterlm.quantization.loqt import iter_loqt_modules, merge_loqt_modules
 from asterlm.source_provenance import assert_current_checkout_source
 
 from .checkpoint import (
+    checkpoint_storage_usage,
+    enforce_checkpoint_storage_budget,
     load_checkpoint,
     load_data_state,
     load_model_weights,
@@ -31,6 +33,7 @@ from .checkpoint import (
     prune_rolling_checkpoints,
     save_checkpoint,
 )
+from .analysis_schema import build_analysis_manifest
 from .contracts import validate_training_contract
 from .execution import probe_execution_backends, resolve_execution_engine
 from .hub import HubRunSync
@@ -223,13 +226,33 @@ class Trainer:
 
         self.output = Path(train_config.output_dir)
         self.output.mkdir(parents=True, exist_ok=True)
+        previous_metrics: dict[str, Any] = {}
+        metrics_path = self.output / "metrics.jsonl"
+        if metrics_path.is_file():
+            try:
+                for line in metrics_path.read_text(encoding="utf-8", errors="replace").splitlines()[-200:]:
+                    row = json.loads(line)
+                    if row.get("tokens_per_second") is not None:
+                        previous_metrics = row
+            except (OSError, json.JSONDecodeError):
+                previous_metrics = {}
+        self._wall_clock_offset_seconds = float(
+            previous_metrics.get("wall_clock_campaign_seconds", 0.0)
+        )
+        self._throughput_ema = (
+            float(previous_metrics["tokens_per_second_ema"])
+            if previous_metrics.get("tokens_per_second_ema") is not None
+            else None
+        )
         self.logger = (
             JsonlLogger(self.output / "metrics.jsonl")
             if train_config.jsonl_metrics
             else _NullLogger()
         )
         self.system_sampler = SystemSampler(
-            self.device, min_interval=train_config.system_metrics_interval
+            self.device,
+            min_interval=train_config.system_metrics_interval,
+            energy_joules=float(previous_metrics.get("gpu_energy_joules_total", 0.0)),
         )
         self.tensorboard = None
         if train_config.tensorboard:
@@ -278,6 +301,11 @@ class Trainer:
             },
             "source_provenance": self.source_provenance,
         }
+        remote_profile_path = os.environ.get("ASTERLM_REMOTE_EXECUTION_PROFILE")
+        if remote_profile_path and Path(remote_profile_path).is_file():
+            manifest["remote_execution_profile"] = json.loads(
+                Path(remote_profile_path).read_text(encoding="utf-8")
+            )
         self.registry = ExperimentRegistry.create(
             self.output,
             repo_root=Path(__file__).resolve().parents[3],
@@ -294,6 +322,10 @@ class Trainer:
         )
         manifest["run_id"] = self.registry.record["run_id"]
         atomic_write_json(self.output / "run_manifest.json", manifest)
+        atomic_write_json(
+            self.output / "analysis_manifest.json",
+            build_analysis_manifest(train_config),
+        )
 
         if train_config.wandb_project:
             try:
@@ -318,6 +350,8 @@ class Trainer:
                     run_id=str(train_config.wandb_run_id),
                     url=getattr(run, "url", None),
                 )
+                run.define_metric("tokens_seen")
+                run.define_metric("*", step_metric="tokens_seen")
             except ImportError as exc:
                 raise ImportError("wandb_project is set, but wandb is not installed") from exc
 
@@ -518,6 +552,44 @@ class Trainer:
             "validation": validation_state,
         }
 
+    def _data_cursor_metrics(self) -> dict[str, Any]:
+        """Flatten replay/position evidence without logging the cursor payload itself."""
+
+        state = self.train_loader.dataset.state_dict()
+
+        def find_mixture(value: Any) -> dict[str, Any] | None:
+            if isinstance(value, dict):
+                if isinstance(value.get("source_epochs"), list) and isinstance(
+                    value.get("sources"), list
+                ):
+                    return value
+                for nested in value.values():
+                    found = find_mixture(nested)
+                    if found is not None:
+                        return found
+            return None
+
+        mixture = find_mixture(state)
+        if mixture is None:
+            return {"data_cursor_observable": 0}
+        result: dict[str, Any] = {"data_cursor_observable": 1}
+        epochs = [int(value) for value in mixture["source_epochs"]]
+        result["data_source_epoch_max"] = max(epochs, default=0)
+        result["data_source_epoch_mean"] = sum(epochs) / max(1, len(epochs))
+        for index, (epoch, source_state) in enumerate(
+            zip(epochs, mixture["sources"], strict=True)
+        ):
+            source = source_state.get("source") or {}
+            raw_name = str(source.get("name") or Path(str(source.get("path") or index)).name)
+            name = "".join(char if char.isalnum() else "_" for char in raw_name).strip("_")
+            name = name[:64] or str(index)
+            result[f"data_epoch_{name}"] = epoch
+            if source_state.get("file_index") is not None:
+                result[f"data_file_index_{name}"] = int(source_state["file_index"])
+            if source_state.get("record_index") is not None:
+                result[f"data_record_index_{name}"] = int(source_state["record_index"])
+        return result
+
     def _next_batch(self, validation: bool = False) -> dict[str, torch.Tensor]:
         iterator = self.validation_iterator if validation else self.train_iterator
         if iterator is None:
@@ -614,12 +686,21 @@ class Trainer:
             prune=False,
         )
         self.registry.add_checkpoint(path, reason=reason)
+        diagnostic_bundle: Path | None = None
         if self.train_config.save_diagnostic_bundle:
-            save_diagnostic_bundle(
+            diagnostic_bundle = save_diagnostic_bundle(
                 self.train_config.output_dir,
                 reason=reason,
                 extra={"step": self.step, "tokens_seen": self.tokens_seen, "checkpoint": str(path)},
             )
+            if self.wandb is not None:
+                artifact = self.wandb.Artifact(
+                    f"{self.output.name}-diagnostics",
+                    type="run-diagnostics",
+                    metadata={"step": self.step, "tokens_seen": self.tokens_seen, "reason": reason},
+                )
+                artifact.add_file(str(diagnostic_bundle))
+                self.wandb.log_artifact(artifact, aliases=["latest", reason.replace("/", "-")])
 
         upload_verified = False
         if should_upload and self.hub is not None:
@@ -646,6 +727,40 @@ class Trainer:
                 self.train_config.output_dir,
                 keep_last=self.train_config.keep_last_checkpoints,
                 pyramid_levels=self.train_config.checkpoint_pyramid_levels,
+            )
+        budget_result: dict[str, Any] | None = None
+        if self.train_config.checkpoint_local_budget_gib is not None:
+            budget_result = enforce_checkpoint_storage_budget(
+                self.train_config.output_dir,
+                max_total_gib=self.train_config.checkpoint_local_budget_gib,
+                keep_last=self.train_config.keep_last_checkpoints,
+                protected={path} if path.exists() else None,
+            )
+        storage = checkpoint_storage_usage(self.train_config.output_dir)
+        self._log(
+            {
+                "event": "checkpoint_committed",
+                "checkpoint_reason": reason,
+                "checkpoint_path": str(path),
+                "checkpoint_permanent": int(permanent),
+                "checkpoint_hub_verified": int(upload_verified),
+                "checkpoint_local_bytes": storage["total_bytes"],
+                "checkpoint_local_count": storage["checkpoint_count"],
+                "checkpoint_budget_bytes": (
+                    budget_result["limit_bytes"] if budget_result is not None else None
+                ),
+                "checkpoint_budget_ok": (
+                    int(budget_result["within_budget"]) if budget_result is not None else None
+                ),
+                "checkpoint_evicted_count": (
+                    len(budget_result["removed"]) if budget_result is not None else 0
+                ),
+            }
+        )
+        if budget_result is not None and not budget_result["within_budget"]:
+            print(
+                "WARNING: local checkpoint budget cannot be met without deleting a "
+                "recent or unverified recovery checkpoint"
             )
         return path
 
@@ -754,6 +869,7 @@ class Trainer:
                         **parameter_diagnostics(self.model),
                         **self.model.moe_pathway_stats(),
                         **self.model.moe_execution_stats(),
+                        **self._data_cursor_metrics(),
                     }
                 grad_norm = torch.nn.utils.clip_grad_norm_(
                     self.model.parameters(), cfg.max_grad_norm
@@ -857,6 +973,20 @@ class Trainer:
                         **diagnostics,
                         **self.system_sampler.sample(force=True),
                     }
+                    self._throughput_ema = (
+                        values["tokens_per_second"]
+                        if self._throughput_ema is None
+                        else 0.9 * self._throughput_ema + 0.1 * values["tokens_per_second"]
+                    )
+                    values["tokens_per_second_ema"] = self._throughput_ema
+                    values["wall_clock_campaign_seconds"] = (
+                        self._wall_clock_offset_seconds + values["wall_clock_total_seconds"]
+                    )
+                    values["eta_smoothed_seconds"] = (
+                        (cfg.max_tokens - self.tokens_seen) / max(self._throughput_ema, 1e-9)
+                        if cfg.max_tokens is not None
+                        else values["eta_seconds"]
+                    )
                     self._log(values)
                     self.registry.update_progress(
                         self.tokens_seen,
@@ -959,6 +1089,14 @@ class Trainer:
                     },
                 )
                 print(f"saved failure diagnostic bundle: {bundle}")
+                if self.wandb is not None:
+                    artifact = self.wandb.Artifact(
+                        f"{self.output.name}-failures",
+                        type="failure-diagnostics",
+                        metadata={"step": self.step, "tokens_seen": self.tokens_seen},
+                    )
+                    artifact.add_file(str(bundle))
+                    self.wandb.log_artifact(artifact, aliases=["latest"])
             raise
         finally:
             if self.tensorboard is not None:

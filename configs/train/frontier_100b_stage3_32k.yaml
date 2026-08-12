@@ -6,18 +6,25 @@ train:
   dtype: bfloat16
   matmul_precision: high
   compile: false
+  execution_backend: aster_local
+  execution_autotune: false
+  moe_implementation: cutlass
   precision_backend: amp
-  activation_offload: true
+  activation_offload: false
   sequence_length: 32768
   micro_batch_size: 1
   gradient_accumulation_steps: 4
   max_steps: 20000
   max_tokens: 2000000000
-  optimizer: torchao_cpu_offload_adamw
+  optimizer: muon_adamw
+  muon_lr: 0.002
+  muon_per_head: true
+  muon_megabatch: true
+  muon_megabatch_max_gib: 0.5
   adam_lr: 0.00005
   min_lr_ratio: 0.1
   warmup_steps: 250
-  schedule_type: wsd
+  schedule_type: cosine
   decay_fraction: 0.25
   decay_shape: cosine
   weight_decay: 0.1
@@ -31,12 +38,14 @@ train:
   keep_last_checkpoints: 6
   checkpoint_policy: full
   checkpoint_pyramid_levels: 8
+  checkpoint_local_budget_gib: 150.0
   milestone_tokens: [250000000, 500000000, 1000000000, 1500000000, 2000000000]
   milestone_eval: true
   num_workers: 0
   pin_memory: true
   prefetch_factor: null
   tokenizer_path: artifacts/tokenizer.json
+  tokenizer_manifest_path: artifacts/tokenizer_manifest.json
   wandb_project: asterlm-frontier
   wandb_run_name: frontier-100b-stage3-32k
   tensorboard: true
@@ -51,4 +60,4 @@ train:
   hub_upload_milestones: true
   hub_upload_final: true
   hub_include_optimizer: true
-  hub_fail_on_error: false
+  hub_fail_on_error: true

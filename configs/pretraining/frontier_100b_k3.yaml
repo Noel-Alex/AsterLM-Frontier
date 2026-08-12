@@ -1,0 +1,87 @@
+schema_version: 1
+status: frozen_launch_candidate
+name: aster-k3-100b
+goal_tokens: 100000000000
+architecture:
+  base_model: configs/model/aster_k3_latentmoe_270m_a188m.yaml
+  total_parameters: 269677164
+  active_parameters_per_token: 188272620
+  layers: 24
+  attention:
+    pattern: [KDA, KDA, KDA, MLA]
+    kda_layers: 18
+    mla_layers: 6
+    kda_semantics: global recurrent Kimi Delta Attention
+    mla_window_tokens: 8192
+    note: KDA is not DeepSeek CSA or HCA; the hybrid uses KDA for global recurrent memory and local-window MLA anchors.
+  experts: {routed: 8, active_routed: 2, shared: 2, activation: situ_glu, balancing: quantile}
+  optimizer: {family: muon_adamw, per_head: true, stage1_muon_lr: 0.005, control: adamw_wsd_0.0005}
+  precision: {laptop: bfloat16_amp, remote_baseline: bfloat16_amp, fp8: qualification_required}
+data:
+  raw_root: data/corpus-frontier-16b
+  clean_config: data/clean-frontier/pretrain_data.yaml
+  clean_manifest: data/clean-frontier/clean_manifest.json
+  primary_materialized_tokens: 84031562210
+  nemotron_math_materialized_tokens: 3000000834
+  nemotron_code_pending_tokens: 13000000000
+  current_materialized_tokens: 87031563044
+  expected_materialized_tokens_after_downloads: 100031563044
+  requested_raw_tokens: 100000000000
+  replay_policy: intentional_weighted_replay_after_one_full_clean_pass
+  replay_factor: resolved_from_clean_manifest_at_launch
+stages:
+  - id: stage1
+    label: base knowledge and capability
+    model: configs/model/aster_k3_latentmoe_270m_a188m.yaml
+    train: configs/train/frontier_100b_stage1_8k.yaml
+    output_dir: runs/aster-frontier-100b-stage1-8k
+    context: 8192
+    tokens: 92000000000
+    init_from: null
+  - id: stage2
+    label: long-context continuation
+    model: configs/model/aster_k3_latentmoe_270m_a188m_16k.yaml
+    train: configs/train/frontier_100b_stage2_16k.yaml
+    output_dir: runs/aster-frontier-100b-stage2-16k
+    context: 16384
+    tokens: 6000000000
+    init_from: runs/aster-frontier-100b-stage1-8k
+  - id: stage3
+    label: extended-context continuation
+    model: configs/model/aster_k3_latentmoe_270m_a188m_32k.yaml
+    train: configs/train/frontier_100b_stage3_32k.yaml
+    output_dir: runs/aster-frontier-100b-stage3-32k
+    context: 32768
+    tokens: 2000000000
+    init_from: runs/aster-frontier-100b-stage2-16k
+checkpointing:
+  local_budget_gib: 150
+  policy: dense recent recovery plus logarithmic rolling history plus remote permanent token milestones
+  remote: private Hugging Face full-state, synchronous and hash-verified
+  portable_inference: scripts/infer.py --hub-repo REPO --hub-run RUN --hub-selector tokens:N
+observability:
+  local: append-only metrics.jsonl plus run, analysis, checkpoint and diagnostic manifests
+  remote: W&B scalar history and diagnostics artifacts
+  refresh_seconds: 2
+  primary_axis: tokens_seen
+  grokking_signals:
+    - heldout loss and perplexity inflections
+    - domain evaluation trajectories
+    - train-validation gap
+    - expert pathway entropy and specialization
+    - gradient and update subsystem health
+    - memorization and contamination probes
+inference_state_after_pretraining:
+  behavior: base next-token completion model
+  chat_readiness: requires later post-training
+  supported_checkpoint_modes: [local, huggingface_latest, huggingface_final, huggingface_token_milestone]
+launch_policy:
+  remote_jobs_default: disabled
+  architecture_search: closed
+  required_before_stage1:
+    - sealed clean corpus and decontamination manifest
+    - tokenizer seal and fertility report
+    - finite native-context canary and exact resume
+    - W&B login and private Hugging Face repository
+    - Hub upload/download hash round trip
+    - clean pinned Git commit

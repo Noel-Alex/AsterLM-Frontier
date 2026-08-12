@@ -182,6 +182,49 @@ def validate_training_contract(
             raise TrainingContractError(
                 "Final training requires private Hub uploads with full optimizer/RNG resume state"
             )
+        if not train.hub_fail_on_error:
+            raise TrainingContractError(
+                "Final training requires hub_fail_on_error=true so a milestone is never "
+                "reported durable after a failed upload"
+            )
+        if train.checkpoint_local_budget_gib is None:
+            raise TrainingContractError(
+                "Final training requires an explicit checkpoint_local_budget_gib"
+            )
+        if not train.tokenizer_manifest_path:
+            raise TrainingContractError(
+                "Final training requires tokenizer_manifest_path from the sealed tokenizer build"
+            )
+        tokenizer_path = _resolved(train.tokenizer_path)
+        tokenizer_manifest_path = _resolved(train.tokenizer_manifest_path)
+        if not tokenizer_path.is_file() or not tokenizer_manifest_path.is_file():
+            raise TrainingContractError(
+                "Final training requires both the tokenizer and its seal manifest"
+            )
+        try:
+            tokenizer_manifest = json.loads(
+                tokenizer_manifest_path.read_text(encoding="utf-8")
+            )
+        except (OSError, json.JSONDecodeError) as exc:
+            raise TrainingContractError(f"Cannot read tokenizer seal manifest: {exc}") from exc
+        tokenizer_record = tokenizer_manifest.get("tokenizer") or {}
+        if (
+            tokenizer_manifest.get("schema_version") != 1
+            or tokenizer_manifest.get("status") != "complete"
+            or tokenizer_record.get("sha256") != sha256_file(tokenizer_path)
+        ):
+            raise TrainingContractError(
+                "Tokenizer seal is incomplete or does not match tokenizer_path"
+            )
+        if tokenizer_manifest.get("data_config_sha256") != canonical_data_config_sha256(data):
+            raise TrainingContractError(
+                "Tokenizer was not trained and measured against this immutable clean data config"
+            )
+        fertility = tokenizer_manifest.get("fertility")
+        if not isinstance(fertility, list) or len(fertility) < len(data.sources):
+            raise TrainingContractError(
+                "Tokenizer seal lacks source-level fertility measurements"
+            )
         if train.num_workers != 0:
             raise TrainingContractError(
                 "Final training requires num_workers=0 until worker-prefetch queues are checkpointable"

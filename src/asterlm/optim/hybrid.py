@@ -168,6 +168,8 @@ def build_hybrid_optimizer(model: nn.Module, config: TrainConfig) -> HybridOptim
             ns_steps=config.muon_ns_steps,
             nesterov=config.muon_nesterov,
             update_rms=config.muon_update_rms,
+            megabatch=config.muon_megabatch,
+            megabatch_max_gib=config.muon_megabatch_max_gib,
         )
         if muon_groups
         else None

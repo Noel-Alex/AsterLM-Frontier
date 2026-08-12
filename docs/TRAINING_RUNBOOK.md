@@ -1,8 +1,8 @@
-# AsterLM Frontier: authoritative training runbook
+# AsterLM Frontier: operational reference
 
-This is the command source of truth for the audited repository. Run commands from the repository root. Paths under the **root** `data/`, `runs/`, and `artifacts/` directories are intentionally not included in the distributable code archive; source-code directories such as `src/asterlm/data/` and `configs/data/` are included.
+For the frozen production pretraining campaign, [100B_EXPERIMENT.md](100B_EXPERIMENT.md) and `configs/pretraining/frontier_100b_k3.yaml` are the command and machine-readable sources of truth. The 893M/APOLLO commands below are retained as historical operational references and must not be used to start the final K3/Muon campaign. Run commands from the repository root. Paths under the **root** `data/`, `runs/`, and `artifacts/` directories are intentionally not included in the distributable code archive; source-code directories such as `src/asterlm/data/` and `configs/data/` are included.
 
-Never run one checkout while another checkout's virtual environment is active. The downloader now rejects that state by default. For the normal installation, work only in `/home/nol/Documents/AsterLM-Frontier` and activate `/home/nol/Documents/AsterLM-Frontier/.venv`.
+Never run one checkout while another checkout's virtual environment is active. The downloader rejects that state by default. In the current Windows/WSL installation, use `/mnt/n/AsterLM-Frontier` with `/root/.venvs/asterlm`; do not activate a virtual environment from the deleted Fedora checkout.
 
 ## 1. Install and verify the environment
 
@@ -486,4 +486,4 @@ source by default, appends every completed case durably, and resumes by case ID.
 
 ## 100B-token overtraining campaign
 
-For the research-grade 18.4B → 50B → 100B scaling study, permanent token milestones, MoE pathway telemetry and private Hugging Face disaster-recovery uploads, follow [100B_EXPERIMENT.md](100B_EXPERIMENT.md).
+For the frozen 100B curriculum, permanent 18.4B/50B analysis milestones, unattended stage transitions, 150 GiB local checkpoint cache, private hash-verified Hugging Face recovery and W&B/Studio observability, follow [100B_EXPERIMENT.md](100B_EXPERIMENT.md). Do not launch the old stage commands from earlier sections as the production campaign.

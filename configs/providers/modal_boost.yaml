@@ -24,7 +24,7 @@ profiles:
       - {gpu: H100!, min_cuda: "12.1", usd_per_second: 0.001097, role: exact_h100_reproducibility_candidate}
       - {gpu: A100-80GB, min_cuda: "11.8", usd_per_second: 0.000694, role: price_per_quality_control}
       - {gpu: L40S, min_cuda: "12.1", usd_per_second: 0.000542, role: low_cost_small_scale_control}
-  friend-1:
+  friend1:
     modal_environment: main
     app_name: asterlm-boost-friend-1
     base_image: SET_AFTER_PINNING_NVIDIA_CUDA_13_1_IMAGE
@@ -46,7 +46,7 @@ profiles:
       - {gpu: H200, min_cuda: "12.4", usd_per_second: 0.001261, role: long_context_capacity_candidate}
       - {gpu: H100!, min_cuda: "12.1", usd_per_second: 0.001097, role: exact_h100_reproducibility_candidate}
       - {gpu: A100-80GB, min_cuda: "11.8", usd_per_second: 0.000694, role: price_per_quality_control}
-  friend-2:
+  friend2:
     modal_environment: main
     app_name: asterlm-boost-friend-2
     base_image: SET_AFTER_PINNING_NVIDIA_CUDA_13_1_IMAGE

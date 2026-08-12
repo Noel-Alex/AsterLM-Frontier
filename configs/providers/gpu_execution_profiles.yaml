@@ -1,0 +1,31 @@
+schema_version: 1
+target_effective_batch_tokens: 131072
+profiles:
+  RTX-4080-Laptop:
+    aliases: [RTX 4080 Laptop GPU, RTX-4080-Laptop]
+    micro_batch_by_context: {8192: 1, 16384: 1, 32768: 1}
+    muon_megabatch_max_gib: 0.5
+  L40S:
+    aliases: [L40S]
+    micro_batch_by_context: {8192: 2, 16384: 1, 32768: 1}
+    muon_megabatch_max_gib: 1.0
+  L4:
+    aliases: [L4, l4-24gb, g2-standard-4]
+    micro_batch_by_context: {8192: 1, 16384: 1, 32768: 1}
+    muon_megabatch_max_gib: 0.5
+  A100-80GB:
+    aliases: [A100-80GB, a100-80gb, a2-ultragpu-1g]
+    micro_batch_by_context: {8192: 4, 16384: 2, 32768: 1}
+    muon_megabatch_max_gib: 2.0
+  H100-80GB:
+    aliases: [H100!, H100, h100-80gb, a3-highgpu-1g]
+    micro_batch_by_context: {8192: 4, 16384: 2, 32768: 1}
+    muon_megabatch_max_gib: 2.0
+  H200:
+    aliases: [H200]
+    micro_batch_by_context: {8192: 8, 16384: 4, 32768: 2}
+    muon_megabatch_max_gib: 4.0
+  B300:
+    aliases: [B300, GB300]
+    micro_batch_by_context: {8192: 16, 16384: 8, 32768: 4}
+    muon_megabatch_max_gib: 8.0

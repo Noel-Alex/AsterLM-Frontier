@@ -8,6 +8,7 @@ from asterlm.layers.moe_grouped_cutlass import (
     materialize_parameter_storage,
     pack_parameter_storage,
 )
+from asterlm.optim.muon import Muon
 from asterlm.training.checkpoint import checkpoint_compatible_parameter_storage
 
 
@@ -46,6 +47,22 @@ def test_packed_expert_storage_tracks_optimizer_updates_without_restacking():
 
     assert not torch.equal(packed, before)
     torch.testing.assert_close(packed, torch.stack([p.detach() for p in parameters]))
+
+
+def test_packed_expert_storage_tracks_megabatched_muon_updates():
+    torch.manual_seed(29)
+    parameters = [nn.Parameter(torch.randn(8, 16)) for _ in range(4)]
+    packed = pack_parameter_storage(parameters)
+    for parameter in parameters:
+        parameter.grad = torch.randn_like(parameter)
+    optimizer = Muon(parameters, lr=0.01, megabatch=True)
+
+    optimizer.step()
+
+    torch.testing.assert_close(
+        packed,
+        torch.stack([parameter.detach() for parameter in parameters]),
+    )
 
 
 def test_materialized_expert_storage_round_trips_through_safetensors(tmp_path):

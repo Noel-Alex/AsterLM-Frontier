@@ -3,6 +3,7 @@ import torch
 from asterlm import AsterConfig, AsterLM, TrainConfig
 from asterlm.optim import build_hybrid_optimizer, build_optimizer
 from asterlm.optim.muon import (
+    Muon,
     zeropower_via_newton_schulz5,
     zeropower_via_newton_schulz5_batched,
 )
@@ -22,6 +23,55 @@ def test_batched_newton_schulz_matches_independent_blocks():
     )
     actual = zeropower_via_newton_schulz5_batched(matrices)
     torch.testing.assert_close(actual, expected, rtol=1e-5, atol=1e-6)
+
+
+def test_megabatched_muon_matches_parameterwise_state_and_updates():
+    torch.manual_seed(17)
+    reference = [torch.nn.Parameter(torch.randn(8, 16)) for _ in range(4)]
+    candidate = [torch.nn.Parameter(parameter.detach().clone()) for parameter in reference]
+    gradients = [torch.randn_like(parameter) for parameter in reference]
+    for parameter, gradient in zip(reference, gradients, strict=True):
+        parameter.grad = gradient.clone()
+    for parameter, gradient in zip(candidate, gradients, strict=True):
+        parameter.grad = gradient.clone()
+    common = dict(
+        lr=0.01,
+        momentum=0.95,
+        weight_decay=0.1,
+        ns_steps=5,
+        nesterov=True,
+        update_rms=0.2,
+    )
+    legacy = Muon(reference, megabatch=False, **common)
+    batched = Muon(candidate, megabatch=True, megabatch_max_gib=0.001, **common)
+    batched.set_diagnostics_enabled(True)
+    legacy.step()
+    batched.step()
+
+    for expected, actual in zip(reference, candidate, strict=True):
+        torch.testing.assert_close(actual, expected, rtol=1e-5, atol=1e-6)
+        torch.testing.assert_close(
+            batched.state[actual]["momentum_buffer"],
+            legacy.state[expected]["momentum_buffer"],
+        )
+    diagnostics = batched.diagnostics()
+    assert diagnostics["muon_megabatch_bucket_count"] == 1
+    assert diagnostics["muon_megabatch_max_matrices"] > 1
+
+
+def test_megabatched_muon_preserves_per_head_partition_math():
+    torch.manual_seed(19)
+    reference = torch.nn.Parameter(torch.randn(16, 8))
+    candidate = torch.nn.Parameter(reference.detach().clone())
+    gradient = torch.randn_like(reference)
+    reference.grad = gradient.clone()
+    candidate.grad = gradient.clone()
+    group = lambda parameter: [{"params": [parameter], "split_count": 4}]
+    legacy = Muon(group(reference), megabatch=False)
+    batched = Muon(group(candidate), megabatch=True)
+    legacy.step()
+    batched.step()
+    torch.testing.assert_close(candidate, reference, rtol=1e-5, atol=1e-6)
 
 
 def test_hybrid_optimizer_step():

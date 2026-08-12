@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import os
+import json
 import re
 import shutil
 import subprocess
 import sys
 from pathlib import Path
 from typing import Any
+
+import yaml
 
 RESEARCHED_AT = "2026-08-11"
 
@@ -92,6 +95,57 @@ def _modal_profiles(path: Path) -> list[str]:
     return sorted({name.strip() for name in names if name.strip() not in {"settings"}})
 
 
+def _modal_cli_profiles(command: str | None, fallback_path: Path) -> tuple[list[str], str | None]:
+    """Read safe profile aliases through the supported CLI, with TOML fallback."""
+
+    if not command:
+        return _modal_profiles(fallback_path), None
+    try:
+        listed = subprocess.run(
+            [command, "profile", "list", "--json"],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        current = subprocess.run(
+            [command, "profile", "current"],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        payload = json.loads(listed.stdout) if listed.returncode == 0 else None
+    except (OSError, subprocess.SubprocessError, json.JSONDecodeError):
+        return _modal_profiles(fallback_path), None
+    names: set[str] = set()
+    rows = payload.get("profiles", payload) if isinstance(payload, dict) else payload
+    if isinstance(rows, dict):
+        names.update(str(key) for key in rows)
+    elif isinstance(rows, list):
+        for row in rows:
+            value = row.get("name") if isinstance(row, dict) else row
+            if value and SAFE_PROFILE.fullmatch(str(value)):
+                names.add(str(value))
+    if not names:
+        names.update(_modal_profiles(fallback_path))
+    active = current.stdout.strip() if current.returncode == 0 else None
+    return sorted(name for name in names if SAFE_PROFILE.fullmatch(name)), active or None
+
+
+def _declared_modal_profiles() -> list[str]:
+    path = Path(__file__).resolve().parents[1] / "configs" / "providers" / "modal_boost.yaml"
+    try:
+        payload = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    except OSError:
+        return []
+    return sorted(
+        str(alias)
+        for alias in (payload.get("profiles") or {})
+        if SAFE_PROFILE.fullmatch(str(alias))
+    )
+
+
 SAFE_PROFILE = re.compile(r"^[A-Za-z0-9_.-]+$")
 
 
@@ -133,12 +187,19 @@ def provider_status(provider_settings: dict[str, Any] | None = None) -> list[dic
     presence, and non-secret profile aliases cross the Studio API boundary.
     """
     config = provider_settings or {}
-    modal_path = Path(
-        os.environ.get("MODAL_CONFIG_PATH")
-        or config.get("modal_config_path")
-        or (Path.home() / ".modal.toml")
-    ).expanduser()
-    modal_profiles = _modal_profiles(modal_path)
+    explicit_modal_path = os.environ.get("MODAL_CONFIG_PATH") or config.get(
+        "modal_config_path"
+    )
+    modal_path = Path(explicit_modal_path or (Path.home() / ".modal.toml")).expanduser()
+    modal_command = _command("modal")
+    if explicit_modal_path:
+        # An explicit store is an isolation boundary (tests, portable installs,
+        # or operator-selected credentials). Never mix it with the global CLI
+        # store merely because the Modal executable is installed.
+        modal_profiles, modal_active = _modal_profiles(modal_path), None
+    else:
+        modal_profiles, modal_active = _modal_cli_profiles(modal_command, modal_path)
+    declared_modal_profiles = _declared_modal_profiles()
     gcloud_command = _command("gcloud")
     gcloud_profiles, gcloud_authenticated = _gcloud_profiles(gcloud_command)
     if not gcloud_profiles:
@@ -164,10 +225,15 @@ def provider_status(provider_settings: dict[str, Any] | None = None) -> list[dic
             "profiles": ["local"],
         },
         "modal": {
-            "installed": bool(_command("modal")),
+            "installed": bool(modal_command),
             "authenticated": bool(modal_profiles),
             "profiles": modal_profiles,
-            "active_profile": os.environ.get("MODAL_PROFILE"),
+            "declared_profiles": declared_modal_profiles,
+            "profile_status": [
+                {"alias": alias, "authenticated": alias in modal_profiles}
+                for alias in declared_modal_profiles
+            ],
+            "active_profile": os.environ.get("MODAL_PROFILE") or modal_active,
             "credential_store": str(modal_path) if modal_path.is_file() else None,
         },
         "gcp": {

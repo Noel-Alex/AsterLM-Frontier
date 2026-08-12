@@ -49,6 +49,7 @@ REMOTE_PLAN_ROOT = STUDIO_ROOT / "remote-plans"
 REMOTE_JOB_ROOT = STUDIO_ROOT / "remote-jobs"
 CATALOG_PATH = ROOT / "studio" / "catalog.yaml"
 STATIC_ROOT = ROOT / "studio" / "static"
+CAMPAIGN_PATH = ROOT / "configs" / "pretraining" / "frontier_100b_k3.yaml"
 GIB = 2**30
 _EXECUTION_BACKEND_CACHE: dict[str, Any] = {"updated": 0.0, "rows": []}
 _EXECUTION_BACKEND_LOCK = threading.Lock()
@@ -72,7 +73,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "training": {
         "checkpoint_tokens": 25000000,
         "keep_last_checkpoints": 6,
-        "model": "configs/model/aster_moe_frontier_893m_a484m.yaml",
+        "model": "configs/model/aster_k3_latentmoe_270m_a188m.yaml",
         "data": "data/clean-frontier/pretrain_data.yaml",
     },
     "ui": {
@@ -559,6 +560,12 @@ def checkpoint_list(run_path: Path) -> list[dict[str, Any]]:
     result = []
     for path in sorted(run_path.glob("checkpoint-*")):
         manifest = read_state(path / "checkpoint_manifest.json") or {}
+        verification = read_state(
+            run_path / "hub-verifications" / f"{path.name}.json"
+        ) or {}
+        local_bytes = sum(
+            item.stat().st_size for item in path.rglob("*") if item.is_file()
+        )
         result.append(
             {
                 "name": path.name,
@@ -569,6 +576,13 @@ def checkpoint_list(run_path: Path) -> list[dict[str, Any]]:
                 "permanent": bool(manifest.get("permanent", False) or (path / "KEEP").exists()),
                 "model_bytes": manifest.get("model_bytes"),
                 "trainer_state_bytes": manifest.get("trainer_state_bytes"),
+                "local_bytes": local_bytes,
+                "hub_verified": (
+                    verification.get("status") == "verified"
+                    and verification.get("checkpoint") == path.name
+                ),
+                "hub_verified_files": verification.get("verified_file_count"),
+                "hub_remote_commit": verification.get("remote_commit"),
             }
         )
     return result
@@ -619,6 +633,215 @@ def runs_status() -> list[dict[str, Any]]:
             }
         )
     return rows[:100]
+
+
+def _wandb_credentials_present() -> bool:
+    if os.environ.get("WANDB_API_KEY"):
+        return True
+    for path in (Path.home() / ".netrc", Path.home() / "_netrc"):
+        try:
+            content = path.read_text(encoding="utf-8", errors="ignore")
+        except OSError:
+            continue
+        if re.search(r"(?im)^\s*machine\s+(api\.)?wandb\.ai\s*$", content):
+            return True
+    return False
+
+
+def _git_worktree_clean() -> bool:
+    try:
+        result = subprocess.run(
+            ["git", "status", "--porcelain", "--untracked-files=normal"],
+            cwd=ROOT,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return result.returncode == 0 and not result.stdout.strip()
+
+
+def _campaign_readiness(
+    payload: dict[str, Any],
+    *,
+    providers: list[dict[str, Any]],
+    jobs: list[dict[str, Any]],
+) -> dict[str, Any]:
+    data = payload.get("data") or {}
+    rows: list[dict[str, Any]] = []
+
+    def add(item_id: str, label: str, state: str, detail: str, *, blocking: bool = True) -> None:
+        rows.append(
+            {
+                "id": item_id,
+                "label": label,
+                "state": state,
+                "detail": detail,
+                "blocking": blocking,
+            }
+        )
+
+    expected = int(data.get("expected_materialized_tokens_after_downloads") or 0)
+    materialized = int(data.get("current_materialized_tokens") or 0)
+    acquisition_jobs = [
+        job for job in jobs if job.get("action") == "download_corpus_sources"
+    ]
+    latest_acquisition = acquisition_jobs[0] if acquisition_jobs else None
+    if materialized >= expected > 0:
+        add("source_acquisition", "Raw source acquisition", "ready", f"{materialized:,} pinned raw tokens recorded")
+    elif latest_acquisition and latest_acquisition.get("status") in {"running", "stopping"}:
+        add("source_acquisition", "Raw source acquisition", "running", latest_acquisition.get("label", "materialization running"))
+    elif latest_acquisition and latest_acquisition.get("status") == "failed":
+        add(
+            "source_acquisition",
+            "Raw source acquisition",
+            "blocked",
+            "NVIDIA code repositories are gated; the current Hugging Face access request is awaiting review",
+        )
+    else:
+        add("source_acquisition", "Raw source acquisition", "blocked", f"{materialized:,} / {expected:,} planned raw tokens materialized")
+
+    clean_manifest = ROOT / str(data.get("clean_manifest") or "")
+    clean_config = ROOT / str(data.get("clean_config") or "")
+    clean_ready = clean_manifest.is_file() and clean_config.is_file()
+    add(
+        "clean_corpus",
+        "Clean corpus seal",
+        "ready" if clean_ready else "blocked",
+        "decontaminated manifest and immutable data config present" if clean_ready else "final global cleaning, deduplication and decontamination have not completed",
+    )
+
+    tokenizer = ROOT / "artifacts" / "tokenizer.json"
+    tokenizer_manifest = ROOT / "artifacts" / "tokenizer_manifest.json"
+    tokenizer_ready = tokenizer.is_file() and tokenizer_manifest.is_file()
+    add(
+        "tokenizer",
+        "Tokenizer seal",
+        "ready" if tokenizer_ready else "blocked",
+        "tokenizer and fertility/provenance manifest present" if tokenizer_ready else "final tokenizer must be trained and measured from the sealed corpus",
+    )
+
+    try:
+        from asterlm.experiments import evaluate_promotion_gates
+
+        decision = evaluate_promotion_gates(ROOT / "configs/experiments/promotion_gates.yaml")
+        promotion_ready = decision.ready
+        promotion_detail = (
+            f"all {sum(gate.required for gate in decision.gates)} required gates passed"
+            if decision.ready
+            else f"{len(decision.blocking_gate_ids)} required evidence gates remain"
+        )
+    except Exception as exc:
+        promotion_ready = False
+        promotion_detail = f"gate ledger invalid: {type(exc).__name__}: {exc}"
+    add(
+        "promotion",
+        "Promotion evidence",
+        "ready" if promotion_ready else "blocked",
+        promotion_detail,
+    )
+
+    hf = next((item for item in providers if item.get("id") == "huggingface_jobs"), {})
+    add(
+        "huggingface_auth",
+        "Hugging Face authentication",
+        "ready" if hf.get("authenticated") else "blocked",
+        "provider-native token store detected" if hf.get("authenticated") else "run `hf auth login` before the durability round trip",
+    )
+    wandb_ready = _wandb_credentials_present()
+    add(
+        "wandb_auth",
+        "Weights & Biases authentication",
+        "ready" if wandb_ready else "blocked",
+        "local W&B credential store detected" if wandb_ready else "run `wandb login` before the history-resume round trip",
+    )
+
+    git_clean = _git_worktree_clean()
+    add(
+        "git_pin",
+        "Pinned source checkout",
+        "ready" if git_clean else "blocked",
+        "Git worktree is clean" if git_clean else "uncommitted implementation changes remain",
+    )
+
+    free_gib = shutil.disk_usage(ROOT).free / GIB
+    budget_gib = float((payload.get("checkpointing") or {}).get("local_budget_gib") or 0)
+    disk_ready = free_gib >= budget_gib + 20
+    add(
+        "local_storage",
+        "Local recovery storage",
+        "ready" if disk_ready else "blocked",
+        f"{free_gib:.1f} GiB free; {budget_gib:.0f} GiB checkpoint cache plus 20 GiB safety margin required",
+    )
+
+    add(
+        "hub_repo",
+        "Private checkpoint repository",
+        "input_required",
+        "enter namespace/name in the launch control; Studio never exposes or stores a token",
+    )
+    blockers = [row["id"] for row in rows if row["blocking"] and row["state"] != "ready"]
+    return {
+        "ready": not blockers,
+        "blocking_count": len(blockers),
+        "blocking_ids": blockers,
+        "items": rows,
+    }
+
+
+def training_campaign_status(
+    *,
+    providers: list[dict[str, Any]] | None = None,
+    jobs: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    payload = yaml.safe_load(CAMPAIGN_PATH.read_text(encoding="utf-8")) or {}
+    runs = {row["path"]: row for row in runs_status()}
+    completed = 0
+    stages: list[dict[str, Any]] = []
+    active: dict[str, Any] | None = None
+    for raw in payload.get("stages", []):
+        run = runs.get(str(raw["output_dir"]))
+        latest = (run or {}).get("latest") or {}
+        stage_tokens = min(int(latest.get("tokens_seen") or 0), int(raw["tokens"]))
+        completed += stage_tokens
+        row = {
+            **raw,
+            "completed_tokens": stage_tokens,
+            "progress_fraction": stage_tokens / max(1, int(raw["tokens"])),
+            "run": run,
+            "freshness_seconds": (
+                max(0.0, time.time() - float(latest.get("wall_time_unix")))
+                if latest.get("wall_time_unix")
+                else None
+            ),
+        }
+        stages.append(row)
+        if active is None and stage_tokens < int(raw["tokens"]):
+            active = row
+    target = int(payload.get("goal_tokens", 0))
+    live = ((active or {}).get("run") or {}).get("latest") or {}
+    throughput = live.get("tokens_per_second_ema") or live.get("tokens_per_second")
+    provider_rows = providers if providers is not None else provider_status(settings().get("providers"))
+    job_rows = jobs if jobs is not None else JOBS.list()
+    readiness = _campaign_readiness(payload, providers=provider_rows, jobs=job_rows)
+    return {
+        **payload,
+        "campaign_path": rel(CAMPAIGN_PATH),
+        "completed_tokens": completed,
+        "progress_fraction": completed / max(1, target),
+        "active_stage": active,
+        "stages": stages,
+        "live": live,
+        "eta_seconds": (
+            (target - completed) / float(throughput)
+            if throughput and completed < target
+            else None
+        ),
+        "clean_manifest_ready": (ROOT / str(payload["data"]["clean_manifest"])).is_file(),
+        "readiness": readiness,
+    }
 
 
 def diagnostic_matrices(limit: int = 100) -> list[dict[str, Any]]:
@@ -959,6 +1182,36 @@ def start_action(action: str, payload: dict[str, Any]) -> dict[str, Any]:
     py = sys.executable
     env = download_env()
 
+    if action == "modal_auth":
+        alias = sanitize_source(str(payload["profile_alias"]))
+        declared = {
+            item
+            for row in provider_status(settings().get("providers"))
+            if row.get("id") == "modal"
+            for item in row.get("declared_profiles", [])
+        }
+        if alias not in declared:
+            raise ValueError("Modal profile alias must be declared in configs/providers/modal_boost.yaml")
+        command_path = shutil.which("modal")
+        if not command_path:
+            raise RuntimeError("Modal CLI is not installed in the Studio environment")
+        command = [
+            command_path,
+            "token",
+            "new",
+            "--profile",
+            alias,
+            "--no-activate",
+            "--verify",
+        ]
+        return JOBS.start(
+            label=f"Authorize Modal profile {alias}",
+            action=action,
+            command=command,
+            resource=f"modal-auth-{alias}",
+            metadata={"profile_alias": alias, "secrets_exposed": False},
+        )
+
     if action == "download_source":
         source_id = sanitize_source(str(payload["source_id"]))
         target_tokens = int(payload["target_tokens"])
@@ -992,6 +1245,52 @@ def start_action(action: str, payload: dict[str, Any]) -> dict[str, Any]:
             env=env,
             resource="network",
             metadata={"source_id": source_id, "target_tokens": target_tokens},
+        )
+
+    if action == "download_corpus_sources":
+        config = repo_path(str(payload["config"]))
+        allowed_root = (ROOT / "configs" / "corpus").resolve()
+        if allowed_root not in config.parents or config.suffix.lower() not in {".yaml", ".yml"}:
+            raise ValueError("Corpus download config must be a YAML file under configs/corpus")
+        source_ids = [sanitize_source(str(value)) for value in payload.get("source_ids") or []]
+        if not source_ids:
+            raise ValueError("Select at least one corpus source")
+        raw = yaml.safe_load(config.read_text(encoding="utf-8")) or {}
+        declared = {
+            str(source["id"])
+            for source in (raw.get("corpus") or {}).get("sources", [])
+            if source.get("id")
+        }
+        unknown = [value for value in source_ids if value not in declared]
+        if unknown:
+            raise ValueError(f"Unknown source ids for {rel(config)}: {', '.join(unknown)}")
+        command = [
+            py,
+            "scripts/materialize_corpus.py",
+            "--config",
+            rel(config),
+            "--max-retries",
+            str(settings()["download"]["materializer_retries"]),
+            "--retry-base-seconds",
+            "5",
+            "--retry-max-seconds",
+            "90",
+            "--checkpoint-seconds",
+            "300",
+            "--checkpoint-documents",
+            "100000",
+            "--max-rss-gib",
+            str(settings()["download"]["max_rss_gib"]),
+        ]
+        for source_id in source_ids:
+            command.extend(["--only", source_id])
+        return JOBS.start(
+            label=f"Materialize {len(source_ids)} pinned corpus sources",
+            action=action,
+            command=command,
+            env=env,
+            resource="network",
+            metadata={"config": rel(config), "source_ids": source_ids},
         )
 
     if action == "download_profile":
@@ -1093,7 +1392,34 @@ def start_action(action: str, payload: dict[str, Any]) -> dict[str, Any]:
         ]
         if payload.get("checkpoint"):
             command += ["--checkpoint", str(payload["checkpoint"])]
+        if payload.get("hub_repo"):
+            command += ["--hub-repo", str(payload["hub_repo"])]
         return JOBS.start(label="Training preflight", action=action, command=command, resource="gpu")
+
+    if action == "pretraining_campaign":
+        hub_repo = str(payload.get("hub_repo") or "").strip()
+        if not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", hub_repo):
+            raise ValueError("A private Hugging Face repository is required as namespace/name")
+        command = [
+            py,
+            "scripts/run_pretraining_campaign.py",
+            "--campaign",
+            "configs/pretraining/frontier_100b_k3.yaml",
+            "--hub-repo",
+            hub_repo,
+        ]
+        entity = str(payload.get("wandb_entity") or "").strip()
+        if entity:
+            command.extend(["--wandb-entity", sanitize_source(entity)])
+        if payload.get("verify_manifest_hashes", True):
+            command.append("--verify-manifest-hashes")
+        return JOBS.start(
+            label="Aster K3 frozen 100B campaign",
+            action=action,
+            command=command,
+            resource="gpu",
+            metadata={"campaign": "aster-k3-100b", "hub_repo": hub_repo},
+        )
 
     if action == "train_pretrain":
         command = [
@@ -1329,6 +1655,8 @@ def overview() -> dict[str, Any]:
     cap = load_json(STUDIO_ROOT / "capabilities.json", None)
     rows = dataset_status()
     clean = clean_corpora_status()
+    jobs = JOBS.list()
+    providers = provider_status(settings().get("providers"))
     return {
         "version": "1.1",
         "time": time.time(),
@@ -1336,12 +1664,13 @@ def overview() -> dict[str, Any]:
         "datasets": rows,
         "clean_corpora": clean,
         "raw_materialized_tokens": sum(int(item["tokens"]) for item in rows),
-        "jobs": JOBS.list(),
+        "jobs": jobs,
         "runs": runs_status(),
         "capabilities": cap,
         "execution_backends": execution_backend_status(),
         "settings": settings(),
-        "providers": provider_status(settings().get("providers")),
+        "providers": providers,
+        "training_campaign": training_campaign_status(providers=providers, jobs=jobs),
     }
 
 

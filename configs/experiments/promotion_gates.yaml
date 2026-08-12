@@ -9,7 +9,7 @@ gates:
   - {id: deterministic_reproducibility, required: true, status: not_run}
   - {id: equal_token_quality, required: true, status: not_run}
   - {id: equal_wall_clock, required: true, status: not_run}
-  - {id: modal_cost_to_quality, required: true, status: not_run}
+  - {id: modal_cost_to_quality, required: false, status: not_run, note: required by Modal dispatch, not local stage 1}
   - {id: long_context_retrieval, required: true, status: not_run}
   - {id: repeated_warm_throughput, required: true, status: not_run}
   - {id: gpu_utilization_root_cause, required: true, status: not_run}
@@ -21,13 +21,13 @@ gates:
   - {id: data_cursor_exact_resume, required: true, status: not_run}
   - {id: rng_state_resume, required: true, status: not_run}
   - {id: interrupted_laptop_recovery, required: true, status: not_run}
-  - {id: modal_preemption_recovery, required: true, status: not_run}
-  - {id: local_to_modal_resume, required: true, status: not_run}
-  - {id: modal_to_local_resume, required: true, status: not_run}
-  - {id: modal_workspace_cross_resume, required: true, status: not_run}
+  - {id: modal_preemption_recovery, required: false, status: not_run, note: required by Modal dispatch}
+  - {id: local_to_modal_resume, required: false, status: not_run, note: required by Modal dispatch}
+  - {id: modal_to_local_resume, required: false, status: not_run, note: required by Modal dispatch}
+  - {id: modal_workspace_cross_resume, required: false, status: not_run, note: required by Modal dispatch}
   - {id: huggingface_round_trip_hash, required: true, status: not_run}
   - {id: wandb_history_resume, required: true, status: not_run}
   - {id: laptop_inference, required: true, status: not_run}
-  - {id: modal_server_inference, required: true, status: not_run}
+  - {id: modal_server_inference, required: false, status: not_run, note: required by Modal dispatch}
   - {id: dense_baseline_regression, required: true, status: not_run}
   - {id: correctness_and_data_quality_clear, required: true, status: not_run}

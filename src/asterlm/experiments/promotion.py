@@ -16,7 +16,6 @@ REQUIRED_FINAL_RUN_GATES = (
     "deterministic_reproducibility",
     "equal_token_quality",
     "equal_wall_clock",
-    "modal_cost_to_quality",
     "long_context_retrieval",
     "repeated_warm_throughput",
     "gpu_utilization_root_cause",
@@ -26,17 +25,23 @@ REQUIRED_FINAL_RUN_GATES = (
     "data_cursor_exact_resume",
     "rng_state_resume",
     "interrupted_laptop_recovery",
+    "huggingface_round_trip_hash",
+    "wandb_history_resume",
+    "laptop_inference",
+    "dense_baseline_regression",
+    "correctness_and_data_quality_clear",
+)
+
+MODAL_PROMOTION_GATES = (
+    "modal_cost_to_quality",
     "modal_preemption_recovery",
     "local_to_modal_resume",
     "modal_to_local_resume",
     "modal_workspace_cross_resume",
-    "huggingface_round_trip_hash",
-    "wandb_history_resume",
-    "laptop_inference",
     "modal_server_inference",
-    "dense_baseline_regression",
-    "correctness_and_data_quality_clear",
 )
+
+OBSERVATIONAL_GATES = ("energy_and_power", *MODAL_PROMOTION_GATES)
 
 
 @dataclass(frozen=True, slots=True)
@@ -217,9 +222,9 @@ def evaluate_promotion_gates(path: str | Path) -> PromotionDecision:
         unexpected = sorted(actual_required - expected)
         raise ValueError(f"Final-run gate set changed; missing={missing}, unexpected={unexpected}")
     observational = {gate.gate_id for gate in gates if not gate.required}
-    if observational != {"energy_and_power"}:
+    if observational != set(OBSERVATIONAL_GATES):
         raise ValueError(
-            "energy_and_power must remain the sole observational, non-blocking telemetry gate"
+            "Observational/provider gate set changed unexpectedly"
         )
     blocking = tuple(gate.gate_id for gate in gates if gate.required and gate.status != "passed")
     return PromotionDecision(ready=not blocking, gates=tuple(gates), blocking_gate_ids=blocking)

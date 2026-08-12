@@ -215,6 +215,37 @@ function renderOverview() {
     ? `${fmtTokens(usableTotal)} clean-estimated`
     : `${fmtTokens(rawTotal)} raw materialized`;
   $("#last-refresh").textContent=`updated ${new Date().toLocaleTimeString()}`;
+  renderTrainingCampaign();
+}
+
+function renderTrainingCampaign(){
+  const c=S.overview?.training_campaign,panel=$("#campaign-live-panel");if(!c||!panel)return;
+  const live=c.live||{},active=c.active_stage||{};
+  $("#campaign-live-title").textContent=`${c.name} · ${fmtTokens(c.goal_tokens)} tokens`;
+  const state=$("#campaign-live-state");
+  const readiness=c.readiness||{};
+  state.textContent=live.tokens_seen!=null?"live":(readiness.ready?"launch ready":`${Number(readiness.blocking_count||0)} launch blockers`);
+  state.className=`status-pill ${live.tokens_seen!=null||readiness.ready?"good":"warning"}`;
+  const freshness=active.freshness_seconds==null?"—":ago(Date.now()/1000-active.freshness_seconds);
+  const metrics=[
+    [fmtTokens(c.completed_tokens),"campaign tokens"],
+    [`${(100*Number(c.progress_fraction||0)).toFixed(4)}%`,"campaign progress"],
+    [live.tokens_per_second_ema!=null?fmtTokens(live.tokens_per_second_ema):"—","smoothed tok/s"],
+    [fmtSecs(c.eta_seconds),"projected ETA"],
+    [active.context?`${Number(active.context/1024)}K`:"—","active context"],
+    [freshness,"metric freshness"],
+  ];
+  $("#campaign-live-metrics").innerHTML=metrics.map(([v,l])=>`<div><strong>${esc(v)}</strong><span>${esc(l)}</span></div>`).join("");
+  $("#campaign-stage-ledger").innerHTML=(c.stages||[]).map(stage=>`<div class="checkpoint-row"><code>${esc(stage.id)} · ${Number(stage.context/1024)}K</code><span>${fmtTokens(stage.completed_tokens)} / ${fmtTokens(stage.tokens)}</span><span>${(100*Number(stage.progress_fraction)).toFixed(3)}%</span><span>${esc(stage.label)}</span><span>${stage.run?.status?esc(stage.run.status):"not started"}</span></div>`).join("");
+  const readinessCount=$("#campaign-readiness-count");
+  if(readinessCount){
+    readinessCount.textContent=readiness.ready?"all required gates ready":`${Number(readiness.blocking_count||0)} blocking`;
+    readinessCount.className=`status-pill ${readiness.ready?"good":"warning"}`;
+  }
+  const stateLabels={ready:"ready",running:"in progress",blocked:"blocked",input_required:"launch input"};
+  $("#campaign-readiness-ledger").innerHTML=(readiness.items||[]).map(item=>`<div class="checkpoint-row"><code>${esc(item.label)}</code><span class="status-pill ${item.state==="ready"?"good":item.state==="running"?"active":"warning"}">${esc(stateLabels[item.state]||item.state)}</span><span>${esc(item.detail)}</span></div>`).join("");
+  const a=c.architecture||{},attn=a.attention||{},experts=a.experts||{};
+  $("#campaign-architecture").innerHTML=`<strong>${fmtTokens(a.total_parameters)} total · ${fmtTokens(a.active_parameters_per_token)} active/token · ${esc(a.layers)} layers</strong><br/>18 global recurrent KDA layers + 6 local-window MLA layers (${fmtTokens(attn.mla_window_tokens)} window). Stable LatentMoE: ${esc(experts.routed)} routed, top-${esc(experts.active_routed)}, ${esc(experts.shared)} shared. After pretraining this is a base completion model; chat/reasoning behavior comes from later post-training.`;
 }
 
 function renderProviders() {
@@ -240,8 +271,11 @@ function renderProviders() {
       ${row.source_url?`<a href="${esc(row.source_url)}" target="_blank" rel="noreferrer">Official terms / pricing ↗</a>`:""}
     </article>`;
   }).join("");
-  const aliases=rows.filter(row=>(row.profiles||[]).length);
-  $("#provider-profile-ledger").innerHTML=aliases.length?aliases.map(row=>`<div class="profile-row"><strong>${esc(row.label)}</strong><div>${row.profiles.map(profile=>`<span class="profile-chip">${esc(profile)}</span>`).join("")}</div></div>`).join(""):`<div class="empty-state">No provider profile aliases are visible to this WSL environment yet.</div>`;
+  const ledgers=rows.filter(row=>(row.profile_status||row.profiles||[]).length);
+  $("#provider-profile-ledger").innerHTML=ledgers.length?ledgers.map(row=>`<div class="profile-row"><strong>${esc(row.label)}</strong><div>${(row.profile_status||row.profiles.map(alias=>({alias,authenticated:true}))).map(profile=>`<span class="profile-chip ${profile.authenticated?"":"muted"}">${esc(profile.alias)} · ${profile.authenticated?"ready":"login required"}</span>`).join("")}</div></div>`).join(""):`<div class="empty-state">No provider profile aliases are configured yet.</div>`;
+  const modal=rows.find(row=>row.id==="modal");
+  const modalSelect=$("#modal-auth-profile");
+  if(modalSelect) modalSelect.innerHTML=(modal?.declared_profiles||[]).map(alias=>`<option value="${esc(alias)}">${esc(alias)}</option>`).join("");
   const preferred=S.overview?.settings?.providers?.preferred;
   if(preferred && ["modal","gcp","lightning","huggingface_jobs","skypilot"].includes(preferred)) $("#contract-provider").value=preferred;
 }
@@ -653,7 +687,7 @@ function renderMetricSnapshot(metrics) {
   $("#metric-snapshot").innerHTML=items.map(([l,v])=>`<div><strong>${esc(v)}</strong><span>${l}</span></div>`).join("");
 }
 function renderCheckpoints(rows) {
-  $("#checkpoint-table").innerHTML=rows.length?rows.map(x=>`<div class="checkpoint-row"><code>${esc(x.name)}</code><span>${fmtTokens(x.tokens_seen)}</span><span>${esc(x.reason||"—")}</span><span>${x.permanent?'<span class="status-pill good">KEEP</span>':'rolling'}</span><span>${fmtBytes(x.model_bytes)}</span></div>`).join(""):`<div class="empty-state">No checkpoints yet.</div>`;
+  $("#checkpoint-table").innerHTML=rows.length?rows.map(x=>`<div class="checkpoint-row"><code>${esc(x.name)}</code><span>${fmtTokens(x.tokens_seen)}</span><span>${esc(x.reason||"—")}</span><span>${x.permanent?'<span class="status-pill good">KEEP</span>':'rolling'}</span><span>${fmtBytes(x.local_bytes||x.model_bytes)}</span><span class="status-pill ${x.hub_verified?"good":"warning"}">${x.hub_verified?`Hub verified${x.hub_verified_files?` · ${esc(x.hub_verified_files)} files`:""}`:"local only"}</span></div>`).join(""):`<div class="empty-state">No checkpoints yet.</div>`;
 }
 
 async function loadDiagnostics() {
@@ -758,13 +792,23 @@ function bind() {
     $("#train-init").value=b.dataset.init||"";gotoPage("training");toast("Stage loaded into training desk.");
   });
 
-  $("#training-preflight").onclick=()=>startJob("preflight",{model:$("#train-model").value,train:$("#train-config").value,data:$("#train-data").value,json:"runs/studio-preflight.json"}).catch(showError);
+  $("#training-preflight").onclick=()=>startJob("preflight",{model:$("#train-model").value,train:$("#train-config").value,data:$("#train-data").value,hub_repo:$("#train-hub").value.trim(),json:"runs/studio-preflight.json"}).catch(showError);
   $("#start-pretrain").onclick=()=>{
     const payload={model:$("#train-model").value,train:$("#train-config").value,data:$("#train-data").value};
     if($("#train-resume").value.trim())payload.resume=$("#train-resume").value.trim();
     else if($("#train-init").value.trim())payload.init_checkpoint=$("#train-init").value.trim();
     if($("#train-hub").value.trim())payload.hub_repo=$("#train-hub").value.trim();
     startJob("train_pretrain",payload).catch(showError);
+  };
+  $("#start-pretraining-campaign").onclick=()=>{
+    const hub_repo=$("#campaign-hub-repo").value.trim();
+    if(!hub_repo)return showError(new Error("Enter the private Hugging Face repository first."));
+    if(!confirm("Start the frozen 100B pretraining campaign? Preflight runs first; after it passes this allocates the GPU and continues unattended across all three stages."))return;
+    startJob("pretraining_campaign",{
+      hub_repo,
+      wandb_entity:$("#campaign-wandb-entity").value.trim(),
+      verify_manifest_hashes:$("#campaign-verify-hashes").checked,
+    }).catch(showError);
   };
   $("#start-sft").onclick=()=>startJob("train_sft",{model:$("#train-model").value,train:$("#sft-train").value,data:$("#sft-data").value,checkpoint:$("#sft-checkpoint").value}).catch(showError);
   $("#score-dpo").onclick=()=>startJob("dpo_reference",{model:$("#train-model").value,checkpoint:$("#dpo-checkpoint").value,tokenizer:"artifacts/tokenizer.json",input:$("#dpo-raw").value,output:$("#dpo-data").value,max_length:2048}).catch(showError);
@@ -817,6 +861,11 @@ function bind() {
       toast("Compute dispatch policy saved.");
       await refreshOverview();
     }catch(e){showError(e);}
+  };
+  $("#modal-auth-start").onclick=()=>{
+    const alias=$("#modal-auth-profile").value;
+    if(!alias) return showError(new Error("No declared Modal profile is available."));
+    startJob("modal_auth",{profile_alias:alias}).catch(showError);
   };
   $("#create-provider-contract").onclick=async()=>{
     try{

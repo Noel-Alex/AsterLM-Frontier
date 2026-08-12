@@ -121,6 +121,7 @@ def main() -> None:
     parser.add_argument("--train", required=True)
     parser.add_argument("--data", default=None)
     parser.add_argument("--checkpoint", default=None)
+    parser.add_argument("--hub-repo", default=None)
     parser.add_argument("--check-first-record", action="store_true")
     parser.add_argument("--json", dest="json_path", default=None, help="Optional JSON report path")
     parser.add_argument("--allow-warnings", action="store_true", help="Return success when only warnings remain")
@@ -135,6 +136,8 @@ def main() -> None:
     try:
         model = AsterConfig.from_yaml(args.model)
         train = TrainConfig.from_yaml(args.train)
+        if args.hub_repo:
+            train.hub_repo_id = args.hub_repo
     except Exception as exc:
         print(f"ERROR config parse: {exc}", file=sys.stderr)
         raise SystemExit(2) from exc
@@ -169,6 +172,12 @@ def main() -> None:
                 )
             else:
                 add(checks, "OK", "tokenizer vocabulary", f"Tokenizer and model both use {model.vocab_size:,} tokens")
+    if train.run_class == "final":
+        manifest_path = Path(train.tokenizer_manifest_path or "")
+        if not train.tokenizer_manifest_path or not manifest_path.is_file():
+            add(checks, "ERROR", "tokenizer seal", "Final training requires a tokenizer manifest")
+        else:
+            add(checks, "OK", "tokenizer seal", f"Found {manifest_path}")
 
     data = None
     if args.data:

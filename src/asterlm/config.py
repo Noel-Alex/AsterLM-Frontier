@@ -388,6 +388,10 @@ class TrainConfig:
     muon_update_rms: float = 0.2
     # Kimi K3 orthogonalizes Q/K/V momentum independently per attention head.
     muon_per_head: bool = False
+    # Batch equal-shaped matrices through one orthogonalization call. The workspace
+    # bound prevents routed-expert mega-batches from consuming all spare VRAM.
+    muon_megabatch: bool = True
+    muon_megabatch_max_gib: float = 0.5
     max_grad_norm: float = 1.0
 
     # APOLLO/APOLLO-Mini: low-rank optimizer states for VRAM-constrained full pretraining.
@@ -413,6 +417,10 @@ class TrainConfig:
     # Retain one additional full-state checkpoint in exponentially older bands.
     # This keeps dense recent recovery points plus a logarithmic historical spine.
     checkpoint_pyramid_levels: int = 0
+    # Hard ceiling for complete local checkpoint directories. Research milestones
+    # may leave the local cache only after their full-state Hub copy is hash-verified.
+    # Set to null to disable the byte budget (not permitted for final runs).
+    checkpoint_local_budget_gib: float | None = None
     # Permanent, token-addressed checkpoints for scaling/grokking analysis. These
     # survive ordinary rolling-checkpoint retention and can be uploaded to the Hub.
     milestone_tokens: list[int] = field(default_factory=list)
@@ -424,6 +432,8 @@ class TrainConfig:
     prefetch_factor: int | None = None
     shuffle_buffer: int = 10_000
     tokenizer_path: str = "artifacts/tokenizer.json"
+    # Protected final runs bind the tokenizer to the exact clean data config.
+    tokenizer_manifest_path: str | None = None
     eos_token: str = "<|endoftext|>"
     pad_token: str = "<|pad|>"
     ignore_index: int = -100
@@ -509,6 +519,8 @@ class TrainConfig:
             raise ValueError("milestone_tokens must contain only positive integers")
         if self.keep_last_checkpoints < 0 or self.checkpoint_pyramid_levels < 0:
             raise ValueError("checkpoint retention values must be non-negative")
+        if self.checkpoint_local_budget_gib is not None and self.checkpoint_local_budget_gib <= 0:
+            raise ValueError("checkpoint_local_budget_gib must be positive when configured")
         if self.checkpoint_policy not in {"none", "final_only", "full"}:
             raise ValueError("checkpoint_policy must be none, final_only, or full")
         if self.milestone_tokens != sorted(set(self.milestone_tokens)):
@@ -525,6 +537,8 @@ class TrainConfig:
             raise ValueError("learning rates and max_grad_norm must be positive")
         if self.muon_update_rms <= 0 or self.muon_ns_steps <= 0:
             raise ValueError("Muon update RMS and Newton-Schulz steps must be positive")
+        if self.muon_megabatch_max_gib <= 0:
+            raise ValueError("Muon mega-batch workspace must be positive")
         if self.apollo_rank <= 0 or self.apollo_scale <= 0 or self.apollo_update_proj_gap <= 0:
             raise ValueError("APOLLO rank, scale, and update gap must be positive")
         if self.apollo_scale_type not in {"tensor", "channel"}:

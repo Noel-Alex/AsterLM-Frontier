@@ -1,10 +1,10 @@
 # AsterLM 100B-token research campaign
 
-This is the authoritative research plan for deliberately overtraining an AsterLM MoE candidate on up to **100B training tokens**. Model size and architecture remain promotion-gated; the historical 890M-logical / 482M-active label is not the final selection.
+This is the authoritative research plan for the frozen Aster K3 model over **100B training tokens**. The machine-readable source of truth is `configs/pretraining/frontier_100b_k3.yaml`: 269,677,164 total parameters, approximately 188,272,620 active per token, 18 KDA layers, 6 MLA layers, and Stable LatentMoE.
 
 ## Scientific position
 
-The active 16B frontier tranche remains the first major checkpoint. The eventual 50B and 100B runs are not claimed to be compute-optimal; they are controlled overtraining experiments intended to test:
+The frozen schedule is a 100B-token controlled overtraining experiment, not a claim that 100B is compute-optimal. Permanent milestones retain the earlier 18.4B and 50B analysis points without splitting the run into incompatible campaigns. The experiment tests:
 
 - whether validation loss and downstream quality continue improving after the classic compute-optimal point;
 - whether MoE expert pathways become more structured and transferable after training loss begins to flatten;
@@ -15,48 +15,57 @@ The campaign uses mostly unique, deduplicated data. It does **not** manufacture 
 
 The three `frontier_100b_*` train configs are mechanically `run_class: final`. Directly invoking the trainer cannot bypass the clean-corpus manifest or promotion gate: it will refuse to allocate the model until the corpus is sealed, every required gate has durable passed evidence, the Git checkout is clean, and full private Hugging Face plus W&B continuity is configured.
 
-## Progressive data tiers
+## Current raw-data ledger
 
-Every tier expands the same source directories and cursor checkpoints. No completed pilot/frontier shard is downloaded twice.
+Every tier expands the same source directories and resumable cursors. No completed pilot/frontier shard is downloaded twice. The launch source of truth is `configs/pretraining/frontier_100b_k3.yaml`.
 
-| Tier name | FineWeb-Edu | DCLM | Cosmopedia | FineMath | Active known total | Replacement needed |
-|---|---:|---:|---:|---:|---:|---:|
-| Frontier | 10.4B | 2.4B | 1.4B | 1.8B | 16B | 2.4B before using the historical 18.4B label |
-| Overtrain-50 | 28B | 7B | 3B | 5.5B | 43.5B | 6.5B |
-| Overtrain-100 | 54B | 16B | 6B | 11B | 87B | 13B |
+| Source | Materialized raw tokens | State |
+|---|---:|---|
+| FineWeb-Edu-Dedup | 54,000,000,001 | complete |
+| DCLM baseline | 16,000,001,919 | complete |
+| Cosmopedia-v2 | 6,000,000,695 | complete |
+| FineMath-4+ | 8,031,559,595 | source exhausted below its historical 11B request |
+| Nemotron-CC-Math-4+ | 3,000,000,834 | complete candidate pool |
+| Nemotron-CC-Code-v1 | 8B target | Hugging Face access awaiting NVIDIA review |
+| Nemotron synthetic code v1 | 5B target | Hugging Face access awaiting NVIDIA review |
 
-Stack-Edu is permanently retired from active acquisition and training. The final replacement math/code allocation is not assumed to be the historical 13%; it must be selected from audited candidates and validated by matched learning curves. Until then, `100b` is a compatibility tier name for the 87B active target, not a claim that 100B usable tokens are ready.
+The current materialized total is 87,031,563,044 raw tokens; the two pinned code sources bring the expected total to 100,031,563,044. Cleaning, cross-source deduplication and benchmark decontamination reduce usable unique tokens, so the trainer records exact effective epochs and intentional weighted replay after one full clean pass. Stack-Edu is permanently retired: its Software Heritage reconstruction path is not part of the launch plan.
 
-## One-command data acquisition
+## Remaining data acquisition and seal
 
-Full 100B campaign, including benchmarks, post-training and reasoning data:
-
-```bash
-source .venv/bin/activate
-python scripts/data_campaign.py \
-  --tier 100b \
-  --network-mode low
-```
-
-The command validates every remote source, resumes the existing 500M pilot, downloads only missing data, and verifies every finalized compressed shard.
-
-To download only pretraining data:
+After the Hugging Face account is approved for both pinned NVIDIA repositories, resume only the missing code sources:
 
 ```bash
-python scripts/data_campaign.py --tier 100b --pretraining-only --network-mode low
+python scripts/materialize_corpus.py \
+  --config configs/corpus/corpus_nemotron_candidates_16b.yaml \
+  --only nemotron_cc_code \
+  --only nemotron_synthetic_code
 ```
 
-To clean, deduplicate, decontaminate and create deterministic held-out validation shards after download:
+The materializer commits remote cursor and compressed-shard state, so retries continue from the last durable boundary. Do not rebuild the already complete 3B Nemotron math source.
+
+After both code sources complete, globally clean, cross-deduplicate, decontaminate and create deterministic held-out validation shards:
 
 ```bash
-python scripts/data_campaign.py \
-  --tier 100b \
-  --network-mode low \
-  --clean \
-  --prune-hf-cache-before-clean
+python scripts/prepare_frontier_data.py \
+  --raw-corpus data/corpus-frontier-16b \
+  --raw-code data/corpus-nemotron-candidates \
+  --code-id nemotron_frontier \
+  --benchmarks data/decontamination-benchmarks \
+  --output data/clean-frontier
 ```
 
-`--prune-hf-cache-before-clean` removes only reconstructable Hugging Face cache files after materialization. It does not remove AsterLM raw shards or cursor state. Use it because raw + cache + cleaned copies of a 100B-token corpus can otherwise exceed a 1TB drive.
+Then train and seal the final tokenizer. The command atomically publishes `tokenizer.json` and a corpus-bound `tokenizer_manifest.json` with hashes, build parameters and source-level fertility measurements:
+
+```bash
+python scripts/train_tokenizer.py \
+  --data data/clean-frontier/pretrain_data.yaml \
+  --documents 2000000 \
+  --fertility-documents 1000 \
+  --vocab-size 32768 \
+  --output artifacts/tokenizer.json \
+  --manifest artifacts/tokenizer_manifest.json
+```
 
 For a fast integrity check during a long campaign, add `--verify-last-only`. Before final training, run without it so every shard is decompressed and checksum-verified.
 
@@ -74,18 +83,30 @@ The 100B-token curriculum is:
 
 This puts most compute into efficient base pretraining while still genuinely training long context.
 
+The authoritative unattended launcher runs preflight, exactly resumes an interrupted stage, initializes each longer-context continuation from the prior completed checkpoint, forwards stop signals to a safe checkpoint boundary, and refuses to advance without a complete durable final state:
+
+```bash
+python scripts/run_pretraining_campaign.py \
+  --campaign configs/pretraining/frontier_100b_k3.yaml \
+  --hub-repo YOUR_HF_USERNAME/AsterLM-Frontier-100B \
+  --verify-manifest-hashes
+```
+
+The same control is available in Aster Studio at `http://localhost:8765`. The launch-readiness ledger remains fail-closed until data, tokenizer, evidence, credentials, private Hub repository and pinned Git state are ready.
+
 ### Stage 1
 
 ```bash
 python scripts/training_preflight.py \
-  --model configs/model/aster_moe_frontier_893m_a484m.yaml \
+  --model configs/model/aster_k3_latentmoe_270m_a188m.yaml \
   --train configs/train/frontier_100b_stage1_8k.yaml \
   --data data/clean-frontier/pretrain_data.yaml \
   --check-first-record \
+  --hub-repo YOUR_HF_USERNAME/AsterLM-Frontier-100B \
   --json runs/preflight-100b-stage1.json
 
 python scripts/train_pretrain.py \
-  --model configs/model/aster_moe_frontier_893m_a484m.yaml \
+  --model configs/model/aster_k3_latentmoe_270m_a188m.yaml \
   --train configs/train/frontier_100b_stage1_8k.yaml \
   --data data/clean-frontier/pretrain_data.yaml \
   --hub-repo YOUR_HF_USERNAME/AsterLM-Frontier-100B
@@ -103,7 +124,7 @@ than prematurely cooled models.
 
 ```bash
 python scripts/train_pretrain.py \
-  --model configs/model/aster_moe_frontier_893m_a484m.yaml \
+  --model configs/model/aster_k3_latentmoe_270m_a188m_16k.yaml \
   --train configs/train/frontier_100b_stage2_16k.yaml \
   --data data/clean-frontier/pretrain_data.yaml \
   --init-checkpoint runs/aster-frontier-100b-stage1-8k \
@@ -114,7 +135,7 @@ python scripts/train_pretrain.py \
 
 ```bash
 python scripts/train_pretrain.py \
-  --model configs/model/aster_moe_frontier_893m_a484m.yaml \
+  --model configs/model/aster_k3_latentmoe_270m_a188m_32k.yaml \
   --train configs/train/frontier_100b_stage3_32k.yaml \
   --data data/clean-frontier/pretrain_data.yaml \
   --init-checkpoint runs/aster-frontier-100b-stage2-16k \
@@ -152,12 +173,11 @@ python scripts/experiment_status.py runs/aster-frontier-100b-stage1-8k
 
 ## Checkpoint and Hugging Face policy
 
-Local periodic checkpoints retain model, optimizer, RNG, step and token state. Each
+Local periodic checkpoints retain model, optimizer, RNG, scheduler, scaler, data cursor, step and token state. Each
 stage keeps the six newest recovery points plus up to eight exponentially widening
 historical bands. This is dense near the live training head and increasingly sparse
 farther back, so interruption loss stays bounded without retaining every periodic
-checkpoint. Permanent token milestones and final checkpoints are never deleted
-automatically. The final-run contract requires `checkpoint_policy: full`; the
+checkpoint. An unverified permanent milestone is never deleted automatically; a hash-verified Hub milestone may leave the local cache when the 150 GiB ceiling requires it. The final-run contract requires `checkpoint_policy: full`; the
 metrics-only policy used by disposable architecture tests cannot be used for a final
 run.
 
@@ -166,9 +186,9 @@ When `--hub-repo` is supplied, the trainer creates/uses a **private model reposi
 - each permanent token milestone;
 - final checkpoints;
 - optimizer/RNG state by default, enabling disaster recovery on another machine;
-- run manifest, JSONL metrics, latest pointer and Hub sync state.
+- run manifest, analysis schema, experiment identity, JSONL metrics, TensorBoard/diagnostic artifacts, latest pointer and Hub verification state.
 
-Uploads are synchronous at milestones so a successful milestone means both local serialization and remote backup completed. Hugging Face Xet uploads are resumable and deduplicate already-uploaded chunks. A failed upload is logged but does not kill training unless `hub_fail_on_error: true`.
+Uploads are synchronous at milestones so a successful final-run milestone means both local serialization and a hash-verified remote backup completed. Hugging Face Xet uploads are resumable and deduplicate already-uploaded chunks. Final configs require `hub_fail_on_error: true`; an unverified milestone can never be declared durable or evicted to satisfy the 150 GiB local cache ceiling.
 
 Retry a failed/manual sync:
 

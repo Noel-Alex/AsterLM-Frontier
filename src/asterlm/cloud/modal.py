@@ -117,6 +117,19 @@ def _global_blockers(profile: ModalProfile, contract: dict[str, Any]) -> list[st
         blockers.append("modal_dataset_manifest_required_before_cache_or_training")
     elif not contract.get("dataset_manifest_decision_grade"):
         blockers.append("modal_decision_grade_dataset_manifest_required")
+    from asterlm.experiments import MODAL_PROMOTION_GATES, evaluate_promotion_gates
+
+    gates_path = (
+        Path(__file__).resolve().parents[3]
+        / "configs"
+        / "experiments"
+        / "promotion_gates.yaml"
+    )
+    decision = evaluate_promotion_gates(gates_path)
+    by_id = {gate.gate_id: gate for gate in decision.gates}
+    for gate_id in MODAL_PROMOTION_GATES:
+        if by_id[gate_id].status != "passed":
+            blockers.append(f"modal_promotion_gate_{gate_id}_{by_id[gate_id].status}")
     return list(dict.fromkeys(blockers))
 
 

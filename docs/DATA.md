@@ -6,17 +6,9 @@ At sub-2B scale, data quality, repetition, curriculum and post-training often ma
 
 ## Full pretraining corpus
 
-Active configuration: `configs/corpus/corpus_frontier_16b.yaml`. Stack-Edu is retired and is not scheduled by any active download profile.
+The frozen launch ledger is `configs/pretraining/frontier_100b_k3.yaml`. The already materialized prose/math pool contains 87,031,563,044 raw tokens, including 3,000,000,834 Nemotron math tokens. Two revision-pinned NVIDIA code sources target another 13B tokens and are currently blocked only by provider-side gated access. The expected raw total is 100,031,563,044 tokens before global cleaning.
 
-| Source | Target tokens | Weight before adaptive rebalancing | Role |
-|---|---:|---:|---|
-| FineWeb-Edu-Dedup | 10.4B | 56.5% | broad educational web base |
-| DCLM baseline | 2.4B | 13.0% | diverse high-quality web distribution |
-| Cosmopedia-v2 | 1.4B | 7.6% | structured synthetic explanations/textbook prose |
-| FineMath-4+ | 1.8B | 9.8% | mathematical notation and reasoning |
-| Replacement code candidate | not promoted | pending | code generation, syntax, FIM and software knowledge |
-
-The active historical frontier tranche targets 16B tokens before cleaning. Larger 43.5B and 87B prose/math tranches exist, but none is called a complete 50B/100B mixture until a replacement math/code candidate passes the promotion gate. Cleaning and deduplication will reduce usable tokens. The trainer reports effective epochs/repetition after cleaning.
+Stack-Edu is retired and is not scheduled by any active download profile. Cleaning, cross-source deduplication and decontamination reduce the unique total; any replay needed to execute the 100B training-token budget is intentional, deterministic and reported per source rather than hidden behind a tier name.
 
 ## Retired Stack-Edu source
 
@@ -144,11 +136,13 @@ Train it on a balanced sample from every major domain, not only web prose:
 python scripts/train_tokenizer.py \
   --data data/clean-frontier/pretrain_data.yaml \
   --documents 2000000 \
+  --fertility-documents 1000 \
   --vocab-size 32768 \
-  --output artifacts/tokenizer.json
+  --output artifacts/tokenizer.json \
+  --manifest artifacts/tokenizer_manifest.json
 ```
 
-Before final training, report token fertility separately for English prose, math, Python, C++, JavaScript, SQL and multilingual SFT data.
+The final-run contract verifies the tokenizer SHA-256, exact clean-data configuration hash and source-level fertility records before allocating the model. A tokenizer copied from an earlier corpus cannot silently pass preflight.
 
 ## Packing
 
@@ -199,12 +193,15 @@ Do not select the final mix using one aggregate loss alone.
 
 The `reasoning` download profile adds three independently resumable sources under `data/reasoning-frontier`: Mixture-of-Thoughts for cold-start traces, DAPO-Math for exact-answer RL prompts, and the decontaminated tested Python set for executable-code RL. The `all` profile includes these stages without invalidating existing corpus checkpoints. Full preparation and training instructions are in [REASONING_MODEL.md](REASONING_MODEL.md).
 
-## Progressive 50B and 100B overtraining tiers
+## Frozen 100B curriculum
 
-The repository now supports progressive `overtrain50` and `overtrain100` profiles that expand the same pilot/frontier checkpoints. Use the single-command campaign wrapper:
+The 18.4B and 50B analysis points are permanent milestones inside the authoritative 92B-at-8K, 6B-at-16K and 2B-at-32K campaign. Use the unattended launcher after the Studio readiness ledger is clear:
 
 ```bash
-python scripts/data_campaign.py --tier 100b --network-mode low
+python scripts/run_pretraining_campaign.py \
+  --campaign configs/pretraining/frontier_100b_k3.yaml \
+  --hub-repo YOUR_HF_USERNAME/AsterLM-Frontier-100B \
+  --verify-manifest-hashes
 ```
 
 The complete rationale, source totals, disk policy, cleaning path and training gates are documented in [100B_EXPERIMENT.md](100B_EXPERIMENT.md).

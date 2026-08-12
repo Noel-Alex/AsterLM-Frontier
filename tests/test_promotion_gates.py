@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from asterlm.experiments import REQUIRED_FINAL_RUN_GATES, evaluate_promotion_gates
+from asterlm.experiments import MODAL_PROMOTION_GATES, REQUIRED_FINAL_RUN_GATES, evaluate_promotion_gates
 
 ROOT = Path(__file__).resolve().parents[1]
 GATES = ROOT / "configs/experiments/promotion_gates.yaml"
@@ -48,6 +48,10 @@ def test_project_final_run_is_locked_by_26_gates_with_energy_observational_only(
     assert decision.blocking_gate_ids == REQUIRED_FINAL_RUN_GATES
     energy = next(gate for gate in decision.gates if gate.gate_id == "energy_and_power")
     assert not energy.required
+    assert all(
+        not next(gate for gate in decision.gates if gate.gate_id == gate_id).required
+        for gate_id in MODAL_PROMOTION_GATES
+    )
 
 
 def test_passed_gate_requires_evidence(tmp_path):

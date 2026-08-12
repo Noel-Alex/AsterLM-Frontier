@@ -67,6 +67,9 @@ class SystemSampler:
     min_interval: float = 5.0
     _last_time: float = 0.0
     _last: dict[str, float] | None = None
+    energy_joules: float = 0.0
+    _last_energy_time: float | None = None
+    _last_power_w: float | None = None
 
     def sample(self, force: bool = False) -> dict[str, float]:
         now = time.monotonic()
@@ -120,6 +123,14 @@ class SystemSampler:
                     # `nvidia-smi` may emit N/A for unsupported counters. Other
                     # process and CUDA metrics remain valid for this sample.
                     pass
+            power = out.get("gpu_power_w")
+            if self._last_energy_time is not None and self._last_power_w is not None:
+                self.energy_joules += self._last_power_w * max(0.0, now - self._last_energy_time)
+            self._last_energy_time = now
+            if power is not None:
+                self._last_power_w = power
+            out["gpu_energy_joules_total"] = self.energy_joules
+            out["gpu_energy_kwh_total"] = self.energy_joules / 3_600_000.0
         self._last_time = now
         self._last = out
         return dict(out)
