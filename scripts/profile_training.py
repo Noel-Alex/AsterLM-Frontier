@@ -276,6 +276,11 @@ def main() -> None:
     )
     parser.add_argument("--precision", choices=["amp", "transformer_engine_fp8"], default=None)
     parser.add_argument(
+        "--muon-per-head",
+        action="store_true",
+        help="Use the selected memory-bounded per-head Muon orthogonalization path.",
+    )
+    parser.add_argument(
         "--moe-implementation",
         choices=["reference", "grouped", "cutlass", "torch_grouped"],
         default=None,
@@ -337,6 +342,10 @@ def main() -> None:
         train.device = args.device
     if args.optimizer is not None:
         train.optimizer = args.optimizer
+    if args.muon_per_head:
+        if train.optimizer != "muon_adamw":
+            raise ValueError("--muon-per-head requires --optimizer muon_adamw")
+        train.muon_per_head = True
     if args.precision is not None:
         train.precision_backend = args.precision
         config.linear_backend = "transformer_engine" if args.precision == "transformer_engine_fp8" else "torch"
