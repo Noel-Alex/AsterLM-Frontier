@@ -35,3 +35,9 @@ def test_recovery_cleanup_is_bounded_to_promotion_canary(tmp_path, monkeypatch) 
         assert "Refusing cleanup" in str(exc)
     else:
         raise AssertionError("cleanup escaped the promotion-canary root")
+
+
+def test_recovery_auditor_accepts_canonical_and_legacy_data_envelopes() -> None:
+    module = _module()
+    assert module.data_state_schema_version({"schema_version": 1}) == 1
+    assert module.data_state_schema_version({"version": 1}) == 1

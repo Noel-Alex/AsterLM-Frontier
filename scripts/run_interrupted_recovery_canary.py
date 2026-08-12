@@ -63,6 +63,12 @@ def metric_rows(path: Path) -> list[dict[str, Any]]:
     return rows
 
 
+def data_state_schema_version(state: dict[str, Any]) -> int:
+    """Read the canonical envelope while retaining legacy Studio compatibility."""
+
+    return int(state.get("schema_version", state.get("version", -1)))
+
+
 def wait_for_step(metrics: Path, process: subprocess.Popen[Any], step: int, timeout: float) -> None:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
@@ -96,7 +102,7 @@ def checkpoint_audit(path: Path) -> dict[str, Any]:
             "rng_keys": sorted(trainer_state.get("rng", {})),
         },
         "data_state": {
-            "version": int(data_state["version"]),
+            "schema_version": data_state_schema_version(data_state),
             "step": int(data_state["step"]),
             "tokens_seen": int(data_state["tokens_seen"]),
             "train_cursor_present": bool(data_state.get("train")),
