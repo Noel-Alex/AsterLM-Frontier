@@ -94,6 +94,11 @@ def main() -> None:
     )
     parser.add_argument("--target-update-tokens", type=int, default=16_384)
     parser.add_argument("--no-muon-per-head", action="store_true")
+    parser.add_argument(
+        "--precision",
+        choices=("amp", "transformer_engine_fp8"),
+        default="amp",
+    )
     parser.add_argument("--steps", type=int, default=3)
     parser.add_argument("--warmup", type=int, default=2)
     parser.add_argument("--trial-timeout", type=float, default=1800.0)
@@ -147,6 +152,7 @@ def main() -> None:
             "warmup": args.warmup,
             "moe_implementation": args.moe_implementation,
             "muon_per_head": not args.no_muon_per_head,
+            "precision": args.precision,
             "trial_timeout_seconds": args.trial_timeout,
         },
         "planned_trials": [asdict(trial) | {"trial_id": trial.trial_id} for trial in trials],
@@ -182,7 +188,7 @@ def main() -> None:
                 "--optimizer",
                 trial.optimizer,
                 "--precision",
-                "amp",
+                args.precision,
                 "--moe-implementation",
                 trial.moe_implementation,
             ]
