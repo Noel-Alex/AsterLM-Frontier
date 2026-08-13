@@ -1,0 +1,154 @@
+{
+  "schema_version": 1,
+  "status": "passed",
+  "created_at_utc": "2026-08-13T15:52:21.954526+00:00",
+  "git_commit": "f2505d83e0e51e6eff4dabbe6c2fae9490dc9fc4",
+  "model": {
+    "path": "configs/model/aster_k3_latentmoe_1p45b_a568m.yaml",
+    "sha256": "859c4843998d97ce450ccd9fc7047cc23f00671881de011df32bb44608f6df5a"
+  },
+  "hardware": {
+    "python": "3.12.3",
+    "platform": "Linux-6.18.33.2-microsoft-standard-WSL2-x86_64-with-glibc2.39",
+    "torch": "2.13.0+cu130",
+    "cuda_runtime": "13.0",
+    "hostname": "NoelAlex",
+    "cpu_count": 32,
+    "git_commit": "f2505d83e0e51e6eff4dabbe6c2fae9490dc9fc4",
+    "git_dirty": false,
+    "nvidia_smi": "NVIDIA GeForce RTX 4080 Laptop GPU, 610.74, P0, [N/A], 12282 MiB",
+    "execution_backend": {
+      "backend_id": "cuda-ada-sm89",
+      "device_type": "cuda",
+      "compute_capabilities": [
+        [
+          8,
+          9
+        ]
+      ],
+      "hardware_family": "Ada consumer/laptop",
+      "precision_candidates": [
+        "bf16",
+        "fp8"
+      ],
+      "attention_candidates": [
+        "torch_sdpa",
+        "fla_triton",
+        "custom_triton"
+      ],
+      "moe_candidates": [
+        "torch_reference",
+        "transformer_engine_grouped",
+        "cutlass_grouped",
+        "torch_grouped",
+        "liger_experts",
+        "custom_triton"
+      ],
+      "notes": "Primary laptop backend; every optional path requires sustained full-model evidence."
+    },
+    "pytorch_allocator": {
+      "PYTORCH_ALLOC_CONF": "expandable_segments:True",
+      "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True"
+    },
+    "host_ram_gib": 19.527061462402344,
+    "swap_gib": 4.0,
+    "gpu": {
+      "name": "NVIDIA GeForce RTX 4080 Laptop GPU",
+      "total_memory_gib": 11.99365234375,
+      "compute_capability": [
+        8,
+        9
+      ],
+      "multiprocessors": 58,
+      "bf16_supported": true
+    }
+  },
+  "triton_cache_repairs": [],
+  "architecture": {
+    "trainable_parameters": 1448120880,
+    "effective_parameters": 1448120880,
+    "layers": 32,
+    "kda_layers": 24,
+    "kda_num_heads": 10,
+    "kda_head_dim": 128,
+    "kda_projection_width": 1280,
+    "gdn2_layers": 0,
+    "latent_attention_layers": 8,
+    "mtp_depth": 0,
+    "mtp_architecture": "low_rank",
+    "mtp_block_kind": "latent",
+    "fla_enabled": true,
+    "max_sequence_length": 262144,
+    "ffn_type": "latent_moe",
+    "moe_layers": 31,
+    "moe_implementation": "cutlass",
+    "active_parameters_estimate": 568155376,
+    "attention_window": 262144,
+    "latent_cache_width": 128,
+    "n_layers": 32,
+    "packed_grouped_expert_storage": {
+      "moe_backend_storage_pack_count": 31.0,
+      "moe_backend_storage_pack_gib": 1.8731689453125
+    }
+  },
+  "runtime": {
+    "dtype": "bfloat16",
+    "prompt_tokens": 128,
+    "decoded_tokens": 4,
+    "executed_block_count": 32,
+    "executed_block_indices": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8,
+      9,
+      10,
+      11,
+      12,
+      13,
+      14,
+      15,
+      16,
+      17,
+      18,
+      19,
+      20,
+      21,
+      22,
+      23,
+      24,
+      25,
+      26,
+      27,
+      28,
+      29,
+      30,
+      31
+    ],
+    "finite_logits": true,
+    "setup_seconds": 16.30039449500009,
+    "prefill_seconds": 5.65931621899972,
+    "prefill_tokens_per_second": 22.61757340405762,
+    "decode_seconds": 4.332043856000382,
+    "decode_tokens_per_second": 0.923351686400759,
+    "decode_latency_median_ms": 101.73321899992516,
+    "cache_bytes": 270336,
+    "cache_mib": 0.2578125,
+    "peak_allocated_gib": 2.9792184829711914,
+    "peak_reserved_gib": 3.048828125
+  },
+  "claims": {
+    "certifies": "selected architecture cached BF16 prefill/decode runtime on the laptop",
+    "does_not_certify": [
+      "language quality from random initialization",
+      "long-context retrieval quality",
+      "256K or 1M latency",
+      "post-training behavior"
+    ]
+  }
+}

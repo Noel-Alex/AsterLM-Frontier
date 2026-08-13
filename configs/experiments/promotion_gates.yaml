@@ -145,7 +145,10 @@ gates:
     sha256: b2e6fd5ee9ac8939df8a1fc07d130f0f8c405d73e30afbcd872ce6c881b8f000
 - id: laptop_inference
   required: true
-  status: not_run
+  status: passed
+  evidence:
+  - path: docs/promotion-evidence/f2505d83e0e5/laptop-inference/laptop_inference-proof.json
+    sha256: 84cbd89c38e2cfe6d59371e83c59dff3eedf20b753d2deb1b19bd90a9c2e7d3d
 - id: modal_server_inference
   required: false
   status: not_run

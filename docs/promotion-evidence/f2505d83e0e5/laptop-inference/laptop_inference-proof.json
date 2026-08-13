@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "gate_id": "laptop_inference",
+  "status": "passed",
+  "created_at_utc": "2026-08-13T15:52:21.993911+00:00",
+  "evaluator": {
+    "name": "asterlm-laptop-inference-canary",
+    "version": "1",
+    "git_commit": "f2505d83e0e51e6eff4dabbe6c2fae9490dc9fc4"
+  },
+  "experiment_ids": [
+    "laptop-inference-f2505d83e0e5"
+  ],
+  "artifacts": [
+    {
+      "path": "docs/promotion-evidence/f2505d83e0e5/laptop-inference/laptop-inference-result.json",
+      "sha256": "9b0fdc1d55f656a0258e302b96643db6bb732b3b40c1ee2b0c198104463bdc54"
+    }
+  ]
+}
