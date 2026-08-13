@@ -10,6 +10,7 @@ import statistics
 import subprocess
 import threading
 import time
+import traceback
 from contextlib import contextmanager, nullcontext
 from pathlib import Path
 from typing import Any
@@ -20,8 +21,9 @@ from asterlm import AsterConfig, AsterLM, TrainConfig
 from asterlm.kernels.situ_glu import configured_situ_glu_backend
 from asterlm.optim import build_optimizer
 from asterlm.source_provenance import assert_expected_checkout_source
+from asterlm.training.parameter_policy import apply_parameter_training_policy
 from asterlm.training.precision import PrecisionManager
-from asterlm.training.telemetry import static_system_manifest
+from asterlm.training.telemetry import assert_required_gradient_coverage, static_system_manifest
 
 
 def active_compute_processes(device_index: int) -> list[dict[str, Any]]:
@@ -296,9 +298,20 @@ def main() -> None:
     parser.add_argument("--sequence", type=int, default=None)
     parser.add_argument("--batch", type=int, default=None)
     parser.add_argument("--accum", type=int, default=None)
+    parser.add_argument(
+        "--moe-num-experts",
+        type=int,
+        default=None,
+        help="Capacity-frontier override; changes total experts without widening the active path.",
+    )
     parser.add_argument("--steps", type=int, default=5)
     parser.add_argument("--warmup", type=int, default=1)
     parser.add_argument("--device", default=None)
+    parser.add_argument(
+        "--parameter-training-policy",
+        choices=["all", "context_extension"],
+        default=None,
+    )
     parser.add_argument(
         "--optimizer",
         choices=[
@@ -318,6 +331,12 @@ def main() -> None:
         "--muon-per-head",
         action="store_true",
         help="Use the selected memory-bounded per-head Muon orthogonalization path.",
+    )
+    parser.add_argument(
+        "--muon-megabatch-max-gib",
+        type=float,
+        default=None,
+        help="Bound batched Newton-Schulz workspace without changing Muon updates.",
     )
     parser.add_argument(
         "--moe-implementation",
@@ -385,14 +404,24 @@ def main() -> None:
         train.micro_batch_size = args.batch
     if args.accum is not None:
         train.gradient_accumulation_steps = args.accum
+    if args.moe_num_experts is not None:
+        if args.moe_num_experts < config.moe_top_k:
+            raise ValueError("--moe-num-experts must be at least moe_top_k")
+        config.moe_num_experts = args.moe_num_experts
     if args.device is not None:
         train.device = args.device
+    if args.parameter_training_policy is not None:
+        train.parameter_training_policy = args.parameter_training_policy
     if args.optimizer is not None:
         train.optimizer = args.optimizer
     if args.muon_per_head:
         if train.optimizer not in {"muon_adamw", "muon_adamw8bit"}:
             raise ValueError("--muon-per-head requires a Muon hybrid optimizer")
         train.muon_per_head = True
+    if args.muon_megabatch_max_gib is not None:
+        if args.muon_megabatch_max_gib <= 0:
+            raise ValueError("--muon-megabatch-max-gib must be positive")
+        train.muon_megabatch_max_gib = args.muon_megabatch_max_gib
     if args.precision is not None:
         train.precision_backend = args.precision
         config.linear_backend = "transformer_engine" if args.precision == "transformer_engine_fp8" else "torch"
@@ -468,6 +497,9 @@ def main() -> None:
                     parameter.data = parameter.data.float()
         else:
             model = model.to(device)
+        result["parameter_training_policy"] = apply_parameter_training_policy(
+            model, train.parameter_training_policy
+        )
         result["grouped_expert_storage"] = model.pack_grouped_expert_storage()
         model.train()
         precision = PrecisionManager(train, device, dtype)
@@ -573,6 +605,8 @@ def main() -> None:
                 ):
                     loss.backward()
                 loss_value.add_(output.loss.detach().float())
+            if iteration == 0:
+                result["gradient_coverage"] = assert_required_gradient_coverage(model)
             with measure_phase(
                 "clip_and_finite_gate",
                 device=device,
@@ -721,12 +755,14 @@ def main() -> None:
     except torch.cuda.OutOfMemoryError as exc:
         result["status"] = "oom"
         result["error"] = str(exc)
+        result["traceback"] = traceback.format_exc()
         if "device" in locals():
             result["memory_at_failure"] = cuda_snapshot(device)
         print(f"CUDA OOM: {exc}")
     except Exception as exc:  # noqa: BLE001 - profiler must persist arbitrary trial failures
         result["status"] = "error"
         result["error"] = f"{type(exc).__name__}: {exc}"
+        result["traceback"] = traceback.format_exc()
         print(result["error"])
     finally:
         if "trace_profiler" in locals() and trace_profiler is not None and trace_running:

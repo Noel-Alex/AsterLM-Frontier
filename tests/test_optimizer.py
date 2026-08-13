@@ -127,6 +127,42 @@ def test_megabatched_muon_matches_parameterwise_state_and_updates():
     assert diagnostics["muon_megabatch_max_matrices"] > 1
 
 
+def test_streaming_muon_releases_gradients_without_changing_updates():
+    torch.manual_seed(18)
+    reference = [torch.nn.Parameter(torch.randn(8, 16)) for _ in range(3)]
+    streaming = [torch.nn.Parameter(parameter.detach().clone()) for parameter in reference]
+    gradients = [torch.randn_like(parameter) for parameter in reference]
+    for parameter, gradient in zip(reference, gradients, strict=True):
+        parameter.grad = gradient.clone()
+    for parameter, gradient in zip(streaming, gradients, strict=True):
+        parameter.grad = gradient.clone()
+    common = {
+        "lr": 0.01,
+        "momentum": 0.95,
+        "megabatch": True,
+        "megabatch_max_gib": 0.00001,
+        "state_dtype": "int8_blockwise",
+    }
+    ordinary = Muon(reference, **common)
+    memory_streaming = Muon(
+        streaming,
+        release_gradients_after_step=True,
+        **common,
+    )
+    ordinary.step()
+    memory_streaming.step()
+    for expected, actual in zip(reference, streaming, strict=True):
+        torch.testing.assert_close(actual, expected, rtol=0, atol=0)
+        torch.testing.assert_close(
+            memory_streaming.state[actual]["momentum_q"],
+            ordinary.state[expected]["momentum_q"],
+            rtol=0,
+            atol=0,
+        )
+        assert actual.grad is None
+        assert expected.grad is not None
+
+
 def test_megabatched_muon_preserves_per_head_partition_math():
     torch.manual_seed(19)
     reference = torch.nn.Parameter(torch.randn(16, 8))

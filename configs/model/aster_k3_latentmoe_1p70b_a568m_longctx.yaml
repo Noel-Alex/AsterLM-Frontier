@@ -1,5 +1,6 @@
 model:
-  # Meta-device count on source commit bad468f: 1.448B total / 568.2M active.
+  # Intermediate scale candidate: add inactive routed-expert capacity without
+  # widening the active path that drove the 1.95B model over the laptop cliff.
   vocab_size: 32768
   d_model: 1280
   n_layers: 32
@@ -12,7 +13,7 @@ model:
   ffn_type: latent_moe
   moe_first_dense_layers: 1
   moe_every: 1
-  moe_num_experts: 16
+  moe_num_experts: 20
   moe_top_k: 2
   moe_shared_experts: 1
   moe_expert_hidden: 960
@@ -41,7 +42,11 @@ model:
   latent_rms_norm: true
   latent_rank: 96
   rope_dim: 32
-  attention_window: 262144
+  attention_window: 8192
+  attention_train_backend: flex_window
+  attention_train_window: 8192
+  attention_train_global_stride: 0
+  attention_flex_block_size: 128
   sink_tokens: 64
   attention_gate: true
   qk_stat_tokens: 24
@@ -61,8 +66,5 @@ model:
   qk_clip_tau: 100.0
   init_std: 0.02
   gradient_checkpointing: true
-  # Two-block GPU recomputation is the measured all-device speed/fit policy at
-  # 8K: segment-4 nearly fills the 12 GiB GPU and is much slower. No parameter,
-  # optimizer, gradient, or activation state is offloaded to CPU/NVMe.
   checkpoint_segment_size: 2
   checkpoint_sublayers_min_tokens: 8192

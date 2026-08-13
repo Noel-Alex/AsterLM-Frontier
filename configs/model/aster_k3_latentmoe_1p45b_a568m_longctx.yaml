@@ -1,5 +1,8 @@
 model:
-  # Meta-device count on source commit bad468f: 1.448B total / 568.2M active.
+  # Long-context form of the source-pinned 1.448B / 568.2M-active finalist.
+  # KDA carries global recurrent state; MLA is an 8K local anchor in both
+  # training and cached inference. This prevents the eight MLA layers from
+  # silently becoming full quadratic attention at 16K/32K.
   vocab_size: 32768
   d_model: 1280
   n_layers: 32
@@ -41,7 +44,11 @@ model:
   latent_rms_norm: true
   latent_rank: 96
   rope_dim: 32
-  attention_window: 262144
+  attention_window: 8192
+  attention_train_backend: flex_window
+  attention_train_window: 8192
+  attention_train_global_stride: 0
+  attention_flex_block_size: 128
   sink_tokens: 64
   attention_gate: true
   qk_stat_tokens: 24
@@ -61,8 +68,5 @@ model:
   qk_clip_tau: 100.0
   init_std: 0.02
   gradient_checkpointing: true
-  # Two-block GPU recomputation is the measured all-device speed/fit policy at
-  # 8K: segment-4 nearly fills the 12 GiB GPU and is much slower. No parameter,
-  # optimizer, gradient, or activation state is offloaded to CPU/NVMe.
   checkpoint_segment_size: 2
   checkpoint_sublayers_min_tokens: 8192

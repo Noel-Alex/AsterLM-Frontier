@@ -8,9 +8,31 @@ from torch.nn import functional as F
 
 from asterlm.cache import LatentLayerCache
 from asterlm.config import AsterConfig
+
 from .linear import build_linear, mark_residual
 from .norm import build_norm
 from .rotary import RotaryEmbedding, apply_rotary
+
+_COMPILED_FLEX_ATTENTION = None
+_SHARED_FLEX_BLOCK_MASKS: dict[tuple[int, int, int, int, int, str], object] = {}
+
+
+def _compiled_flex_attention():
+    """Return the fused FlexAttention callable, compiled once per process.
+
+    Calling ``flex_attention`` eagerly is a debug fallback that materializes the
+    dense score matrix. At long context that silently defeats the block mask and
+    can request tens of GiB, so the production path must never use it directly.
+    """
+
+    global _COMPILED_FLEX_ATTENTION
+    if _COMPILED_FLEX_ATTENTION is None:
+        try:
+            from torch.nn.attention.flex_attention import flex_attention
+        except ImportError as exc:
+            raise RuntimeError("flex_window requires PyTorch FlexAttention") from exc
+        _COMPILED_FLEX_ATTENTION = torch.compile(flex_attention, dynamic=False)
+    return _COMPILED_FLEX_ATTENTION
 
 
 class LatentAttention(nn.Module):
@@ -39,7 +61,7 @@ class LatentAttention(nn.Module):
         self.train_attention_window = config.attention_train_window
         self.train_global_stride = config.attention_train_global_stride
         self.flex_block_size = config.attention_flex_block_size
-        self._flex_mask_cache: dict[tuple[int, int, int, int, str], object] = {}
+        self._flex_mask_cache: dict[tuple[int, int, int, int, int, str], object] = {}
 
         q_dim = self.n_heads * (self.head_dim + self.rope_dim)
         backend = config.linear_backend
@@ -126,42 +148,87 @@ class LatentAttention(nn.Module):
     ) -> torch.Tensor:
         """Causal local+sinks+landmarks block-sparse attention for long training."""
         try:
-            from torch.nn.attention.flex_attention import create_block_mask, flex_attention
+            from torch.nn.attention.flex_attention import create_block_mask
         except ImportError as exc:
             raise RuntimeError("flex_window requires PyTorch FlexAttention") from exc
 
-        bsz, heads, q_len, _ = query.shape
+        q_len = query.shape[-2]
         kv_len = key.shape[-2]
         if q_len != kv_len:
             raise RuntimeError("vNext flex_window currently supports no-past training/eval only")
+        block_mask = self._flex_block_mask(
+            create_block_mask=create_block_mask,
+            q_len=q_len,
+            kv_len=kv_len,
+            device=query.device,
+        )
+        return _compiled_flex_attention()(query, key, value, block_mask=block_mask)
+
+    def _flex_block_mask(self, *, create_block_mask, q_len: int, kv_len: int, device):
+        del create_block_mask  # Analytic construction avoids its dense QxKV temporary.
         window = min(self.train_attention_window, kv_len)
         sinks = min(self.sink_tokens, kv_len)
         stride = self.train_global_stride
-        cache_key = (q_len, kv_len, window, stride, str(query.device))
-        block_mask = self._flex_mask_cache.get(cache_key)
-        if block_mask is None:
-            def mask_mod(b, h, q_idx, kv_idx):
-                del b, h
-                causal = kv_idx <= q_idx
-                local = kv_idx >= (q_idx - window + 1)
-                sink = kv_idx < sinks
-                landmark = (kv_idx % stride == 0) if stride > 0 else torch.zeros_like(causal)
-                return causal & (local | sink | landmark)
+        block_size = self.flex_block_size
+        cache_key = (q_len, kv_len, window, sinks, stride, str(device))
+        block_mask = _SHARED_FLEX_BLOCK_MASKS.get(cache_key)
+        if block_mask is not None:
+            return block_mask
 
-            block_mask = create_block_mask(
-                mask_mod,
-                # The mask is independent of batch/head; broadcasting a single
-                # block mask avoids H copies at very long sequence lengths.
-                B=None,
-                H=None,
-                Q_LEN=q_len,
-                KV_LEN=kv_len,
-                device=query.device,
-                BLOCK_SIZE=self.flex_block_size,
-                _compile=False,
+        try:
+            from torch.nn.attention.flex_attention import BlockMask
+        except ImportError as exc:
+            raise RuntimeError("flex_window requires PyTorch FlexAttention") from exc
+
+        def mask_mod(b, h, q_idx, kv_idx):
+            del b, h
+            causal = kv_idx <= q_idx
+            local = kv_idx >= (q_idx - window + 1)
+            sink = kv_idx < sinks
+            landmark = (kv_idx % stride == 0) if stride > 0 else torch.zeros_like(causal)
+            return causal & (local | sink | landmark)
+
+        q_blocks = (q_len + block_size - 1) // block_size
+        kv_blocks = (kv_len + block_size - 1) // block_size
+        sink_blocks = (sinks + block_size - 1) // block_size
+        landmark_blocks = (
+            {token // block_size for token in range(0, kv_len, stride)}
+            if stride > 0
+            else set()
+        )
+        rows: list[list[int]] = []
+        for q_block in range(q_blocks):
+            q_start = q_block * block_size
+            local_start_token = max(0, q_start - window + 1)
+            local_start_block = local_start_token // block_size
+            eligible = set(range(min(sink_blocks, kv_blocks)))
+            eligible.update(range(local_start_block, min(q_block + 1, kv_blocks)))
+            eligible.update(block for block in landmark_blocks if block <= q_block)
+            rows.append(sorted(eligible))
+        kv_num_blocks = torch.tensor(
+            [len(row) for row in rows], dtype=torch.int32, device=device
+        ).view(1, 1, q_blocks)
+        # BlockMask's ordered-to-dense transpose uses the storage width as the
+        # KV-block index domain, so it must cover all KV blocks even though only
+        # each row's counted prefix is active. This is O((T/B)^2) int metadata,
+        # not the O(T^2) token mask that create_block_mask materializes.
+        kv_indices = torch.zeros(
+            (1, 1, q_blocks, kv_blocks), dtype=torch.int32, device=device
+        )
+        for row_index, row in enumerate(rows):
+            kv_indices[0, 0, row_index, : len(row)] = torch.tensor(
+                row, dtype=torch.int32, device=device
             )
-            self._flex_mask_cache[cache_key] = block_mask
-        return flex_attention(query, key, value, block_mask=block_mask)
+        block_mask = BlockMask.from_kv_blocks(
+            kv_num_blocks,
+            kv_indices,
+            BLOCK_SIZE=block_size,
+            mask_mod=mask_mod,
+            seq_lengths=(q_len, kv_len),
+        )
+        _SHARED_FLEX_BLOCK_MASKS[cache_key] = block_mask
+        self._flex_mask_cache[cache_key] = block_mask
+        return block_mask
 
     def _record_qk_statistics_absorbed(
         self,
@@ -203,7 +270,7 @@ class LatentAttention(nn.Module):
         head width before SDPA because CUDA fused SDPA kernels are more reliably
         selected when Q/K/V head widths match; the extra channels are sliced away.
         """
-        bsz, q_len, _, _ = q_content.shape
+        _, q_len, _, _ = q_content.shape
         wk = self.k_up.weight.view(self.n_heads, self.head_dim, self.latent_rank)
         wv = self.v_up.weight.view(self.n_heads, self.head_dim, self.latent_rank)
         q_latent = torch.einsum("bthd,hdl->bthl", q_content, wk)
@@ -230,6 +297,55 @@ class LatentAttention(nn.Module):
         context = context.transpose(1, 2)
         return torch.einsum("bthl,hdl->bthd", context, wv)
 
+    def _absorbed_flex_attention(
+        self,
+        q_content: torch.Tensor,
+        q_rope: torch.Tensor,
+        latent: torch.Tensor,
+        k_rope: torch.Tensor,
+    ) -> torch.Tensor:
+        """Exact absorbed MLA over the fused local sparse attention pattern.
+
+        This keeps one shared compressed KV head instead of reconstructing H
+        full-width K/V heads. It is algebraically the same MLA computation and
+        uses FlexAttention GQA broadcasting inside the fused kernel.
+        """
+
+        try:
+            from torch.nn.attention.flex_attention import create_block_mask
+        except ImportError as exc:
+            raise RuntimeError("flex_window requires PyTorch FlexAttention") from exc
+        q_len = q_content.shape[1]
+        wk = self.k_up.weight.view(self.n_heads, self.head_dim, self.latent_rank)
+        wv = self.v_up.weight.view(self.n_heads, self.head_dim, self.latent_rank)
+        q_latent = torch.einsum("bthd,hdl->bthl", q_content, wk)
+        scale = 1.0 / math.sqrt(self.head_dim + self.rope_dim)
+        self._record_qk_statistics_absorbed(q_latent, q_rope, latent, k_rope, scale)
+
+        query = torch.cat((q_latent, q_rope), dim=-1).transpose(1, 2)
+        key = torch.cat((latent, k_rope), dim=-1).unsqueeze(1)
+        qk_width = query.shape[-1]
+        value = (
+            F.pad(latent, (0, qk_width - self.latent_rank)).unsqueeze(1)
+            if self.latent_rank < qk_width
+            else latent.unsqueeze(1)
+        )
+        block_mask = self._flex_block_mask(
+            create_block_mask=create_block_mask,
+            q_len=q_len,
+            kv_len=q_len,
+            device=query.device,
+        )
+        context = _compiled_flex_attention()(
+            query,
+            key,
+            value,
+            block_mask=block_mask,
+            scale=scale,
+            enable_gqa=True,
+        )[..., : self.latent_rank]
+        return torch.einsum("bthl,hdl->bthd", context.transpose(1, 2), wv)
+
     def _full_attention(
         self,
         q_content: torch.Tensor,
@@ -245,6 +361,12 @@ class LatentAttention(nn.Module):
             and self.logit_softcap is None
         ):
             return self._absorbed_train_attention(q_content, q_rope, latent, k_rope)
+        if (
+            self.train_attention_backend == "flex_window"
+            and (previous is None or previous.length == 0)
+            and self.logit_softcap is None
+        ):
+            return self._absorbed_flex_attention(q_content, q_rope, latent, k_rope)
         if previous is not None and previous.length:
             previous_latent = previous.materialize_latent(dtype=latent.dtype, device=latent.device)
             previous_rope = previous.materialize_rope(dtype=k_rope.dtype, device=k_rope.device)

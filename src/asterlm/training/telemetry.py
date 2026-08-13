@@ -173,6 +173,67 @@ def gradient_diagnostics(model: torch.nn.Module) -> dict[str, Any]:
     return result
 
 
+def gradient_coverage(model: torch.nn.Module) -> dict[str, Any]:
+    """Audit structural gradient coverage without synchronizing tensor values.
+
+    A trainable recurrent/attention block with no gradients is always a broken
+    execution path, not normal MoE sparsity. This specifically guards against
+    reentrant activation checkpointing receiving a frozen embedding output and
+    silently detaching the complete backbone.
+    """
+
+    trainable_tensors = 0
+    tensors_with_grad = 0
+    mixer_blocks: set[int] = set()
+    mixer_blocks_with_grad: set[int] = set()
+    embedding_head_tensors = 0
+    embedding_head_with_grad = 0
+    for name, parameter in model.named_parameters():
+        if not parameter.requires_grad:
+            continue
+        trainable_tensors += 1
+        has_grad = parameter.grad is not None
+        tensors_with_grad += int(has_grad)
+        parts = name.split(".")
+        if len(parts) >= 4 and parts[0] == "blocks" and parts[2] == "mixer":
+            block = int(parts[1])
+            mixer_blocks.add(block)
+            if has_grad:
+                mixer_blocks_with_grad.add(block)
+        lower = name.lower()
+        if lower.startswith(("token_embedding.", "lm_head.", "embedding_in_proj.", "embedding_out_proj.")):
+            embedding_head_tensors += 1
+            embedding_head_with_grad += int(has_grad)
+    missing_mixer_blocks = sorted(mixer_blocks - mixer_blocks_with_grad)
+    return {
+        "trainable_gradient_tensor_count": tensors_with_grad,
+        "trainable_tensor_count": trainable_tensors,
+        "trainable_gradient_tensor_fraction": tensors_with_grad / max(trainable_tensors, 1),
+        "mixer_block_count": len(mixer_blocks),
+        "mixer_blocks_with_gradients": len(mixer_blocks_with_grad),
+        "missing_mixer_blocks": missing_mixer_blocks,
+        "embedding_head_tensor_count": embedding_head_tensors,
+        "embedding_head_tensors_with_gradients": embedding_head_with_grad,
+    }
+
+
+def assert_required_gradient_coverage(model: torch.nn.Module) -> dict[str, Any]:
+    coverage = gradient_coverage(model)
+    failures: list[str] = []
+    if coverage["missing_mixer_blocks"]:
+        failures.append(f"mixer blocks {coverage['missing_mixer_blocks']}")
+    if (
+        coverage["embedding_head_tensor_count"]
+        and not coverage["embedding_head_tensors_with_gradients"]
+    ):
+        failures.append("embedding/output head")
+    if failures:
+        raise RuntimeError(
+            "Required trainable subsystems received no gradients: " + ", ".join(failures)
+        )
+    return coverage
+
+
 @torch.no_grad()
 def parameter_diagnostics(model: torch.nn.Module) -> dict[str, float]:
     """Low-frequency parameter health metrics grouped by subsystem."""

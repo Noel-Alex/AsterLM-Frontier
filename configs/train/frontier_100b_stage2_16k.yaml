@@ -20,7 +20,8 @@ train:
   muon_lr: 0.003
   muon_per_head: true
   muon_megabatch: true
-  muon_megabatch_max_gib: 0.5
+  muon_megabatch_max_gib: 0.125
+  muon_release_gradients_after_step: true
   adam_lr: 0.0001
   min_lr_ratio: 0.1
   warmup_steps: 750

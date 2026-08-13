@@ -38,9 +38,11 @@ from .contracts import validate_training_contract
 from .execution import probe_execution_backends, resolve_execution_engine
 from .hub import HubRunSync, HubUploadQueue, HubUploadTask
 from .metrics import JsonlLogger
+from .parameter_policy import apply_parameter_training_policy
 from .precision import PrecisionManager
 from .telemetry import (
     SystemSampler,
+    assert_required_gradient_coverage,
     gradient_diagnostics,
     parameter_diagnostics,
     save_diagnostic_bundle,
@@ -154,6 +156,9 @@ class Trainer:
         else:
             self.model = self.model.to(self.device)
 
+        self.parameter_training_policy = apply_parameter_training_policy(
+            self.model, train_config.parameter_training_policy
+        )
         self.precision = PrecisionManager(train_config, self.device, self.autocast_dtype)
         self.optimizer = build_optimizer(self.model, train_config)
         self.step = 0
@@ -292,6 +297,7 @@ class Trainer:
             "system": static_system_manifest(self.device),
             "optimizer_partition": getattr(self.optimizer, "partition", None).__dict__,
             "parameter_storage": self._parameter_storage_summary(),
+            "parameter_training_policy": self.parameter_training_policy,
             "grouped_expert_storage": self.grouped_expert_storage,
             "loqt_modules": sum(1 for _ in iter_loqt_modules(self.model)),
             "execution_plan": self.execution.plan.to_dict(),
@@ -941,6 +947,8 @@ class Trainer:
                     window_tokens += batch_tokens
 
                 diagnostics: dict[str, Any] = {}
+                if self.step == 0:
+                    diagnostics.update(assert_required_gradient_coverage(self.model))
                 if (self.step + 1) % cfg.diagnostic_interval == 0:
                     diagnostics = {
                         **gradient_diagnostics(self.model),

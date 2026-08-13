@@ -163,6 +163,7 @@ class AsterConfig:
     gradient_checkpointing: bool = True
     # Group multiple transformer blocks behind one checkpoint boundary at long context.
     checkpoint_segment_size: int = 1
+    checkpoint_sublayers_min_tokens: int = 16384
 
     def __post_init__(self) -> None:
         if self.n_heads * self.head_dim != self.d_model:
@@ -303,6 +304,8 @@ class AsterConfig:
             raise ValueError("model sizes must be positive")
         if self.checkpoint_segment_size <= 0:
             raise ValueError("checkpoint_segment_size must be positive")
+        if self.checkpoint_sublayers_min_tokens <= 0:
+            raise ValueError("checkpoint_sublayers_min_tokens must be positive")
 
     @property
     def ffn_backend(self) -> str:
@@ -369,6 +372,12 @@ class TrainConfig:
     max_steps: int = 100_000
     max_tokens: int | None = None
 
+    # Full pretraining updates every tensor. Long-context continuation can keep
+    # the learned routed expert bank fixed while adapting the global/local
+    # attention path and shared backbone; the exact frozen-name manifest is
+    # recorded in every run and checkpoint.
+    parameter_training_policy: str = "all"  # all | context_extension
+
     # `adamw` is the mandatory dense/control optimizer. Other methods must beat it
     # rather than borrowing an AdamW result from a differently partitioned hybrid.
     optimizer: str = "muon_adamw"  # adamw | muon_adamw* | apollo* | torchao_adamw*
@@ -392,6 +401,7 @@ class TrainConfig:
     # bound prevents routed-expert mega-batches from consuming all spare VRAM.
     muon_megabatch: bool = True
     muon_megabatch_max_gib: float = 0.5
+    muon_release_gradients_after_step: bool = False
     # GPU-resident Muon momentum. INT8 uses blockwise abs-max quantization; it is
     # optimizer-state compression, never CPU/NVMe offload.
     muon_state_dtype: str = "float32"  # float32 | int8_blockwise
@@ -534,6 +544,8 @@ class TrainConfig:
             raise ValueError("batch and sequence dimensions must be positive")
         if self.max_steps <= 0 or (self.max_tokens is not None and self.max_tokens <= 0):
             raise ValueError("max_steps and max_tokens must be positive")
+        if self.parameter_training_policy not in {"all", "context_extension"}:
+            raise ValueError("parameter_training_policy must be all or context_extension")
         if any(token <= 0 for token in self.milestone_tokens):
             raise ValueError("milestone_tokens must contain only positive integers")
         if self.keep_last_checkpoints < 0 or self.checkpoint_pyramid_levels < 0:

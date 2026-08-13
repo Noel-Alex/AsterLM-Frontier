@@ -3,40 +3,131 @@ from __future__ import annotations
 import copy
 
 import torch
+from torch.nn import functional as F
 
+import asterlm.layers.latent_attention as latent_attention_module
 from asterlm.config import AsterConfig
 from asterlm.layers.latent_attention import LatentAttention
 from asterlm.model import AsterLM
 
 
 def tiny_config(**updates) -> AsterConfig:
-    values = dict(
-        vocab_size=256,
-        d_model=32,
-        n_layers=2,
-        n_heads=4,
-        head_dim=8,
-        ffn_hidden=64,
-        ffn_type="dense",
-        max_seq_len=64,
-        linear_backend="torch",
-        ffn_linear_backend="torch",
-        kda_ratio=0,
-        latent_rank=8,
-        rope_dim=4,
-        attention_window=64,
-        sink_tokens=4,
-        attention_dropout=0.0,
-        attention_gate=False,
-        qk_stat_tokens=0,
-        mtp_depth=0,
-        gradient_checkpointing=False,
-        lm_loss_backend="legacy_chunked",
-        lm_loss_chunk_size=16,
-        attention_train_backend="sdpa",
-    )
+    values = {
+        "vocab_size": 256,
+        "d_model": 32,
+        "n_layers": 2,
+        "n_heads": 4,
+        "head_dim": 8,
+        "ffn_hidden": 64,
+        "ffn_type": "dense",
+        "max_seq_len": 64,
+        "linear_backend": "torch",
+        "ffn_linear_backend": "torch",
+        "kda_ratio": 0,
+        "latent_rank": 8,
+        "rope_dim": 4,
+        "attention_window": 64,
+        "sink_tokens": 4,
+        "attention_dropout": 0.0,
+        "attention_gate": False,
+        "qk_stat_tokens": 0,
+        "mtp_depth": 0,
+        "gradient_checkpointing": False,
+        "lm_loss_backend": "legacy_chunked",
+        "lm_loss_chunk_size": 16,
+        "attention_train_backend": "sdpa",
+    }
     values.update(updates)
     return AsterConfig(**values)
+
+
+def test_flex_attention_is_compiled_before_execution(monkeypatch):
+    marker = object()
+    calls: list[tuple[object, bool]] = []
+
+    def fake_compile(function, *, dynamic):
+        calls.append((function, dynamic))
+        return marker
+
+    monkeypatch.setattr(latent_attention_module, "_COMPILED_FLEX_ATTENTION", None)
+    monkeypatch.setattr(torch, "compile", fake_compile)
+    assert latent_attention_module._compiled_flex_attention() is marker
+    assert latent_attention_module._compiled_flex_attention() is marker
+    assert len(calls) == 1
+    assert calls[0][1] is False
+
+
+@torch.no_grad()
+def test_absorbed_flex_mla_matches_full_sdpa_on_cuda():
+    if not torch.cuda.is_available():
+        return
+    torch.manual_seed(17)
+    reference = LatentAttention(
+        tiny_config(
+            attention_train_backend="sdpa",
+            attention_train_window=64,
+            rope_dim=8,
+        ),
+        layer_idx=0,
+    ).cuda().bfloat16().eval()
+    candidate = LatentAttention(
+        tiny_config(
+            attention_train_backend="flex_window",
+            attention_train_window=64,
+            rope_dim=8,
+        ),
+        layer_idx=0,
+    ).cuda().bfloat16().eval()
+    candidate.load_state_dict(copy.deepcopy(reference.state_dict()))
+    positions = torch.arange(32, device="cuda").unsqueeze(0)
+    hidden = torch.randn(1, 32, 32, device="cuda", dtype=torch.bfloat16)
+    expected = reference(hidden, positions)
+    actual = candidate(hidden, positions)
+    torch.testing.assert_close(actual, expected, rtol=2e-2, atol=2e-2)
+
+
+@torch.no_grad()
+def test_absorbed_flex_mla_local_window_and_sinks_match_dense_oracle_on_cuda():
+    if not torch.cuda.is_available():
+        return
+    torch.manual_seed(23)
+    module = LatentAttention(
+        tiny_config(
+            attention_train_backend="flex_window",
+            attention_train_window=128,
+            attention_flex_block_size=128,
+            attention_window=128,
+            sink_tokens=4,
+            rope_dim=8,
+        ),
+        layer_idx=0,
+    ).cuda().bfloat16().eval()
+    # Keep Q long enough for Inductor to select FlexAttention's training kernel
+    # instead of the small-Q decoding kernel (this is a training-path oracle).
+    seq_len = 256
+    positions = torch.arange(seq_len, device="cuda").unsqueeze(0)
+    hidden = torch.randn(1, seq_len, 32, device="cuda", dtype=torch.bfloat16)
+    q_content, q_rope, latent, k_rope, _ = module._project(hidden, positions)
+    k_content = module.k_up(latent).view(1, seq_len, module.n_heads, module.head_dim)
+    values = module.v_up(latent).view(1, seq_len, module.n_heads, module.head_dim)
+    query = torch.cat((q_content, q_rope), dim=-1).transpose(1, 2)
+    key = torch.cat(
+        (k_content, k_rope.unsqueeze(2).expand(-1, -1, module.n_heads, -1)), dim=-1
+    ).transpose(1, 2)
+    q_index = torch.arange(seq_len, device="cuda").unsqueeze(1)
+    k_index = torch.arange(seq_len, device="cuda").unsqueeze(0)
+    allowed = (k_index <= q_index) & (
+        (k_index >= q_index - 127) | (k_index < module.sink_tokens)
+    )
+    expected = F.scaled_dot_product_attention(
+        query,
+        key,
+        values.transpose(1, 2),
+        attn_mask=allowed,
+    ).transpose(1, 2)
+    expected = module.out_proj(expected.reshape(1, seq_len, module.d_model))
+    actual = module(hidden, positions)
+    torch.testing.assert_close(actual, expected, rtol=2e-2, atol=2e-2)
 
 
 def test_absorbed_mla_matches_reconstructed_forward_and_gradients():

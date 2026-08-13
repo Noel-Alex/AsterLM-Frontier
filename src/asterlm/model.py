@@ -185,6 +185,11 @@ class AsterBlock(nn.Module):
                 init_std=config.init_std,
             )
         self.residual_dropout = nn.Dropout(config.residual_dropout)
+        # During an outer segment recomputation, checkpoint the attention and
+        # FFN sublayers independently. This prevents one segment's backward graph
+        # from retaining full expert and mixer temporaries at the same time.
+        self.checkpoint_sublayers = config.gradient_checkpointing
+        self.checkpoint_sublayers_min_tokens = config.checkpoint_sublayers_min_tokens
         self.use_mhc = config.residual_architecture == "mhc"
         if self.use_mhc:
             self.mhc_attention = MHCResidualMixer(
@@ -250,20 +255,45 @@ class AsterBlock(nn.Module):
             )
 
         normed = self.norm_mixer(hidden)
-        if self.kind in {"kda", "gdn2"}:
-            mixed = self.mixer(normed, cache=cache, use_cache=use_cache)
-        elif self.kind in {"csa", "hca"}:
-            if cache is not None or use_cache:
-                raise RuntimeError(
-                    "CSA/HCA cached decoding is unavailable until the optimized "
-                    "backend passes reference parity"
-                )
-            mixed = self.mixer(normed)
-        else:
+
+        def run_mixer(x: torch.Tensor, positions: torch.Tensor) -> torch.Tensor:
+            if self.kind in {"kda", "gdn2"}:
+                return self.mixer(x, cache=cache, use_cache=use_cache)
+            if self.kind in {"csa", "hca"}:
+                if cache is not None or use_cache:
+                    raise RuntimeError(
+                        "CSA/HCA cached decoding is unavailable until the optimized "
+                        "backend passes reference parity"
+                    )
+                return self.mixer(x)
             layer_cache = None if cache is None else cache.latent_layer(self.layer_idx)
-            mixed = self.mixer(normed, position_ids, cache=layer_cache, use_cache=use_cache)
+            return self.mixer(x, positions, cache=layer_cache, use_cache=use_cache)
+
+        nested_checkpoint = (
+            self.checkpoint_sublayers
+            and self.training
+            and not use_cache
+            and cache is None
+            and torch.is_grad_enabled()
+            # The outer segment checkpoint is sufficient at native 8K. Nesting
+            # sublayer checkpoints there causes recursive recomputation and turns
+            # a seconds-scale backward into a minute-scale one. Long-context
+            # stages need the additional FFN/mixer lifetime separation.
+            and normed.shape[1] >= self.checkpoint_sublayers_min_tokens
+        )
+        mixed = (
+            checkpoint(run_mixer, normed, position_ids, use_reentrant=True)
+            if nested_checkpoint
+            else run_mixer(normed, position_ids)
+        )
         hidden = hidden + self.residual_dropout(mixed)
-        hidden = hidden + self.residual_dropout(self.ffn(self.norm_ffn(hidden)))
+        normed_ffn = self.norm_ffn(hidden)
+        ffn_output = (
+            checkpoint(self.ffn, normed_ffn, use_reentrant=True)
+            if nested_checkpoint
+            else self.ffn(normed_ffn)
+        )
+        hidden = hidden + self.residual_dropout(ffn_output)
         return hidden
 
     def forward_attnres(
@@ -699,6 +729,18 @@ class AsterLM(nn.Module):
         position_ids = torch.arange(start, start + seq_len, device=input_ids.device).unsqueeze(0).expand(bsz, -1)
 
         hidden = self.embedding_dropout(self.embedding_in_proj(self.token_embedding(input_ids)))
+        if (
+            self.training
+            and self.config.gradient_checkpointing
+            and torch.is_grad_enabled()
+            and not hidden.requires_grad
+        ):
+            # Reentrant activation checkpointing only builds a backward graph when
+            # at least one input carries gradients. Context-extension training
+            # deliberately freezes the tied embedding/head; the activation leaf
+            # keeps exact gradients for every downstream trainable block without
+            # creating needless embedding gradients or optimizer state.
+            hidden.requires_grad_(True)
         if self.use_mhc:
             hidden = hidden.unsqueeze(2).expand(-1, -1, self.config.mhc_streams, -1).contiguous()
         depth_states: list[torch.Tensor] | None = None

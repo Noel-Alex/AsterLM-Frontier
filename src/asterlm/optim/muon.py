@@ -10,10 +10,10 @@ import torch
 from torch.optim import Optimizer
 
 
-@dataclass(frozen=True)
+@dataclass
 class _MuonJob:
     parameter: torch.nn.Parameter
-    gradient: torch.Tensor
+    gradient: torch.Tensor | None
     state: dict[str, Any]
 
 
@@ -171,6 +171,7 @@ class Muon(Optimizer):
         update_rms: float = 0.2,
         megabatch: bool = True,
         megabatch_max_gib: float = 0.5,
+        release_gradients_after_step: bool = False,
         state_dtype: str = "float32",
         quant_block_size: int = 2048,
     ) -> None:
@@ -189,6 +190,7 @@ class Muon(Optimizer):
             "split_axis": 0,
             "megabatch": megabatch,
             "megabatch_max_gib": megabatch_max_gib,
+            "release_gradients_after_step": release_gradients_after_step,
             "state_dtype": state_dtype,
             "quant_block_size": quant_block_size,
         }
@@ -308,6 +310,12 @@ class Muon(Optimizer):
             nesterov = group["nesterov"]
             target_rms = group["update_rms"]
             state_dtype = str(group.get("state_dtype", self.defaults["state_dtype"]))
+            release_gradients = bool(
+                group.get(
+                    "release_gradients_after_step",
+                    self.defaults["release_gradients_after_step"],
+                )
+            )
             quant_block_size = int(
                 group.get("quant_block_size", self.defaults["quant_block_size"])
             )
@@ -372,6 +380,8 @@ class Muon(Optimizer):
                 self._store_momentum(
                     state, buffer, state_dtype, quant_block_size
                 )
+                if release_gradients:
+                    param.grad = None
         if self._diagnostics_enabled:
             self._latest_diagnostics = {
                 f"{name}_global_rms": (
@@ -411,6 +421,12 @@ class Muon(Optimizer):
                 group.get("megabatch_max_gib", self.defaults["megabatch_max_gib"])
             )
             state_dtype = str(group.get("state_dtype", self.defaults["state_dtype"]))
+            release_gradients = bool(
+                group.get(
+                    "release_gradients_after_step",
+                    self.defaults["release_gradients_after_step"],
+                )
+            )
             quant_block_size = int(
                 group.get("quant_block_size", self.defaults["quant_block_size"])
             )
@@ -447,6 +463,7 @@ class Muon(Optimizer):
                     workspace_gib,
                     state_dtype,
                     quant_block_size,
+                    release_gradients,
                 )
                 buckets[key].append(
                     _MuonJob(parameter, gradient, state)
@@ -481,6 +498,7 @@ class Muon(Optimizer):
                 workspace_gib,
                 state_dtype,
                 quant_block_size,
+                release_gradients,
             ) = key
             shape = torch.Size(shape_tuple)
             limit = _megabatch_job_limit(
@@ -493,7 +511,13 @@ class Muon(Optimizer):
             for start in range(0, len(jobs), limit):
                 chunk = jobs[start : start + limit]
                 parameters = [job.parameter for job in chunk]
-                gradients = [job.gradient.float() for job in chunk]
+                gradients = [
+                    job.gradient.float()
+                    for job in chunk
+                    if job.gradient is not None
+                ]
+                if len(gradients) != len(chunk):
+                    raise RuntimeError("Muon gradient was released before its update")
                 buffers = [
                     self._load_momentum(
                         job.state, job.parameter, state_dtype, quant_block_size
@@ -542,6 +566,11 @@ class Muon(Optimizer):
                     self._store_momentum(
                         job.state, buffer, state_dtype, quant_block_size
                     )
+                    if release_gradients:
+                        job.parameter.grad = None
+                        job.gradient = None
+                if release_gradients:
+                    del gradients, updates, matrices, orthogonal, parameter_updates
                 chunk_count += 1
                 max_matrices_per_chunk = max(
                     max_matrices_per_chunk, len(chunk) * split_count

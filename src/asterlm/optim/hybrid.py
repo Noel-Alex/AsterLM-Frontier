@@ -170,6 +170,7 @@ def build_hybrid_optimizer(model: nn.Module, config: TrainConfig) -> HybridOptim
             update_rms=config.muon_update_rms,
             megabatch=config.muon_megabatch,
             megabatch_max_gib=config.muon_megabatch_max_gib,
+            release_gradients_after_step=config.muon_release_gradients_after_step,
             state_dtype=(
                 "int8_blockwise"
                 if config.optimizer == "muon_adamw8bit"
