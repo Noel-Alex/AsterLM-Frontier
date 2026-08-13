@@ -73,7 +73,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "training": {
         "checkpoint_tokens": 25000000,
         "keep_last_checkpoints": 6,
-        "model": "configs/model/aster_k3_latentmoe_270m_a188m.yaml",
+        "model": "configs/model/aster_k3_latentmoe_1p45b_a568m.yaml",
         "data": "data/clean-frontier/pretrain_data.yaml",
     },
     "ui": {

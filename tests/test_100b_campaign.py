@@ -34,17 +34,18 @@ def test_nemotron_candidate_pool_is_separate_and_revision_pinned() -> None:
 
 def test_100b_train_configs_sum_to_campaign_budget() -> None:
     configs = [
-        TrainConfig.from_yaml(ROOT / "configs/train/frontier_100b_stage1_8k.yaml"),
-        TrainConfig.from_yaml(ROOT / "configs/train/frontier_100b_stage2_16k.yaml"),
-        TrainConfig.from_yaml(ROOT / "configs/train/frontier_100b_stage3_32k.yaml"),
+        TrainConfig.from_yaml(ROOT / "configs/train/frontier_100b_stage1_4k.yaml"),
+        TrainConfig.from_yaml(ROOT / "configs/train/frontier_100b_stage2_8k.yaml"),
+        TrainConfig.from_yaml(ROOT / "configs/train/frontier_100b_stage3_16k.yaml"),
+        TrainConfig.from_yaml(ROOT / "configs/train/frontier_100b_stage4_32k.yaml"),
     ]
     assert sum(config.max_tokens or 0 for config in configs) == 100_000_000_000
     assert len(configs[0].milestone_tokens) == 13
     assert configs[0].milestone_tokens[-3:] == [65_000_000_000, 80_000_000_000, 92_000_000_000]
-    assert sum(len(config.milestone_tokens) for config in configs) == 24
+    assert sum(len(config.milestone_tokens) for config in configs) == 28
     assert all(config.checkpoint_policy == "full" for config in configs)
     assert all(config.checkpoint_pyramid_levels == 8 for config in configs)
-    assert all(config.checkpoint_interval_minutes == 30.0 for config in configs)
+    assert [config.checkpoint_interval_minutes for config in configs] == [30.0, 30.0, 30.0, 5.0]
     assert all(config.save_interval == 250 for config in configs)
     assert all(
         config.sequence_length
@@ -65,23 +66,60 @@ def test_100b_train_configs_sum_to_campaign_budget() -> None:
     campaign = yaml.safe_load(
         (ROOT / "configs/pretraining/frontier_100b_k3.yaml").read_text(encoding="utf-8")
     )
-    assert campaign["status"] == "blocked_pending_scale_selection"
-    assert campaign["architecture"]["base_model"] is None
-    assert campaign["architecture"]["mechanism_proxy"].endswith("270m_a188m.yaml")
+    assert campaign["status"] == "ready"
+    assert campaign["architecture"]["base_model"].endswith("1p45b_a568m.yaml")
+    assert campaign["architecture"]["total_parameters"] == 1_448_120_880
+    assert campaign["architecture"]["active_parameters_per_token"] == 568_155_376
     selection = yaml.safe_load(
         (ROOT / "configs/experiments/pretraining_selection.yaml").read_text(encoding="utf-8")
     )["selection"]
-    assert selection["status"] == "reopened_scale_gate_required"
-    assert selection["model"] is None
+    assert selection["status"] == "frozen"
+    assert selection["model"].endswith("1p45b_a568m.yaml")
     assert len(selection["scale_finalists"]) == 3
     checkpointing = campaign["checkpointing"]
     assert checkpointing["huggingface_hard_cap_tb_decimal"] == 7.5
     assert checkpointing["huggingface_operational_guard_tb_decimal"] == 7.0
-    assert checkpointing["permanent_checkpoint_count"] == 24
-    assert checkpointing["projected_permanent_checkpoint_gib"] < 100.0
+    assert checkpointing["permanent_checkpoint_count"] == 28
+    assert checkpointing["projected_remote_permanent_checkpoint_gib"] == 168.0
     assert "refuse" in checkpointing["remote_quota_policy"]
-    assert checkpointing["recovery_interval_minutes"] == 30
-    assert checkpointing["maximum_uncheckpointed_tokens_by_step"] == 32_768_000
+    assert checkpointing["laptop_recovery_interval_minutes"] == 30
+    assert checkpointing["cloud_recovery_interval_minutes"] == 5
+
+
+def test_long_context_inference_configs_are_parameter_compatible_and_bounded() -> None:
+    base = AsterConfig.from_yaml(
+        ROOT / "configs/model/aster_k3_latentmoe_1p45b_a568m.yaml"
+    )
+    context_256k = AsterConfig.from_yaml(
+        ROOT / "configs/model/aster_k3_latentmoe_1p45b_a568m_longctx.yaml"
+    )
+    context_1m = AsterConfig.from_yaml(
+        ROOT / "configs/model/aster_k3_latentmoe_1p45b_a568m_1m_inference.yaml"
+    )
+    parameter_fields = (
+        "vocab_size",
+        "d_model",
+        "n_layers",
+        "n_heads",
+        "head_dim",
+        "moe_num_experts",
+        "moe_top_k",
+        "moe_shared_experts",
+        "moe_expert_hidden",
+        "latent_moe_dim",
+        "kda_num_heads",
+        "kda_head_dim",
+        "latent_rank",
+        "rope_dim",
+    )
+    assert all(
+        getattr(base, field) == getattr(context_256k, field) == getattr(context_1m, field)
+        for field in parameter_fields
+    )
+    assert context_256k.max_seq_len == 262_144
+    assert context_1m.max_seq_len == 1_048_576
+    assert context_256k.attention_window == context_1m.attention_window == 8192
+    assert context_1m.rope_scaling_factor == 128.0
 
 
 def test_moe_pathway_telemetry_is_finite() -> None:

@@ -1,0 +1,76 @@
+model:
+  # Parameter-compatible 1M-context inference candidate for the frozen model.
+  # This does not claim 1M quality: promote it only after the retrieval,
+  # perplexity, stability, latency, and cache-bound gates pass. KDA state is
+  # recurrent and constant-size; each of the eight MLA layers keeps an 8K
+  # compressed latent window plus 64 sink tokens.
+  vocab_size: 32768
+  d_model: 1280
+  n_layers: 32
+  n_heads: 20
+  head_dim: 64
+  ffn_hidden: 3456
+  max_seq_len: 1048576
+  tie_embeddings: true
+
+  ffn_type: latent_moe
+  moe_first_dense_layers: 1
+  moe_every: 1
+  moe_num_experts: 16
+  moe_top_k: 2
+  moe_shared_experts: 1
+  moe_expert_hidden: 960
+  latent_moe_dim: 704
+  latent_moe_post_norm: true
+  moe_activation: situ_glu
+  moe_situ_beta_gate: 4.0
+  moe_situ_beta_up: 25.0
+  moe_router_score: sigmoid
+  moe_balance_strategy: quantile
+  moe_aux_loss_weight: 0.0
+  moe_router_z_loss_weight: 0.00001
+
+  kda_ratio: 3
+  kda_backend: auto
+  kda_num_heads: 10
+  kda_head_dim: 128
+  kda_expand_v: 1.0
+  kda_short_conv: true
+  kda_conv_size: 4
+  kda_safe_gate: true
+  kda_lower_bound: -5.0
+  kda_allow_negative_eigenvalues: false
+
+  q_lora_rank: 512
+  latent_rms_norm: true
+  latent_rank: 96
+  rope_dim: 32
+  attention_window: 8192
+  attention_train_backend: flex_window
+  attention_train_window: 8192
+  attention_train_global_stride: 0
+  attention_flex_block_size: 128
+  sink_tokens: 64
+  attention_gate: true
+  qk_stat_tokens: 24
+
+  # BF16 is faster than cache quantization for this already-bounded 8K cache;
+  # callers can still select INT8/INT4 through scripts/infer.py when memory is
+  # more important than decode latency on a particular machine.
+  cache_dtype: bfloat16
+  rope_theta: 1000000.0
+  rope_scaling_type: yarn
+  rope_scaling_factor: 128.0
+  rope_original_max_position: 8192
+
+  norm_type: rmsnorm
+  rms_eps: 1.0e-6
+  embedding_projection: false
+  use_block_attnres: false
+  mtp_depth: 0
+  lm_loss_chunk_size: 128
+  qk_clip_tau: 100.0
+  init_std: 0.02
+  gradient_checkpointing: false
+  checkpoint_segment_size: 2
+  checkpoint_sublayers_min_tokens: 8192

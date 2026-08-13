@@ -1,6 +1,6 @@
 train:
-  output_dir: runs/aster-frontier-100b-stage3-32k
-  seed: 1339
+  output_dir: runs/aster-frontier-100b-stage1-4k
+  seed: 1337
   run_class: final
   device: cuda
   dtype: bfloat16
@@ -11,37 +11,38 @@ train:
   moe_implementation: cutlass
   precision_backend: amp
   activation_offload: false
-  sequence_length: 32768
+  activation_offload_pin_memory: true
+  sequence_length: 4096
   micro_batch_size: 1
-  gradient_accumulation_steps: 4
-  max_steps: 20000
-  max_tokens: 2000000000
-  optimizer: muon_adamw
-  muon_lr: 0.002
+  gradient_accumulation_steps: 32
+  max_steps: 800000
+  max_tokens: 92000000000
+  optimizer: muon_adamw8bit
+  muon_lr: 0.005
   muon_per_head: true
   muon_megabatch: true
   muon_megabatch_max_gib: 0.125
   muon_release_gradients_after_step: true
-  adam_lr: 0.00005
+  adam_lr: 0.0003
   min_lr_ratio: 0.1
-  warmup_steps: 250
+  warmup_steps: 5000
   schedule_type: cosine
-  decay_fraction: 0.25
+  decay_fraction: 0.1
   decay_shape: cosine
   weight_decay: 0.1
   adam_betas: [0.9, 0.95]
   max_grad_norm: 1.0
-  qk_clip_interval: 25
-  log_interval: 2
-  eval_interval: 200
-  eval_batches: 16
+  qk_clip_interval: 100
+  log_interval: 10
+  eval_interval: 1000
+  eval_batches: 32
   save_interval: 250
   checkpoint_interval_minutes: 30.0
   keep_last_checkpoints: 6
   checkpoint_policy: full
   checkpoint_pyramid_levels: 8
   checkpoint_local_budget_gib: 150.0
-  milestone_tokens: [250000000, 500000000, 1000000000, 1500000000, 2000000000]
+  milestone_tokens: [500000000, 1000000000, 2000000000, 4000000000, 8000000000, 12000000000, 18400000000, 25000000000, 35000000000, 50000000000, 65000000000, 80000000000, 92000000000]
   milestone_eval: true
   num_workers: 0
   pin_memory: true
@@ -49,11 +50,11 @@ train:
   tokenizer_path: artifacts/tokenizer.json
   tokenizer_manifest_path: artifacts/tokenizer_manifest.json
   wandb_project: asterlm-frontier
-  wandb_run_name: frontier-100b-stage3-32k
+  wandb_run_name: frontier-100b-stage1-4k
   tensorboard: true
   jsonl_metrics: true
   system_metrics_interval: 5.0
-  diagnostic_interval: 10
+  diagnostic_interval: 50
   save_diagnostic_bundle: true
   hub_repo_id: null
   hub_private: true

@@ -1,17 +1,20 @@
 selection:
-  status: reopened_scale_gate_required
-  frozen_utc: "2026-08-11T16:15:00Z"
-  model: null
-  total_parameters: null
-  active_parameters_per_token: null
+  status: frozen
+  frozen_utc: "2026-08-13T15:00:00Z"
+  model: configs/model/aster_k3_latentmoe_1p45b_a568m.yaml
+  long_context_model: configs/model/aster_k3_latentmoe_1p45b_a568m_longctx.yaml
+  total_parameters: 1448120880
+  active_parameters_per_token: 568155376
   laptop:
     execution_backend: aster_local
     moe_implementation: cutlass
     dtype: bfloat16
     precision_backend: amp
-    optimizer: muon_adamw
+    optimizer: muon_adamw8bit
     muon_per_head: true
     muon_lr: 0.005
+    muon_megabatch_max_gib: 0.125
+    muon_release_gradients_after_step: true
     schedule_type: cosine
     allocator: expandable_segments:True
   recovery_control:
@@ -22,13 +25,16 @@ selection:
     architecture_quality: runs/architecture-campaign/quality-mb4-rejection-16m8-two-seed-metrics-v2-20260811/quality-analysis.json
     optimizer_screen: runs/optimizer-campaign/k3-tuning-4m-fused-0fbda28-20260811/quality-analysis.json
     moe_backend_matrix: runs/architecture-campaign/k3-packed-moe-utilization-e8acb30-20260811/matrix.json
-  mechanism_proxy: configs/model/aster_k3_latentmoe_270m_a188m.yaml
+    scale_quality: runs/architecture-campaign/k3-scale-quality-1m-fa88f30-v2/quality-analysis.json
+    native_4k_fit: runs/tmp/1p45b-a568m-int8-full-4k-auto-final.json
+    native_8k_prior_fit: runs/tmp/1p45b-int8-8k-seg2-fit.json
   scale_finalists:
     - {model: configs/model/aster_k3_latentmoe_868m_a483m.yaml, total_parameters: 868300000, active_parameters_per_token: 483400000}
-    - {model: configs/model/aster_k3_latentmoe_1p45b_a568m.yaml, total_parameters: 1448000000, active_parameters_per_token: 568200000}
+    - {model: configs/model/aster_k3_latentmoe_1p45b_a568m.yaml, total_parameters: 1448120880, active_parameters_per_token: 568155376}
     - {model: configs/model/aster_k3_latentmoe_1p95b_a766m.yaml, total_parameters: 1954000000, active_parameters_per_token: 765900000}
   broad_screening_enabled: false
   correction: The 270M proxy evidence selects K3 mechanisms and the Ada backend, not final model scale.
+  decision: The 1.448B candidate improves equal-token and equal-wall loss over 868M in the completed matched scale screen, while 18/20/24-expert expansions failed the sustained laptop fit gate. It is the largest defensible no-offload laptop architecture.
   reopen_only_on:
     - nonfinite_training
     - exact_resume_failure

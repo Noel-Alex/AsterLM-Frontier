@@ -17,6 +17,10 @@ from asterlm.artifacts import atomic_write_json
 from asterlm.training.checkpoint import resolve_checkpoint, verify_checkpoint
 
 ROOT = Path(__file__).resolve().parents[1]
+ALLOWED_STAGE_ENVIRONMENT = {
+    "FLA_DISABLE_BACKEND_DISPATCH",
+    "PYTORCH_ALLOC_CONF",
+}
 
 
 def load_campaign(path: str | Path) -> dict[str, Any]:
@@ -53,6 +57,37 @@ def require_launchable_campaign(campaign: dict[str, Any]) -> None:
     for stage in campaign["stages"]:
         if not stage.get("model"):
             raise RuntimeError(f"Launchable campaign stage {stage['id']} has no model")
+
+
+def stage_environment(base: dict[str, str], stage: dict[str, Any]) -> dict[str, str]:
+    overrides = stage.get("environment") or {}
+    if not isinstance(overrides, dict):
+        raise TypeError(f"{stage['id']} environment must be a mapping")
+    unsupported = set(overrides) - ALLOWED_STAGE_ENVIRONMENT
+    if unsupported:
+        raise ValueError(
+            f"{stage['id']} has unsupported environment override(s): "
+            f"{', '.join(sorted(unsupported))}"
+        )
+    environment = dict(base)
+    environment.update({str(key): str(value) for key, value in overrides.items()})
+    return environment
+
+
+def child_process_options() -> dict[str, Any]:
+    if os.name == "nt":
+        return {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP}
+    return {"start_new_session": True}
+
+
+def forward_signal(child: subprocess.Popen[Any], signum: int) -> None:
+    if child.poll() is not None:
+        return
+    if os.name == "nt":
+        event = signal.CTRL_BREAK_EVENT if signum == signal.SIGINT else signal.CTRL_C_EVENT
+        child.send_signal(event)
+    else:
+        os.killpg(child.pid, signum)
 
 
 def stage_command(
@@ -163,7 +198,14 @@ def main() -> None:
             previous_complete = complete
 
     if args.dry_run:
-        state["commands"] = [item["command"] for item in commands]
+        state["commands"] = [
+            {
+                "stage": item["stage"]["id"],
+                "command": item["command"],
+                "environment": item["stage"].get("environment") or {},
+            }
+            for item in commands
+        ]
         atomic_write_json(state_path, state)
         print(json.dumps(state, indent=2))
         return
@@ -197,7 +239,7 @@ def main() -> None:
 
     def forward(signum: int, _frame: Any) -> None:
         if child is not None and child.poll() is None:
-            os.killpg(child.pid, signum)
+            forward_signal(child, signum)
 
     signal.signal(signal.SIGINT, forward)
     signal.signal(signal.SIGTERM, forward)
@@ -229,7 +271,12 @@ def main() -> None:
         state["current_stage"] = stage["id"]
         state["stages"].append(record)
         atomic_write_json(state_path, state)
-        child = subprocess.Popen(command, cwd=ROOT, env=environment, start_new_session=True)
+        child = subprocess.Popen(
+            command,
+            cwd=ROOT,
+            env=stage_environment(environment, stage),
+            **child_process_options(),
+        )
         record["pid"] = child.pid
         atomic_write_json(state_path, state)
         code = child.wait()

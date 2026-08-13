@@ -19,3 +19,7 @@ requires full training-state fit on the 12 GiB laptop, optimized native-context
 throughput/VRAM, matched-token and matched-wall learning curves, and long-context
 validation. Low utilization is repaired as an execution defect, never used as a
 shortcut to reject a quality-leading architecture.
+
+> **Resolved 2026-08-13.** The scale gate selected the 1.448B-total / 568.2M-active
+> candidate. The final decision, evidence boundaries, and staged context recipe
+> are recorded in `PRETRAINING_ARCHITECTURE_FREEZE_2026-08-13.md`.

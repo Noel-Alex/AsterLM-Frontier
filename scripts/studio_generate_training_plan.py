@@ -12,9 +12,10 @@ import yaml
 ROOT = Path(__file__).resolve().parents[1]
 
 BASE = {
-    "stage1": ROOT / "configs/train/frontier_100b_stage1_8k.yaml",
-    "stage2": ROOT / "configs/train/frontier_100b_stage2_16k.yaml",
-    "stage3": ROOT / "configs/train/frontier_100b_stage3_32k.yaml",
+    "stage1": ROOT / "configs/train/frontier_100b_stage1_4k.yaml",
+    "stage2": ROOT / "configs/train/frontier_100b_stage2_8k.yaml",
+    "stage3": ROOT / "configs/train/frontier_100b_stage3_16k.yaml",
+    "stage4": ROOT / "configs/train/frontier_100b_stage4_32k.yaml",
 }
 
 
@@ -59,7 +60,7 @@ def unique_sorted(values: list[int], ceiling: int) -> list[int]:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Generate a token-honest three-stage Aster pretraining schedule")
+    parser = argparse.ArgumentParser(description="Generate a token-honest four-stage Aster pretraining schedule")
     parser.add_argument("--name", required=True, help="Run/config stem, e.g. aster-84b")
     parser.add_argument("--tokens", type=int, required=True, help="Total intended training tokens")
     parser.add_argument("--data", required=True, help="Generated clean DataConfig path")
@@ -67,7 +68,8 @@ def main() -> None:
     parser.add_argument("--checkpoint-tokens", type=int, default=25_000_000)
     parser.add_argument("--keep-last", type=int, default=6)
     parser.add_argument("--stage1-fraction", type=float, default=0.92)
-    parser.add_argument("--stage2-fraction", type=float, default=0.06)
+    parser.add_argument("--stage2-fraction", type=float, default=0.03)
+    parser.add_argument("--stage3-fraction", type=float, default=0.03)
     parser.add_argument("--allow-repeat", action="store_true")
     parser.add_argument("--available-tokens", type=int, default=None)
     args = parser.parse_args()
@@ -79,32 +81,35 @@ def main() -> None:
             f"Requested {args.tokens:,} training tokens but only {args.available_tokens:,} are declared available. "
             "Refusing implicit repetition; pass --allow-repeat only when repetition is intentional."
         )
-    if args.stage1_fraction <= 0 or args.stage2_fraction < 0:
+    if args.stage1_fraction <= 0 or args.stage2_fraction < 0 or args.stage3_fraction < 0:
         raise SystemExit("Invalid stage fractions")
-    if args.stage1_fraction + args.stage2_fraction >= 1:
-        raise SystemExit("stage1 + stage2 fractions must leave a positive stage3 fraction")
+    if args.stage1_fraction + args.stage2_fraction + args.stage3_fraction >= 1:
+        raise SystemExit("stage1 + stage2 + stage3 fractions must leave a positive stage4 fraction")
 
     total = int(args.tokens)
-    stage1_tokens = int(round(total * args.stage1_fraction))
-    stage2_tokens = int(round(total * args.stage2_fraction))
-    stage3_tokens = total - stage1_tokens - stage2_tokens
+    stage1_tokens = round(total * args.stage1_fraction)
+    stage2_tokens = round(total * args.stage2_fraction)
+    stage3_tokens = round(total * args.stage3_fraction)
+    stage4_tokens = total - stage1_tokens - stage2_tokens - stage3_tokens
 
     configs = {
         "stage1": load_train(BASE["stage1"]),
         "stage2": load_train(BASE["stage2"]),
         "stage3": load_train(BASE["stage3"]),
+        "stage4": load_train(BASE["stage4"]),
     }
     horizons = {
         "stage1": stage1_tokens,
         "stage2": stage2_tokens,
         "stage3": stage3_tokens,
+        "stage4": stage4_tokens,
     }
 
     out_root = ROOT / args.output_dir
     out_root.mkdir(parents=True, exist_ok=True)
     outputs: dict[str, str] = {}
 
-    for index, key in enumerate(("stage1", "stage2", "stage3"), start=1):
+    for index, key in enumerate(("stage1", "stage2", "stage3", "stage4"), start=1):
         raw = configs[key]
         tokens = horizons[key]
         set_token_horizon(raw, tokens, args.checkpoint_tokens)
@@ -171,6 +176,14 @@ def main() -> None:
                 "train_config": outputs["stage3"],
                 "output_dir": configs["stage3"]["train"]["output_dir"],
                 "init_from": configs["stage2"]["train"]["output_dir"],
+            },
+            {
+                "id": "stage4",
+                "context": configs["stage4"]["train"]["sequence_length"],
+                "tokens": stage4_tokens,
+                "train_config": outputs["stage4"],
+                "output_dir": configs["stage4"]["train"]["output_dir"],
+                "init_from": configs["stage3"]["train"]["output_dir"],
             },
         ],
     }

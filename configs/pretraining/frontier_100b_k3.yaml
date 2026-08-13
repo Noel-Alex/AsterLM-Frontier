@@ -1,24 +1,65 @@
 schema_version: 1
-status: blocked_pending_scale_selection
-name: aster-k3-100b-draft
+status: ready
+name: aster-k3-1p45b-a568m-100b
 goal_tokens: 100000000000
 architecture:
-  base_model: null
-  mechanism_proxy: configs/model/aster_k3_latentmoe_270m_a188m.yaml
-  total_parameters: null
-  active_parameters_per_token: null
+  selection_status: frozen
+  selected_on: 2026-08-13
+  base_model: configs/model/aster_k3_latentmoe_1p45b_a568m.yaml
+  long_context_model: configs/model/aster_k3_latentmoe_1p45b_a568m_longctx.yaml
+  inference_256k_model: configs/model/aster_k3_latentmoe_1p45b_a568m_longctx.yaml
+  inference_1m_candidate_model: configs/model/aster_k3_latentmoe_1p45b_a568m_1m_inference.yaml
   scale_selection: configs/experiments/pretraining_selection.yaml
-  layers: 24
+  total_parameters: 1448120880
+  active_parameters_per_token: 568155376
+  layers: 32
+  hidden_size: 1280
+  vocabulary_size: 32768
   attention:
     pattern: [KDA, KDA, KDA, MLA]
-    kda_layers: 18
-    mla_layers: 6
-    kda_semantics: global recurrent Kimi Delta Attention
-    mla_window_tokens: 8192
-    note: KDA is not DeepSeek CSA or HCA; the hybrid uses KDA for global recurrent memory and local-window MLA anchors.
-  experts: {routed: 8, active_routed: 2, shared: 2, activation: situ_glu, balancing: quantile}
-  optimizer: {family: muon_adamw, per_head: true, stage1_muon_lr: 0.005, control: adamw_wsd_0.0005}
-  precision: {laptop: bfloat16_amp, remote_baseline: bfloat16_amp, fp8: qualification_required}
+    kda_layers: 24
+    mla_layers: 8
+    kda_heads: 10
+    kda_head_dimension: 128
+    mla_heads: 20
+    mla_latent_rank: 96
+    mla_rope_dimension: 32
+    long_context_mla_window_tokens: 8192
+    trained_context_tokens: 32768
+    configured_inference_target_tokens: 262144
+    stretch_inference_target_tokens: 1048576
+    stretch_target_status: retrieval_and_stability_validation_required
+    note: KDA is global recurrent Kimi Delta Attention, not DeepSeek CSA/HCA. MLA supplies local-window anchors; its cache is bounded to 8K in long-context inference.
+  experts:
+    routed: 16
+    active_routed: 2
+    shared: 1
+    expert_hidden: 960
+    latent_dimension: 704
+    activation: situ_glu
+    balancing: quantile
+  optimizer:
+    family: muon_adamw8bit
+    per_head: true
+    muon_state: gpu_resident_int8
+    muon_gradient_release: after_exact_parameter_update
+    base_muon_lr: 0.005
+  precision:
+    laptop: bfloat16_amp
+    remote_baseline: bfloat16_amp
+    ada_fp8_training: rejected_missing_efficient_grouped_expert_path
+  measured_laptop_gate:
+    gpu: NVIDIA_GeForce_RTX_4080_Laptop_GPU_12GiB
+    sequence_length: 4096
+    full_parameter_training: true
+    measured_steps: 2
+    median_tokens_per_second: 2016.51
+    median_gpu_utilization_percent: 97
+    peak_allocated_gib: 8.065
+    peak_reserved_gib: 8.373
+    gradient_tensors: 1710
+    gradient_mixer_blocks: 32
+    evidence: runs/tmp/1p45b-a568m-int8-full-4k-auto-final.json
 data:
   raw_root: data/corpus-frontier-16b
   clean_config: data/clean-frontier/pretrain_data.yaml
@@ -33,50 +74,70 @@ data:
   replay_factor: resolved_from_clean_manifest_at_launch
 stages:
   - id: stage1
-    label: base knowledge and capability
-    model: configs/model/aster_k3_latentmoe_270m_a188m.yaml
-    train: configs/train/frontier_100b_stage1_8k.yaml
-    output_dir: runs/aster-frontier-100b-stage1-8k
-    context: 8192
+    label: full-parameter base knowledge and capability
+    model: configs/model/aster_k3_latentmoe_1p45b_a568m.yaml
+    train: configs/train/frontier_100b_stage1_4k.yaml
+    output_dir: runs/aster-frontier-100b-stage1-4k
+    context: 4096
     tokens: 92000000000
+    parameter_training_policy: all
     init_from: null
+    environment: {}
   - id: stage2
-    label: long-context continuation
-    model: configs/model/aster_k3_latentmoe_270m_a188m_16k.yaml
-    train: configs/train/frontier_100b_stage2_16k.yaml
-    output_dir: runs/aster-frontier-100b-stage2-16k
-    context: 16384
-    tokens: 6000000000
-    init_from: runs/aster-frontier-100b-stage1-8k
+    label: 8K context extension
+    model: configs/model/aster_k3_latentmoe_1p45b_a568m.yaml
+    train: configs/train/frontier_100b_stage2_8k.yaml
+    output_dir: runs/aster-frontier-100b-stage2-8k
+    context: 8192
+    tokens: 3000000000
+    parameter_training_policy: context_extension
+    init_from: runs/aster-frontier-100b-stage1-4k
+    environment: {}
   - id: stage3
-    label: extended-context continuation
-    model: configs/model/aster_k3_latentmoe_270m_a188m_32k.yaml
-    train: configs/train/frontier_100b_stage3_32k.yaml
-    output_dir: runs/aster-frontier-100b-stage3-32k
+    label: 16K context extension
+    model: configs/model/aster_k3_latentmoe_1p45b_a568m_longctx.yaml
+    train: configs/train/frontier_100b_stage3_16k.yaml
+    output_dir: runs/aster-frontier-100b-stage3-16k
+    context: 16384
+    tokens: 3000000000
+    parameter_training_policy: context_extension
+    init_from: runs/aster-frontier-100b-stage2-8k
+    environment: {FLA_DISABLE_BACKEND_DISPATCH: "1"}
+  - id: stage4
+    label: 32K context extension on high-memory CUDA
+    model: configs/model/aster_k3_latentmoe_1p45b_a568m_longctx.yaml
+    train: configs/train/frontier_100b_stage4_32k.yaml
+    output_dir: runs/aster-frontier-100b-stage4-32k
     context: 32768
     tokens: 2000000000
-    init_from: runs/aster-frontier-100b-stage2-16k
+    parameter_training_policy: context_extension
+    placement: high_memory_cloud_required_by_current_exact_kda_path
+    init_from: runs/aster-frontier-100b-stage3-16k
+    environment: {FLA_DISABLE_BACKEND_DISPATCH: "1"}
 checkpointing:
   local_budget_gib: 150
-  recovery_interval_minutes: 30
+  laptop_recovery_interval_minutes: 30
+  cloud_recovery_interval_minutes: 5
   recovery_interval_steps: 250
-  maximum_uncheckpointed_tokens_by_step: 32768000
   recent_full_state_checkpoints: 6
   logarithmic_history_levels: 8
   huggingface_hard_cap_tb_decimal: 7.5
   huggingface_operational_guard_tb_decimal: 7.0
-  estimated_full_state_checkpoint_gib: 1.06
-  permanent_checkpoint_count: 24
-  projected_permanent_checkpoint_gib: 25.44
-  policy: whichever comes first of 30 wall-clock minutes or 250 updates; six dense recent recovery points plus eight logarithmic history bands plus remote permanent token milestones
-  remote: private Hugging Face full-state, synchronous and hash-verified
+  estimated_weights_only_checkpoint_gib: 2.70
+  pessimistic_full_state_checkpoint_gib: 6.0
+  projected_local_dense_recent_gib: 36.0
+  permanent_checkpoint_count: 28
+  projected_remote_permanent_checkpoint_gib: 168.0
+  policy: dense rolling recovery checkpoints near the frontier plus logarithmically thinned history and permanent token milestones
+  cloud_policy: save and synchronously hash-verify a private Hugging Face full-state checkpoint at least every five minutes; resume from the newest valid Hub checkpoint across providers
   remote_quota_policy: refuse any planned upload whose pessimistic projected repository usage exceeds 7.0 TB; never cross the 7.5 TB hard ceiling
   portable_inference: scripts/infer.py --hub-repo REPO --hub-run RUN --hub-selector tokens:N
 observability:
-  local: append-only metrics.jsonl plus run, analysis, checkpoint and diagnostic manifests
-  remote: W&B scalar history and diagnostics artifacts
+  local: append-only metrics.jsonl plus run, analysis, checkpoint, profiler, energy, and diagnostic manifests
+  remote: W&B scalar history, system telemetry, evaluation tables, and diagnostics artifacts
   refresh_seconds: 2
   primary_axis: tokens_seen
+  research_ui_port: 8765
   grokking_signals:
     - heldout loss and perplexity inflections
     - domain evaluation trajectories
@@ -87,10 +148,14 @@ observability:
 inference_state_after_pretraining:
   behavior: base next-token completion model
   chat_readiness: requires later post-training
+  architectural_context_ceiling_tokens: 262144
+  stretch_context_tokens: 1048576
+  stretch_context_claim: candidate_until_long-context_retrieval_and_generation_gates_pass
   supported_checkpoint_modes: [local, huggingface_latest, huggingface_final, huggingface_token_milestone]
 launch_policy:
   remote_jobs_default: disabled
   architecture_search: closed
+  architecture_selection: frozen
   required_before_stage1:
     - sealed clean corpus and decontamination manifest
     - tokenizer seal and fertility report

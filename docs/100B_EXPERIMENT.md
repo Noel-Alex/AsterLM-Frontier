@@ -1,9 +1,9 @@
 # AsterLM 100B-token research campaign
 
-This is the draft research plan for the Aster K3 family over **100B training
-tokens**. The 270M mechanism proxy is not the final scale. Stage launch is blocked
-until the mandated 868M/1.45B/1.95B K3 scale gate chooses the strongest model that
-fits and wins time-to-quality. The machine-readable sources of truth are
+This is the frozen research plan for the 1.448B-total / 568.2M-active Aster K3
+model over **100B training tokens**. The corrected 868M/1.45B/1.95B scale gate
+selected the largest sustained no-offload laptop model with favorable matched
+quality evidence. The machine-readable sources of truth are
 `configs/pretraining/frontier_100b_k3.yaml` and
 `configs/experiments/pretraining_selection.yaml`.
 
@@ -18,7 +18,7 @@ The frozen schedule is a 100B-token controlled overtraining experiment, not a cl
 
 The campaign uses mostly unique, deduplicated data. It does **not** manufacture 100B tokens by blindly repeating a small corpus. Exact repetition and source-level effective epochs must remain visible in the corpus audit.
 
-The three `frontier_100b_*` train configs are mechanically `run_class: final`. Directly invoking the trainer cannot bypass the clean-corpus manifest or promotion gate: it will refuse to allocate the model until the corpus is sealed, every required gate has durable passed evidence, the Git checkout is clean, and full private Hugging Face plus W&B continuity is configured.
+The four `frontier_100b_*` train configs are mechanically `run_class: final`. Directly invoking the trainer cannot bypass the clean-corpus manifest or promotion gate: it will refuse to allocate the model until the corpus is sealed, every required gate has durable passed evidence, the Git checkout is clean, and full private Hugging Face plus W&B continuity is configured.
 
 ## Current raw-data ledger
 
@@ -82,11 +82,15 @@ Compressed size is not token count. Depending on source composition and compress
 
 The 100B-token curriculum is:
 
-1. **92B tokens at 8K** using `frontier_100b_stage1_8k.yaml`.
-2. **6B tokens at 16K** initialized from stage 1.
-3. **2B tokens at 32K** initialized from stage 2.
+1. **92B tokens at 4K**, full-parameter, using `frontier_100b_stage1_4k.yaml`.
+2. **3B tokens at 8K**, context extension initialized from stage 1.
+3. **3B tokens at 16K**, context extension initialized from stage 2.
+4. **2B tokens at 32K**, context extension initialized from stage 3.
 
-This puts most compute into efficient base pretraining while still genuinely training long context.
+This puts most compute into the measured sustainable laptop geometry while still
+genuinely training the attention, recurrent state, routing, and normalization
+subsystems at long context. The current exact-gradient 32K KDA path requires a
+qualified high-memory CUDA target; it is not claimed to fit the 12 GiB laptop.
 
 The authoritative unattended launcher runs preflight, exactly resumes an interrupted stage, initializes each longer-context continuation from the prior completed checkpoint, forwards stop signals to a safe checkpoint boundary, and refuses to advance without a complete durable final state:
 
@@ -103,16 +107,16 @@ The same control is available in Aster Studio at `http://localhost:8765`. The la
 
 ```bash
 python scripts/training_preflight.py \
-  --model configs/model/aster_k3_latentmoe_270m_a188m.yaml \
-  --train configs/train/frontier_100b_stage1_8k.yaml \
+  --model configs/model/aster_k3_latentmoe_1p45b_a568m.yaml \
+  --train configs/train/frontier_100b_stage1_4k.yaml \
   --data data/clean-frontier/pretrain_data.yaml \
   --check-first-record \
   --hub-repo YOUR_HF_USERNAME/AsterLM-Frontier-100B \
   --json runs/preflight-100b-stage1.json
 
-python scripts/train_pretrain.py \
-  --model configs/model/aster_k3_latentmoe_270m_a188m.yaml \
-  --train configs/train/frontier_100b_stage1_8k.yaml \
+python scripts/studio_train.py --mode pretrain \
+  --model configs/model/aster_k3_latentmoe_1p45b_a568m.yaml \
+  --train configs/train/frontier_100b_stage1_4k.yaml \
   --data data/clean-frontier/pretrain_data.yaml \
   --hub-repo YOUR_HF_USERNAME/AsterLM-Frontier-100B
 ```
@@ -123,14 +127,16 @@ or 250 optimizer updates, whichever happens first**. At the campaign's fixed
 131,072 tokens/update, the step trigger caps exposure at 32,768,000 tokens; the
 timer gives the tighter bound on slower hardware. The newest six recovery
 checkpoints remain dense and eight exponentially older bands form a logarithmic
-history. With the measured ~1.055 GiB full-state checkpoint, that rolling spine
-is roughly 14.8 GiB. The exact 150 GiB local budget remains authoritative as
-checkpoint size evolves. Periodic recovery points are not all uploaded, avoiding
-transfer stalls; SIGTERM/controlled-stop checkpoints are written immediately.
+history. The selected model has roughly 2.70 GiB of BF16 weights alone, so the
+campaign uses a pessimistic 6 GiB full-state planning estimate until the first
+real checkpoint manifest measures the optimizer and metadata payload. Six dense
+recovery checkpoints project to 36 GiB. The exact 150 GiB local budget remains
+authoritative as checkpoint size evolves; SIGTERM/controlled-stop checkpoints
+are written immediately.
 
 Stage 1 creates 13 permanent checkpoints at 0.5B, 1B, 2B, 4B, 8B, 12B,
-18.4B, 25B, 35B, 50B, 65B, 80B and 92B tokens. Stages 2 and 3 add six and
-five context-continuation milestones respectively, for 24 permanent research
+18.4B, 25B, 35B, 50B, 65B, 80B and 92B tokens. Stages 2, 3 and 4 add four, six
+and five context-continuation milestones respectively, for 28 permanent research
 checkpoints across the campaign. They are protected from rolling local retention
 and uploaded to Hugging Face. The learning-rate decay occurs only near the end of
 the 92B stage, so intermediate checkpoints remain useful continuation points rather
@@ -139,9 +145,8 @@ than prematurely cooled models.
 The private Hugging Face repository has a user-declared **7.5 TB decimal hard
 ceiling**. Aster uses **7.0 TB** as the operational refusal threshold so an
 in-flight upload, metadata, or later artifact cannot cross the hard ceiling.
-The measured three-step K3 full-state canary is about 1.055 GiB; pessimistically
-projecting that size over all 24 permanent pretraining milestones is about
-25.3 GiB (before Xet deduplication), far below the guard. This estimate is
+Pessimistically projecting 6 GiB over all 28 permanent pretraining milestones is
+168 GiB (before Xet deduplication), far below the guard. This estimate is
 displayed and must be recalculated from real checkpoint manifests as the run
 evolves. Nothing is automatically deleted from Hugging Face merely to save
 space; the user will explicitly authorize later remote cleanup. New uploads
@@ -150,22 +155,33 @@ must fail closed if their projected total would exceed the operational guard.
 ### Stage 2
 
 ```bash
-python scripts/train_pretrain.py \
-  --model configs/model/aster_k3_latentmoe_270m_a188m_16k.yaml \
-  --train configs/train/frontier_100b_stage2_16k.yaml \
+python scripts/studio_train.py --mode pretrain \
+  --model configs/model/aster_k3_latentmoe_1p45b_a568m.yaml \
+  --train configs/train/frontier_100b_stage2_8k.yaml \
   --data data/clean-frontier/pretrain_data.yaml \
-  --init-checkpoint runs/aster-frontier-100b-stage1-8k \
+  --init-checkpoint runs/aster-frontier-100b-stage1-4k \
   --hub-repo YOUR_HF_USERNAME/AsterLM-Frontier-100B
 ```
 
 ### Stage 3
 
 ```bash
-python scripts/train_pretrain.py \
-  --model configs/model/aster_k3_latentmoe_270m_a188m_32k.yaml \
-  --train configs/train/frontier_100b_stage3_32k.yaml \
+FLA_DISABLE_BACKEND_DISPATCH=1 python scripts/studio_train.py --mode pretrain \
+  --model configs/model/aster_k3_latentmoe_1p45b_a568m_longctx.yaml \
+  --train configs/train/frontier_100b_stage3_16k.yaml \
   --data data/clean-frontier/pretrain_data.yaml \
-  --init-checkpoint runs/aster-frontier-100b-stage2-16k \
+  --init-checkpoint runs/aster-frontier-100b-stage2-8k \
+  --hub-repo YOUR_HF_USERNAME/AsterLM-Frontier-100B
+```
+
+### Stage 4
+
+```bash
+FLA_DISABLE_BACKEND_DISPATCH=1 python scripts/studio_train.py --mode pretrain \
+  --model configs/model/aster_k3_latentmoe_1p45b_a568m_longctx.yaml \
+  --train configs/train/frontier_100b_stage4_32k.yaml \
+  --data data/clean-frontier/pretrain_data.yaml \
+  --init-checkpoint runs/aster-frontier-100b-stage3-16k \
   --hub-repo YOUR_HF_USERNAME/AsterLM-Frontier-100B
 ```
 
@@ -195,7 +211,7 @@ The pathway metrics are monitoring signals inspired by practical MoE grokking re
 Inspect a run at any time:
 
 ```bash
-python scripts/experiment_status.py runs/aster-frontier-100b-stage1-8k
+python scripts/experiment_status.py runs/aster-frontier-100b-stage1-4k
 ```
 
 ## Checkpoint and Hugging Face policy
@@ -215,13 +231,19 @@ When `--hub-repo` is supplied, the trainer creates/uses a **private model reposi
 - optimizer/RNG state by default, enabling disaster recovery on another machine;
 - run manifest, analysis schema, experiment identity, JSONL metrics, TensorBoard/diagnostic artifacts, latest pointer and Hub verification state.
 
-Uploads are synchronous at milestones so a successful final-run milestone means both local serialization and a hash-verified remote backup completed. Hugging Face Xet uploads are resumable and deduplicate already-uploaded chunks. Final configs require `hub_fail_on_error: true`; an unverified milestone can never be declared durable or evicted to satisfy the 150 GiB local cache ceiling.
+Milestone uploads are synchronously verified before they are declared durable.
+Remote provider execution additionally applies a five-minute full-state checkpoint
+interval and bounded asynchronous Hub queue, so GPU work can continue while each
+upload is verified; a graceful stop waits for its durable optimizer-boundary
+checkpoint. Hugging Face Xet uploads are resumable and deduplicate already-uploaded
+chunks. Final configs require `hub_fail_on_error: true`; an unverified milestone
+can never be declared durable or evicted to satisfy the 150 GiB local cache ceiling.
 
 Retry a failed/manual sync:
 
 ```bash
 python scripts/sync_run_to_hub.py \
-  --run runs/aster-frontier-100b-stage1-8k \
+  --run runs/aster-frontier-100b-stage1-4k \
   --repo YOUR_HF_USERNAME/AsterLM-Frontier-100B
 ```
 

@@ -814,7 +814,9 @@ class Trainer:
     def _flush_hub_uploads(self, *, close: bool = False) -> None:
         if self.hub_upload_queue is None:
             return
-        report = self.hub_upload_queue.drain(close=close)
+        upload_queue = self.hub_upload_queue
+        report = upload_queue.drain(close=close)
+        protected = upload_queue.pending_checkpoints()
         if close:
             self.hub_upload_queue = None
         for result in report["results"]:
@@ -839,7 +841,7 @@ class Trainer:
             self.train_config.output_dir,
             keep_last=self.train_config.keep_last_checkpoints,
             pyramid_levels=self.train_config.checkpoint_pyramid_levels,
-            protected=self.hub_upload_queue.pending_checkpoints(),
+            protected=protected,
         )
         if self.train_config.checkpoint_local_budget_gib is not None:
             enforce_checkpoint_storage_budget(

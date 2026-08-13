@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from asterlm.artifacts import sha256_file
+from asterlm.training.engine import Trainer
 from asterlm.training.hub import HubRunSync, HubUploadQueue, HubUploadTask, _git_blob_sha1
 
 
@@ -165,3 +166,41 @@ def test_async_upload_queue_surfaces_worker_errors(tmp_path: Path) -> None:
     report = upload_queue.drain(close=True)
     assert report["results"] == []
     assert "upload failed" in report["errors"][0]["error"]
+
+
+def test_trainer_close_flush_preserves_queue_for_protection_audit(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    class FakeQueue:
+        def drain(self, *, close: bool = False) -> dict[str, list[object]]:
+            assert close
+            return {"results": [], "errors": []}
+
+        @staticmethod
+        def pending_checkpoints() -> set[Path]:
+            return {tmp_path / "checkpoint-pending"}
+
+    protected_calls: list[set[Path]] = []
+    fake_trainer = type("FakeTrainer", (), {})()
+    fake_trainer.hub_upload_queue = FakeQueue()
+    fake_trainer.train_config = type(
+        "FakeTrainConfig",
+        (),
+        {
+            "hub_fail_on_error": True,
+            "output_dir": str(tmp_path),
+            "keep_last_checkpoints": 2,
+            "checkpoint_pyramid_levels": 1,
+            "checkpoint_local_budget_gib": None,
+        },
+    )()
+    fake_trainer._log = lambda _payload: None
+    monkeypatch.setattr(
+        "asterlm.training.engine.prune_rolling_checkpoints",
+        lambda _output, *, protected, **_kwargs: protected_calls.append(protected),
+    )
+
+    Trainer._flush_hub_uploads(fake_trainer, close=True)
+
+    assert fake_trainer.hub_upload_queue is None
+    assert protected_calls == [{tmp_path / "checkpoint-pending"}]

@@ -19,7 +19,13 @@ SPEC.loader.exec_module(MODULE)
 def test_campaign_is_token_honest_and_stage_command_is_portable() -> None:
     campaign = MODULE.load_campaign(ROOT / "configs/pretraining/frontier_100b_k3.yaml")
     assert campaign["goal_tokens"] == 100_000_000_000
-    assert [stage["context"] for stage in campaign["stages"]] == [8192, 16384, 32768]
+    assert [stage["context"] for stage in campaign["stages"]] == [4096, 8192, 16384, 32768]
+    assert [stage["tokens"] for stage in campaign["stages"]] == [
+        92_000_000_000,
+        3_000_000_000,
+        3_000_000_000,
+        2_000_000_000,
+    ]
     command = MODULE.stage_command(
         campaign["stages"][1],
         data=campaign["data"]["clean_config"],
@@ -31,15 +37,26 @@ def test_campaign_is_token_honest_and_stage_command_is_portable() -> None:
     assert command[-2:] == ["--init-checkpoint", "runs/stage1/checkpoint-final"]
 
 
-def test_blocked_scale_campaign_cannot_launch() -> None:
+def test_frozen_scale_campaign_is_launchable() -> None:
     campaign = MODULE.load_campaign(ROOT / "configs/pretraining/frontier_100b_k3.yaml")
-    with pytest.raises(RuntimeError, match="not launchable"):
-        MODULE.require_launchable_campaign(campaign)
+    MODULE.require_launchable_campaign(campaign)
+    assert campaign["architecture"]["total_parameters"] == 1_448_120_880
+    assert campaign["architecture"]["active_parameters_per_token"] == 568_155_376
+
+
+def test_stage_environment_is_explicit_and_allowlisted() -> None:
+    campaign = MODULE.load_campaign(ROOT / "configs/pretraining/frontier_100b_k3.yaml")
+    environment = MODULE.stage_environment({"WANDB_ENTITY": "owner"}, campaign["stages"][2])
+    assert environment["WANDB_ENTITY"] == "owner"
+    assert environment["FLA_DISABLE_BACKEND_DISPATCH"] == "1"
+    campaign["stages"][2]["environment"]["HF_TOKEN"] = "must-not-live-in-campaign"
+    with pytest.raises(ValueError, match="unsupported environment"):
+        MODULE.stage_environment({}, campaign["stages"][2])
 
 
 def test_campaign_requires_adjacent_stage_continuation() -> None:
     campaign = MODULE.load_campaign(ROOT / "configs/pretraining/frontier_100b_k3.yaml")
-    campaign["stages"][2]["init_from"] = "runs/unrelated"
+    campaign["stages"][3]["init_from"] = "runs/unrelated"
     with tempfile.TemporaryDirectory() as directory:
         path = Path(directory) / "campaign.yaml"
         path.write_text(yaml.safe_dump(campaign, sort_keys=False), encoding="utf-8")
