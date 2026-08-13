@@ -86,13 +86,10 @@ def _ensure_allocator_reexec() -> None:
     if os.environ.get("ASTER_INFERENCE_CANARY_REEXEC") == "1":
         return
     if any(
-        os.environ.get(key) != environment[key]
-        for key in ("PYTORCH_ALLOC_CONF", "PYTORCH_CUDA_ALLOC_CONF")
+        os.environ.get(key) != environment[key] for key in ("PYTORCH_ALLOC_CONF", "PYTORCH_CUDA_ALLOC_CONF")
     ):
         environment["ASTER_INFERENCE_CANARY_REEXEC"] = "1"
-        result = subprocess.run(
-            [sys.executable, *sys.argv], cwd=ROOT, env=environment, check=False
-        )
+        result = subprocess.run([sys.executable, *sys.argv], cwd=ROOT, env=environment, check=False)
         raise SystemExit(result.returncode)
 
 
@@ -177,6 +174,7 @@ def main() -> None:
 
     from asterlm import AsterConfig, AsterLM
     from asterlm.training.telemetry import static_system_manifest
+    from asterlm.triton_cache import quarantine_invalid_triton_json
 
     if not torch.cuda.is_available() or not torch.cuda.is_bf16_supported():
         raise RuntimeError("The selected laptop CUDA BF16 runtime is unavailable")
@@ -200,6 +198,7 @@ def main() -> None:
     torch.cuda.empty_cache()
     torch.cuda.reset_peak_memory_stats(device)
 
+    triton_cache_repairs = quarantine_invalid_triton_json(force_rescan=True)
     setup_started = time.perf_counter()
     model = AsterLM(config, named_initialization_seed=args.seed, moe_implementation="cutlass")
     model = model.to(device=device, dtype=torch.bfloat16)
@@ -254,6 +253,7 @@ def main() -> None:
         "git_commit": commit,
         "model": {"path": model_path.relative_to(ROOT).as_posix(), "sha256": _sha256_file(model_path)},
         "hardware": hardware,
+        "triton_cache_repairs": triton_cache_repairs,
         "architecture": {
             **model.architecture_summary(),
             "effective_parameters": effective_parameters,

@@ -365,6 +365,12 @@ class AsterLM(nn.Module):
         moe_implementation: str | None = None,
     ) -> None:
         super().__init__()
+        # Interrupted Triton autotuning can leave stale zero/partial JSON files.
+        # Repair them before the first fused kernel is selected; recent files are
+        # deliberately ignored so concurrent cache writers are never disturbed.
+        from .triton_cache import quarantine_invalid_triton_json
+
+        quarantine_invalid_triton_json()
         self.config = config
         self.moe_implementation = (
             moe_implementation
