@@ -37,7 +37,7 @@ def apply_remote_durable_policy(
     train_config.hub_repo_id = hub_repo
     train_config.output_dir = str(remote_run_root / Path(train_config.output_dir).name)
     train_config.checkpoint_interval_minutes = 5.0
-    train_config.hub_private = True
+    train_config.hub_private = False
     train_config.hub_upload_every_save = True
     train_config.hub_upload_milestones = True
     train_config.hub_upload_final = True

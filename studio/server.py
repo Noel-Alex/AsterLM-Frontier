@@ -1401,7 +1401,7 @@ def start_action(action: str, payload: dict[str, Any]) -> dict[str, Any]:
     if action == "pretraining_campaign":
         hub_repo = str(payload.get("hub_repo") or "").strip()
         if not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", hub_repo):
-            raise ValueError("A private Hugging Face repository is required as namespace/name")
+            raise ValueError("A public Hugging Face repository is required as namespace/name")
         command = [
             py,
             "scripts/run_pretraining_campaign.py",

@@ -486,4 +486,4 @@ source by default, appends every completed case durably, and resumes by case ID.
 
 ## 100B-token overtraining campaign
 
-For the frozen 100B curriculum, permanent 18.4B/50B analysis milestones, unattended stage transitions, 150 GiB local checkpoint cache, private hash-verified Hugging Face recovery and W&B/Studio observability, follow [100B_EXPERIMENT.md](100B_EXPERIMENT.md). Do not launch the old stage commands from earlier sections as the production campaign.
+For the frozen 100B curriculum, permanent 18.4B/50B analysis milestones, unattended stage transitions, 150 GiB local checkpoint cache, public hash-verified Hugging Face recovery and W&B/Studio observability, follow [100B_EXPERIMENT.md](100B_EXPERIMENT.md). Do not launch the old stage commands from earlier sections as the production campaign.

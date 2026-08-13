@@ -192,10 +192,12 @@ def validate_training_contract(
         if not train.wandb_project:
             raise TrainingContractError("Final training requires a durable W&B project")
         if not train.hub_repo_id:
-            raise TrainingContractError("Final training requires a private Hugging Face checkpoint repo")
-        if not train.hub_private or not train.hub_include_optimizer:
+            raise TrainingContractError("Final training requires a Hugging Face checkpoint repo")
+        if train.hub_private:
+            raise TrainingContractError("Final training requires a public Hugging Face checkpoint repo")
+        if not train.hub_include_optimizer:
             raise TrainingContractError(
-                "Final training requires private Hub uploads with full optimizer/RNG resume state"
+                "Final training requires Hub uploads with full optimizer/RNG resume state"
             )
         if not train.hub_fail_on_error:
             raise TrainingContractError(

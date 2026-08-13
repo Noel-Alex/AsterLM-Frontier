@@ -18,7 +18,7 @@ The frozen schedule is a 100B-token controlled overtraining experiment, not a cl
 
 The campaign uses mostly unique, deduplicated data. It does **not** manufacture 100B tokens by blindly repeating a small corpus. Exact repetition and source-level effective epochs must remain visible in the corpus audit.
 
-The four `frontier_100b_*` train configs are mechanically `run_class: final`. Directly invoking the trainer cannot bypass the clean-corpus manifest or promotion gate: it will refuse to allocate the model until the corpus is sealed, every required gate has durable passed evidence, the Git checkout is clean, and full private Hugging Face plus W&B continuity is configured.
+The four `frontier_100b_*` train configs are mechanically `run_class: final`. Directly invoking the trainer cannot bypass the clean-corpus manifest or promotion gate: it will refuse to allocate the model until the corpus is sealed, every required gate has durable passed evidence, the Git checkout is clean, and full public Hugging Face plus W&B continuity is configured.
 
 ## Current raw-data ledger
 
@@ -101,7 +101,7 @@ python scripts/run_pretraining_campaign.py \
   --verify-manifest-hashes
 ```
 
-The same control is available in Aster Studio at `http://localhost:8765`. The launch-readiness ledger remains fail-closed until data, tokenizer, evidence, credentials, private Hub repository and pinned Git state are ready.
+The same control is available in Aster Studio at `http://localhost:8765`. The launch-readiness ledger remains fail-closed until data, tokenizer, evidence, credentials, public Hub repository and pinned Git state are ready.
 
 Promotion is stage-aware. Stage 1 is never circularly blocked by a retrieval
 claim that requires a trained stage-1 checkpoint. Before stage 2, the resulting
@@ -148,7 +148,7 @@ and uploaded to Hugging Face. The learning-rate decay occurs only near the end o
 the 92B stage, so intermediate checkpoints remain useful continuation points rather
 than prematurely cooled models.
 
-The private Hugging Face repository has a user-declared **7.5 TB decimal hard
+The public Hugging Face repository has a user-declared **7.5 TB decimal hard
 ceiling**. Aster uses **7.0 TB** as the operational refusal threshold so an
 in-flight upload, metadata, or later artifact cannot cross the hard ceiling.
 Pessimistically projecting 6 GiB over all 28 permanent pretraining milestones is
@@ -230,7 +230,7 @@ checkpoint. An unverified permanent milestone is never deleted automatically; a 
 metrics-only policy used by disposable architecture tests cannot be used for a final
 run.
 
-When `--hub-repo` is supplied, the trainer creates/uses a **private model repository** and uploads:
+When `--hub-repo` is supplied, the trainer creates/uses the **public model repository** and uploads:
 
 - each permanent token milestone;
 - final checkpoints;

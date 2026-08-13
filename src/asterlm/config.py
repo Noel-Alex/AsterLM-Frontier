@@ -473,7 +473,7 @@ class TrainConfig:
     # Optional resilient Hugging Face model-repository synchronization. The repo ID
     # can also be supplied at runtime through ASTERLM_HUB_REPO_ID.
     hub_repo_id: str | None = None
-    hub_private: bool = True
+    hub_private: bool = False
     hub_revision: str = "main"
     hub_upload_every_save: bool = False
     hub_upload_milestones: bool = True

@@ -43,7 +43,7 @@ class HubRunSync:
     """
 
     repo_id: str
-    private: bool = True
+    private: bool = False
     revision: str = "main"
     include_optimizer: bool = True
     storage_guard_bytes: int | None = None
@@ -60,6 +60,16 @@ class HubRunSync:
             private=self.private,
             exist_ok=True,
         )
+        # create_repo(exist_ok=True) does not change an existing repository's
+        # visibility. Enforce the declared contract so a stale setting cannot
+        # silently make a public checkpoint campaign private (or vice versa).
+        info = self.api.model_info(self.repo_id)
+        if bool(info.private) != self.private:
+            self.api.update_repo_settings(
+                repo_id=self.repo_id,
+                repo_type="model",
+                private=self.private,
+            )
 
     def remote_logical_bytes(self) -> int:
         """Return the repository's logical file size, including LFS/Xet files."""

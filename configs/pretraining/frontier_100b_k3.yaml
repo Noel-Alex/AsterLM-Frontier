@@ -130,7 +130,7 @@ checkpointing:
   permanent_checkpoint_count: 28
   projected_remote_permanent_checkpoint_gib: 168.0
   policy: dense rolling recovery checkpoints near the frontier plus logarithmically thinned history and permanent token milestones
-  cloud_policy: save and synchronously hash-verify a private Hugging Face full-state checkpoint at least every five minutes; resume from the newest valid Hub checkpoint across providers
+  cloud_policy: save and synchronously hash-verify a public Hugging Face full-state checkpoint at least every five minutes; resume from the newest valid Hub checkpoint across providers
   remote_quota_policy: refuse any planned upload whose pessimistic projected repository usage exceeds 7.0 TB; never cross the 7.5 TB hard ceiling
   portable_inference: scripts/infer.py --hub-repo REPO --hub-run RUN --hub-selector tokens:N
 observability:
@@ -166,6 +166,6 @@ launch_policy:
     - sealed clean corpus and decontamination manifest
     - tokenizer seal and fertility report
     - finite native-context canary and exact resume
-    - W&B login and private Hugging Face repository
+    - W&B login and public Hugging Face repository
     - Hub upload/download hash round trip
     - clean pinned Git commit

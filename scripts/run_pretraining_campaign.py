@@ -136,7 +136,7 @@ def main() -> None:
         "--campaign",
         default="configs/pretraining/frontier_100b_k3.yaml",
     )
-    parser.add_argument("--hub-repo", required=True, help="Private namespace/repository")
+    parser.add_argument("--hub-repo", required=True, help="Public namespace/repository")
     parser.add_argument("--wandb-entity", default=None)
     parser.add_argument("--start-stage", default=None)
     parser.add_argument("--dry-run", action="store_true")

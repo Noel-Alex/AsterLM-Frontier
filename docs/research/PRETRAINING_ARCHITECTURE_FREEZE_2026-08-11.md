@@ -72,7 +72,7 @@ These are finite pass/fail gates, not candidate sweeps:
 
 1. one full-recipe native-context fit and exact-resume recovery check;
 2. sealed tokenizer and cleaned/decontaminated corpus manifest;
-3. W&B and private Hugging Face identities plus checkpoint upload/download verification;
+3. W&B and public Hugging Face identities plus checkpoint upload/download verification;
 4. local checkpoint pyramid and permanent milestone policy verification;
 5. final preflight showing clean source, sufficient disk, no competing CUDA process and all
    contracts resolved;

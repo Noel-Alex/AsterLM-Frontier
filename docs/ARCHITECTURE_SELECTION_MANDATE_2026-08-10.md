@@ -135,7 +135,7 @@ tokens, step, accumulation state, architecture, tokenizer/data hashes, git and
 environment metadata and W&B run ID. Test local-local, Modal-same, Modal A-B,
 local-Modal and Modal-local recovery.
 
-Hugging Face is the canonical durable checkpoint/model plane (private repository
+Hugging Face is the canonical durable checkpoint/model plane (public repository
 `AsterLM-Frontier-checkpoints`), W&B is the canonical telemetry plane (project
 `asterlm-frontier`), and GitHub is the source/config plane. Discover authenticated
 identities locally; never put tokens in chat, config or Git.

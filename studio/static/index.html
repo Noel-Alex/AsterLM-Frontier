@@ -364,7 +364,7 @@
           <div class="panel-head"><div><div class="eyebrow">UNATTENDED PROGRAM</div><h3>Launch the frozen 100B K3 curriculum</h3></div><span class="status-pill warning">fail closed</span></div>
           <p class="muted">Runs 8K, then 16K, then 32K; resumes an interrupted stage exactly, initializes each continuation from the prior completed checkpoint, and stops on any failed preflight or missing durable final state.</p>
           <div class="form-grid cols-4">
-            <label class="span-2">Private Hugging Face repository<input id="campaign-hub-repo" placeholder="namespace/aster-k3-private"/></label>
+            <label class="span-2">Public Hugging Face repository<input id="campaign-hub-repo" value="philoweeb/AsterLM-Frontier-100B" placeholder="namespace/aster-k3-checkpoints"/></label>
             <label>W&B entity (optional)<input id="campaign-wandb-entity" placeholder="account or team"/></label>
             <label class="toggle-label"><input id="campaign-verify-hashes" type="checkbox" checked/><span>Full clean-corpus hash verification</span></label>
           </div>
@@ -465,7 +465,7 @@
               <label>Model config<input id="contract-model" value="configs/model/aster_k3_latentmoe_1p45b_a568m.yaml"/></label>
               <label>Train config<input id="contract-train" value="configs/train/frontier_100b_stage1_4k.yaml"/></label>
               <label>Data config<input id="contract-data" value="configs/data/pretrain_frontier_local_18p4b.yaml"/></label>
-              <label>Checkpoint repository<input id="contract-hub-repo" placeholder="namespace/private-checkpoints"/></label>
+              <label>Public checkpoint repository<input id="contract-hub-repo" value="philoweeb/AsterLM-Frontier-100B" placeholder="namespace/checkpoints"/></label>
               <label>Exact GPU / machine<input id="contract-gpu" placeholder="Modal: H100!; GCP: a3-highgpu-1g"/></label>
               <label>Provider zone<input id="contract-zone" placeholder="GCP only, e.g. us-central1-a"/></label>
               <label>Provisioning model<select id="contract-provisioning"><option value="">Provider default / not applicable</option><option value="STANDARD">GCP Standard</option><option value="SPOT">GCP Spot</option></select></label>

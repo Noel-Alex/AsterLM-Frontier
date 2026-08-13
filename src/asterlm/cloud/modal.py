@@ -272,7 +272,7 @@ def build_modal_launch_plan(
                 "read and hash the required manifest from the dataset Volume before "
                 "creating a GPU Sandbox"
             ),
-            "cross_provider_resume": "verified private Hugging Face checkpoint folder",
+            "cross_provider_resume": "verified public Hugging Face checkpoint folder",
         },
     }
 

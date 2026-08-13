@@ -273,7 +273,7 @@ def download_hub_checkpoint(
     cache_dir: str | Path | None = None,
     token: str | bool | None = None,
 ) -> tuple[Path, dict[str, Any]]:
-    """Download and verify one full Aster checkpoint from a private Hub repo."""
+    """Download and verify one full Aster checkpoint from a Hub repo."""
 
     from huggingface_hub import hf_hub_download, snapshot_download
 

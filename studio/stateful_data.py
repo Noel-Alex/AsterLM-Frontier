@@ -98,7 +98,7 @@ class StatefulLocalPackedDataset(IterableDataset):
             "sources": [
                 {
                     # Use config spelling + relative file names/sizes rather than
-                    # absolute checkout paths so a private Hub checkpoint can be
+                    # absolute checkout paths so a Hub checkpoint can be
                     # restored on another machine after copying the same cleaned
                     # corpus to the same configured relative location.
                     "path": str(source.path),

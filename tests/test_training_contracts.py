@@ -191,8 +191,8 @@ def test_final_contract_is_mechanically_promotion_locked(tmp_path: Path) -> None
         run_class="final",
         promotion_gates_path=str(gates),
         wandb_project="asterlm-frontier",
-        hub_repo_id="owner/private-checkpoints",
-        hub_private=True,
+        hub_repo_id="owner/public-checkpoints",
+        hub_private=False,
         hub_include_optimizer=True,
         hub_fail_on_error=True,
         hub_storage_guard_tb_decimal=7.0,
@@ -223,12 +223,37 @@ def test_final_contract_rejects_metrics_only_checkpoint_policy(tmp_path: Path) -
         promotion_gates_path=str(gates),
         checkpoint_policy="none",
         wandb_project="asterlm-frontier",
-        hub_repo_id="owner/private-checkpoints",
-        hub_private=True,
+        hub_repo_id="owner/public-checkpoints",
+        hub_private=False,
         hub_include_optimizer=True,
         num_workers=0,
     )
     with pytest.raises(TrainingContractError, match="checkpoint_policy=full"):
+        validate_training_contract(train, data, source_provenance={"dirty": False})
+
+
+def test_final_contract_rejects_private_checkpoint_repo(tmp_path: Path) -> None:
+    _, data = _sealed_data(tmp_path)
+    tokenizer, tokenizer_manifest = _sealed_tokenizer(tmp_path, data)
+    gates = tmp_path / "gates.yaml"
+    _passed_gates(gates)
+    train = TrainConfig(
+        run_class="final",
+        promotion_gates_path=str(gates),
+        wandb_project="asterlm-frontier",
+        hub_repo_id="owner/private-checkpoints",
+        hub_private=True,
+        hub_include_optimizer=True,
+        hub_fail_on_error=True,
+        hub_storage_guard_tb_decimal=7.0,
+        hub_storage_hard_cap_tb_decimal=7.5,
+        checkpoint_local_budget_gib=150.0,
+        tokenizer_path=str(tokenizer),
+        tokenizer_manifest_path=str(tokenizer_manifest),
+        num_workers=0,
+    )
+
+    with pytest.raises(TrainingContractError, match="public Hugging Face"):
         validate_training_contract(train, data, source_provenance={"dirty": False})
 
 

@@ -16,8 +16,8 @@ def main() -> None:
     group = parser.add_mutually_exclusive_group()
     group.add_argument("--init-checkpoint", default=None, help="Load weights only for a new training stage")
     group.add_argument("--resume", default=None, help="Resume model, optimizer, RNG, step, tokens, and data position")
-    parser.add_argument("--hub-repo", default=None, help="Private Hugging Face model repo for milestone/final backups")
-    parser.add_argument("--hub-public", action="store_true", help="Create/use a public Hub repo instead of private")
+    parser.add_argument("--hub-repo", default=None, help="Hugging Face model repo for milestone/final backups")
+    parser.add_argument("--hub-public", action="store_true", help="Use a public Hub repo (the default)")
     parser.add_argument("--hub-model-only", action="store_true", help="Do not upload optimizer/RNG trainer_state.pt")
     parser.add_argument(
         "--run-class",

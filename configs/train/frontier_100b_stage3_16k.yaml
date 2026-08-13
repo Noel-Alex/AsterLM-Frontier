@@ -57,8 +57,8 @@ train:
   system_metrics_interval: 5.0
   diagnostic_interval: 10
   save_diagnostic_bundle: true
-  hub_repo_id: null
-  hub_private: true
+  hub_repo_id: philoweeb/AsterLM-Frontier-100B
+  hub_private: false
   hub_revision: main
   hub_upload_every_save: false
   hub_upload_milestones: true

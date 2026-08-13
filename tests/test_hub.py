@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -44,6 +45,32 @@ def _sync(api: _FakeApi) -> HubRunSync:
     sync.storage_hard_cap_bytes = None
     sync.api = api
     return sync
+
+
+def test_hub_sync_enforces_declared_public_visibility(monkeypatch: pytest.MonkeyPatch) -> None:
+    class VisibilityApi:
+        def __init__(self) -> None:
+            self.private = True
+            self.settings: list[bool] = []
+
+        def create_repo(self, **_: object) -> None:
+            return None
+
+        def model_info(self, _repo_id: str) -> SimpleNamespace:
+            return SimpleNamespace(private=self.private)
+
+        def update_repo_settings(self, **kwargs: object) -> None:
+            self.private = bool(kwargs["private"])
+            self.settings.append(self.private)
+
+    api = VisibilityApi()
+    monkeypatch.setattr("huggingface_hub.HfApi", lambda: api)
+
+    sync = HubRunSync("owner/public-checkpoints", private=False)
+
+    assert sync.private is False
+    assert api.private is False
+    assert api.settings == [False]
 
 
 def test_remote_checkpoint_verification_supports_git_and_lfs_hashes(tmp_path: Path) -> None:

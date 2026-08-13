@@ -21,7 +21,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Generate text with an AsterLM checkpoint")
     source = parser.add_mutually_exclusive_group(required=True)
     source.add_argument("--checkpoint")
-    source.add_argument("--hub-repo", help="Private Hugging Face model repository")
+    source.add_argument("--hub-repo", help="Hugging Face model repository")
     parser.add_argument("--hub-run", default=None, help="Run folder under runs/ in the Hub repo")
     parser.add_argument(
         "--hub-selector",

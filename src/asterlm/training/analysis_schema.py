@@ -59,7 +59,7 @@ def build_analysis_manifest(config: TrainConfig) -> dict[str, Any]:
                 "hub-verifications/", "checkpoint-*/checkpoint_manifest.json",
             ],
             "wandb": "scalar history plus checkpoint/failure diagnostic artifacts",
-            "huggingface": "private hash-verified full-state checkpoints and run ledger",
+            "huggingface": "public hash-verified full-state checkpoints and run ledger",
         },
         "notes": [
             "Energy is observational only and never ranks training decisions.",

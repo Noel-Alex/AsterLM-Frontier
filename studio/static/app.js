@@ -802,7 +802,7 @@ function bind() {
   };
   $("#start-pretraining-campaign").onclick=()=>{
     const hub_repo=$("#campaign-hub-repo").value.trim();
-    if(!hub_repo)return showError(new Error("Enter the private Hugging Face repository first."));
+    if(!hub_repo)return showError(new Error("Enter the public Hugging Face repository first."));
     if(!confirm("Start the frozen 100B pretraining campaign? Preflight runs first; after it passes this allocates the GPU and continues unattended across all three stages."))return;
     startJob("pretraining_campaign",{
       hub_repo,
