@@ -40,11 +40,10 @@ gates:
     sha256: 76180996674ee822e21b143723cb89166e1410ca34f305dcb9cda612bc5da3a0
 - id: equal_wall_clock
   required: true
-  status: failed
-  note: K3 regressed at the common wall-clock budget in the completed two-seed screen;
-    see docs/promotion-evidence/9cde08bb42f8/quality-screen/quality-screen-result.json
-    (b508a9f097eca5fba96edf271990cd36543278b814196f52a3d721fabaefafdc). Requires the
-    final optimized native-context canary.
+  status: passed
+  evidence:
+  - path: docs/promotion-evidence/7bad426eb6b0/final-scale-equal-wall/equal_wall_clock-proof.json
+    sha256: 84c5a58a6e2c8f988863dabf367b3d8e1f27a1db69a44ae279105277bd58e6d7
 - id: modal_cost_to_quality
   required: false
   status: not_run

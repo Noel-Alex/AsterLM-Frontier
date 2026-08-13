@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "gate_id": "equal_wall_clock",
+  "status": "passed",
+  "created_at_utc": "2026-08-13T18:21:39.633230+00:00",
+  "evaluator": {
+    "name": "asterlm-final-scale-equal-wall",
+    "version": "1",
+    "git_commit": "7bad426eb6b012c57f4f4f7da5f73aa04a312b4c"
+  },
+  "experiment_ids": [
+    "k3-scale-quality-seed-1337",
+    "k3-scale-quality-seed-2027"
+  ],
+  "artifacts": [
+    {
+      "path": "docs/promotion-evidence/7bad426eb6b0/final-scale-equal-wall/quality-analysis-1.json",
+      "sha256": "bb4de7542b16463ce121b8bb041149ed3b39ab4c0f4da647eafd7acc09318b36"
+    },
+    {
+      "path": "docs/promotion-evidence/7bad426eb6b0/final-scale-equal-wall/final-scale-equal-wall-result.json",
+      "sha256": "55a1afbc33917aa88c3012fa9a6fedfc120a69afac186987fecedf507bac2985"
+    }
+  ]
+}

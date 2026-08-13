@@ -1,0 +1,42 @@
+{
+  "schema_version": 1,
+  "status": "passed",
+  "created_at_utc": "2026-08-13T18:21:39.616069+00:00",
+  "git_commit": "7bad426eb6b012c57f4f4f7da5f73aa04a312b4c",
+  "source_artifacts": [
+    {
+      "path": "docs/promotion-evidence/7bad426eb6b0/final-scale-equal-wall/quality-analysis-1.json",
+      "sha256": "bb4de7542b16463ce121b8bb041149ed3b39ab4c0f4da647eafd7acc09318b36"
+    }
+  ],
+  "assertions": {
+    "seeds": {
+      "1337": {
+        "common_wall_seconds": 384.52496479300004,
+        "small_equal_wall_loss": 6.693538665771484,
+        "large_equal_wall_loss": 6.654144212234755,
+        "large_equal_wall_improvement": 0.03939445353672966,
+        "large_equal_token_improvement": 0.07512396574020386,
+        "large_equal_active_flops_improvement": 0.03523753593246148,
+        "small_median_tokens_per_second": 3137.797491647095,
+        "large_median_tokens_per_second": 2673.095015472168
+      },
+      "2027": {
+        "common_wall_seconds": 396.62979837299997,
+        "small_equal_wall_loss": 6.699438095092773,
+        "large_equal_wall_loss": 6.660891928112568,
+        "large_equal_wall_improvement": 0.038546166980205854,
+        "large_equal_token_improvement": 0.055883705615997314,
+        "large_equal_active_flops_improvement": 0.028822352170075227,
+        "small_median_tokens_per_second": 3016.7262623896677,
+        "large_median_tokens_per_second": 2643.1400209662424
+      }
+    },
+    "mean_large_equal_wall_loss_improvement": 0.038970310258467755,
+    "model_config_sha256": {
+      "tier2-k3-latentmoe-868m-a483m:cutlass-grouped-k3-muon8bit-bf16": "f8a09fc90566ab737b72b2628a9a1f1b09edb0fddac47b3c55efeef194c4972b",
+      "tier2-k3-latentmoe-1p45b-a568m:cutlass-grouped-k3-muon8bit-bf16": "4252207d3907b85ffe0a65145b7a826a25879afedecec29c9312beb9d3852d3b"
+    },
+    "historical_control": "The earlier two-seed 220M K3-vs-dense equal-wall failure remains recorded. This gate selects the final 1.448B deployable scale over its 868M fallback; dense mechanism quality remains separately covered by dense_baseline_regression."
+  }
+}
