@@ -1,9 +1,35 @@
+import json
+
+from asterlm.experiments import quality_analysis
 from asterlm.experiments.quality_analysis import (
     first_budget_at_or_below,
     interpolate_loss,
     normalized_curve_auc,
     optimizer_screening,
 )
+
+
+def test_compact_quality_analysis_preserves_manifest_model_hash(tmp_path):
+    campaign = {
+        "status": "running",
+        "seeds": [7],
+        "execution_matrix": [{"candidate_id": "candidate", "execution_variant": "bf16"}],
+        "runs": {
+            "7:candidate:bf16": {
+                "model_config": "configs/model/candidate.yaml",
+                "model_config_sha256": "abc123",
+                "train_config": "configs/train/candidate.yaml",
+                "comparison_role": "recipe_research",
+            }
+        },
+    }
+    path = tmp_path / "quality-campaign.json"
+    path.write_text(json.dumps(campaign), encoding="utf-8")
+
+    result = quality_analysis.analyze_quality_campaign(path)
+
+    assert result["runs"][0]["model_config_sha256"] == "abc123"
+    assert result["runs"][0]["model_config"] == "configs/model/candidate.yaml"
 
 
 def test_quality_curve_budget_metrics_interpolate_and_normalize():

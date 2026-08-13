@@ -217,12 +217,31 @@ def analyze_quality_campaign(campaign_path: str | Path) -> dict[str, Any]:
     for seed, candidate, variant in expected:
         run_dir = root / f"seed-{seed}" / candidate / variant
         summary = summarize_quality_run(run_dir)
+        manifest_run = (campaign.get("runs") or {}).get(
+            f"{seed}:{candidate}:{variant}", {}
+        )
         record = {
             "seed": seed,
             "candidate_id": candidate,
             "execution_variant": variant,
             "run_dir": run_dir.relative_to(root).as_posix(),
             **summary,
+            # Execution provenance belongs to the campaign manifest rather than
+            # metrics.jsonl. Preserve it in compact analyses so evidence importers
+            # can prove that all seeds used the same materialized model recipe.
+            **{
+                key: manifest_run[key]
+                for key in (
+                    "model_config",
+                    "model_config_sha256",
+                    "train_config",
+                    "train_overrides",
+                    "comparison_role",
+                    "numerical_family",
+                    "environment",
+                )
+                if key in manifest_run
+            },
         }
         records.append(record)
         grouped[f"{candidate}:{variant}"].append(record)
