@@ -69,6 +69,9 @@ The local raw corpus is approximately 87.032B tokens, including about 3B Nemotro
 Math tokens beyond the 84.032B primary pool. NVIDIA code shards are still gated
 and absent. A raw-token count does not satisfy the final contract.
 
+The source/access audit and directly materialized permissive fallback are recorded
+in [`data/CODE_TRANCHE_DECISION_2026-08-13.md`](data/CODE_TRANCHE_DECISION_2026-08-13.md).
+
 The cleaning/promotion path is fail-closed and requires:
 
 - explicit source identities and weights;

@@ -1,6 +1,6 @@
 stack_edu:
-  # Final 13B-token code tranche for the 100B campaign. It reuses every shard and
-  # cursor produced by the 2.4B and 6.5B tiers.
+  # RETIRED historical reconstruction target. Studio reads this file only to
+  # report discarded local progress; no active campaign may schedule it.
   output_dir: data/stack-edu-frontier-2p4b
   shard_size_mb: 512
   workers: 4

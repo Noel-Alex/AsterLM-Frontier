@@ -1,4 +1,5 @@
 stack_edu:
+  # RETIRED historical reconstruction target; not an active corpus source.
   output_dir: data/stack-edu-multilang
   shard_size_mb: 512
   workers: 4

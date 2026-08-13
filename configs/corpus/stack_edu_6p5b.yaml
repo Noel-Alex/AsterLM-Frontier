@@ -1,4 +1,5 @@
 stack_edu:
+  # RETIRED historical reconstruction target; not an active corpus source.
   # Expands the existing Stack-Edu directory in place.
   output_dir: data/stack-edu-frontier-2p4b
   shard_size_mb: 512
