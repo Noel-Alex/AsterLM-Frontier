@@ -58,37 +58,51 @@ def validate_analyses(analyses: list[dict[str, Any]]) -> dict[str, Any]:
             raise ValueError(f"Unexpected scale candidates: {sorted(candidates)}")
         runs = analysis.get("runs") or []
         seeds = {int(row["seed"]) for row in runs}
-        if len(seeds) != 1 or len(runs) != 2:
-            raise ValueError("Each scale artifact must contain one seed and two runs")
-        seed = seeds.pop()
-        if seed in by_seed:
-            raise ValueError(f"Duplicate scale evidence for seed {seed}")
-        if any(row.get("status") != "ok" or int(row.get("tokens_seen") or 0) != 1_048_576 for row in runs):
-            raise ValueError(f"Seed {seed} contains an incomplete scale run")
-        for row in runs:
-            key = f"{row['candidate_id']}:{row['execution_variant']}"
-            model_hashes[key].add(str(row.get("model_config_sha256") or ""))
-        small = candidates[SMALL]
-        large = candidates[LARGE]
-        wall_improvement = float(small["equal_wall_loss_mean"]) - float(large["equal_wall_loss_mean"])
-        token_improvement = float(small["final_eval_loss_mean"]) - float(large["final_eval_loss_mean"])
-        flops_improvement = float(small["equal_active_flops_loss_mean"]) - float(
-            large["equal_active_flops_loss_mean"]
-        )
-        if wall_improvement <= 0:
-            raise ValueError(f"1.448B did not win equal-wall loss for seed {seed}")
-        if token_improvement <= 0 or flops_improvement <= 0:
-            raise ValueError(f"1.448B did not win token/FLOP controls for seed {seed}")
-        by_seed[seed] = {
-            "common_wall_seconds": float(analysis["common_budgets_by_seed"][str(seed)]["wall_clock_total_seconds"]),
-            "small_equal_wall_loss": float(small["equal_wall_loss_mean"]),
-            "large_equal_wall_loss": float(large["equal_wall_loss_mean"]),
-            "large_equal_wall_improvement": wall_improvement,
-            "large_equal_token_improvement": token_improvement,
-            "large_equal_active_flops_improvement": flops_improvement,
-            "small_median_tokens_per_second": float(small["median_training_tokens_per_second"]),
-            "large_median_tokens_per_second": float(large["median_training_tokens_per_second"]),
-        }
+        if not seeds or len(runs) != 2 * len(seeds):
+            raise ValueError("Each scale artifact must contain exactly two runs per seed")
+        for seed in seeds:
+            if seed in by_seed:
+                raise ValueError(f"Duplicate scale evidence for seed {seed}")
+            seed_runs = [row for row in runs if int(row["seed"]) == seed]
+            if len(seed_runs) != 2 or any(
+                row.get("status") != "ok" or int(row.get("tokens_seen") or 0) != 1_048_576
+                for row in seed_runs
+            ):
+                raise ValueError(f"Seed {seed} contains an incomplete scale run")
+            for row in seed_runs:
+                key = f"{row['candidate_id']}:{row['execution_variant']}"
+                model_hashes[key].add(str(row.get("model_config_sha256") or ""))
+            small = candidates[SMALL]
+            large = candidates[LARGE]
+            wall_improvement = float(small["equal_wall_loss_by_seed"][str(seed)]) - float(
+                large["equal_wall_loss_by_seed"][str(seed)]
+            )
+            token_improvement = float(small["final_eval_loss_by_seed"][str(seed)]) - float(
+                large["final_eval_loss_by_seed"][str(seed)]
+            )
+            flops_improvement = float(
+                small["equal_active_flops_loss_by_seed"][str(seed)]
+            ) - float(large["equal_active_flops_loss_by_seed"][str(seed)])
+            if wall_improvement <= 0:
+                raise ValueError(f"1.448B did not win equal-wall loss for seed {seed}")
+            if token_improvement <= 0 or flops_improvement <= 0:
+                raise ValueError(f"1.448B did not win token/FLOP controls for seed {seed}")
+            by_seed[seed] = {
+                "common_wall_seconds": float(
+                    analysis["common_budgets_by_seed"][str(seed)]["wall_clock_total_seconds"]
+                ),
+                "small_equal_wall_loss": float(small["equal_wall_loss_by_seed"][str(seed)]),
+                "large_equal_wall_loss": float(large["equal_wall_loss_by_seed"][str(seed)]),
+                "large_equal_wall_improvement": wall_improvement,
+                "large_equal_token_improvement": token_improvement,
+                "large_equal_active_flops_improvement": flops_improvement,
+                "small_median_tokens_per_second": float(
+                    small["median_training_tokens_per_second_by_seed"][str(seed)]
+                ),
+                "large_median_tokens_per_second": float(
+                    large["median_training_tokens_per_second_by_seed"][str(seed)]
+                ),
+            }
     if set(by_seed) != {1337, 2027}:
         raise ValueError(f"Expected seeds 1337 and 2027, got {sorted(by_seed)}")
     if any(len(values) != 1 or not next(iter(values)) for values in model_hashes.values()):

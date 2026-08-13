@@ -284,6 +284,8 @@ def analyze_quality_campaign(campaign_path: str | Path) -> dict[str, Any]:
         ]
         equal_wall = []
         equal_flops = []
+        equal_wall_by_seed: dict[str, float] = {}
+        equal_flops_by_seed: dict[str, float] = {}
         time_to_common_loss = []
         tokens_to_common_loss = []
         flops_to_common_loss = []
@@ -297,6 +299,7 @@ def analyze_quality_campaign(campaign_path: str | Path) -> dict[str, Any]:
                 )
                 if value is not None:
                     equal_wall.append(value)
+                    equal_wall_by_seed[str(item["seed"])] = value
             if "estimated_cumulative_flops" in budgets:
                 value = interpolate_loss(
                     item["learning_curve"],
@@ -305,6 +308,7 @@ def analyze_quality_campaign(campaign_path: str | Path) -> dict[str, Any]:
                 )
                 if value is not None:
                     equal_flops.append(value)
+                    equal_flops_by_seed[str(item["seed"])] = value
             target = common_target_losses.get(int(item["seed"]))
             if target is not None:
                 for x_key, destination in (
@@ -324,14 +328,26 @@ def analyze_quality_campaign(campaign_path: str | Path) -> dict[str, Any]:
             "expected_seed_count": len(items),
             "final_eval_loss_mean": _mean(losses),
             "final_eval_loss_stdev": _stdev(losses),
+            "final_eval_loss_by_seed": {
+                str(item["seed"]): float(item["eval_main_loss"])
+                for item in complete
+                if item.get("eval_main_loss") is not None
+            },
             "token_curve_auc_mean": _mean(token_auc),
             "wall_curve_auc_mean": _mean(wall_auc),
             "equal_wall_loss_mean": _mean(equal_wall),
+            "equal_wall_loss_by_seed": equal_wall_by_seed,
             "equal_active_flops_loss_mean": _mean(equal_flops),
+            "equal_active_flops_loss_by_seed": equal_flops_by_seed,
             "time_to_common_loss_seconds_mean": _mean(time_to_common_loss),
             "tokens_to_common_loss_mean": _mean(tokens_to_common_loss),
             "active_flops_to_common_loss_mean": _mean(flops_to_common_loss),
             "median_training_tokens_per_second": statistics.median(throughput) if throughput else None,
+            "median_training_tokens_per_second_by_seed": {
+                str(item["seed"]): float(item["median_training_tokens_per_second"])
+                for item in complete
+                if item.get("median_training_tokens_per_second") is not None
+            },
             "mean_gpu_util_percent": _mean(
                 [float(item["mean_gpu_util_percent"]) for item in complete if item.get("mean_gpu_util_percent") is not None]
             ),

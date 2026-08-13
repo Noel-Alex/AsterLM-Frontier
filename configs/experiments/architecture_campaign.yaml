@@ -103,7 +103,7 @@ execution_variants:
     comparison_role: recipe_research
     numerical_family: bf16-torch-int8-optimizer-state
     model_overrides: {linear_backend: torch, ffn_linear_backend: torch}
-    train_overrides: {compile: false, precision_backend: amp, moe_implementation: cutlass, optimizer: muon_adamw8bit, muon_state_dtype: int8_blockwise, muon_quant_block_size: 2048, muon_per_head: true, muon_lr: 0.01, adam_lr: 0.0003, schedule_type: cosine, warmup_steps: 2, sequence_length: 2048, micro_batch_size: 1, gradient_accumulation_steps: 8, eval_interval: 16, eval_batches: 8, log_interval: 1, diagnostic_interval: 8}
+    train_overrides: {compile: false, precision_backend: amp, moe_implementation: cutlass, optimizer: muon_adamw8bit, muon_state_dtype: int8_blockwise, muon_quant_block_size: 2048, muon_per_head: true, muon_megabatch_max_gib: 0.125, muon_release_gradients_after_step: true, muon_lr: 0.01, adam_lr: 0.0003, schedule_type: cosine, warmup_steps: 2, sequence_length: 2048, micro_batch_size: 1, gradient_accumulation_steps: 8, eval_interval: 16, eval_batches: 8, log_interval: 1, diagnostic_interval: 8}
     environment: {}
   torchao-fp8-experts-k3-muon8bit:
     description: Prototype TorchAO rowwise-FP8 routed expert GEMMs with BF16 canonical parameters and GPU-resident INT8 Muon state; SM90/SM100 cloud candidate only because PyTorch scaled grouped MM is unavailable on SM89 Ada.
