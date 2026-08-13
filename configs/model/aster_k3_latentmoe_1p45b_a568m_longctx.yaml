@@ -30,7 +30,9 @@ model:
   moe_router_z_loss_weight: 0.00001
 
   kda_ratio: 3
-  kda_backend: auto
+  # Keep context extension on the exact recurrent implementation used by base
+  # pretraining; never silently select the slower correctness oracle.
+  kda_backend: fla
   kda_num_heads: 10
   kda_head_dim: 128
   kda_expand_v: 1.0

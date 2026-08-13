@@ -34,7 +34,7 @@ from .checkpoint import (
     prune_rolling_checkpoints,
     save_checkpoint,
 )
-from .contracts import validate_training_contract
+from .contracts import validate_model_backend_contract, validate_training_contract
 from .execution import probe_execution_backends, resolve_execution_engine
 from .hub import HubRunSync, HubUploadQueue, HubUploadTask
 from .metrics import JsonlLogger
@@ -95,6 +95,7 @@ class Trainer:
         checkpoint_source = train_config.resume or initial_checkpoint
         if checkpoint_source:
             pin_kda_backend_from_checkpoint(model_config, checkpoint_source)
+        validate_model_backend_contract(model_config, train_config)
         self.model_config = model_config
         self.train_config = train_config
         self.data_config = data_config

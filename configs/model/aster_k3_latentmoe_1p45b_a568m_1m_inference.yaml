@@ -31,7 +31,9 @@ model:
   moe_router_z_loss_weight: 0.00001
 
   kda_ratio: 3
-  kda_backend: auto
+  # A validation-gated stretch configuration still has to preserve the
+  # checkpoint's exact recurrent implementation.
+  kda_backend: fla
   kda_num_heads: 10
   kda_head_dim: 128
   kda_expand_v: 1.0

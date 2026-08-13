@@ -9,13 +9,14 @@ from pathlib import Path
 import pytest
 import yaml
 
-from asterlm.config import DataConfig, TrainConfig
+from asterlm.config import AsterConfig, DataConfig, TrainConfig
 from asterlm.data.clean_manifest import build_clean_corpus_manifest
 from asterlm.experiments import MODAL_PROMOTION_GATES, REQUIRED_FINAL_RUN_GATES
 from asterlm.training.contracts import (
     TrainingContractError,
     canonical_data_config_sha256,
     validate_clean_manifest,
+    validate_model_backend_contract,
     validate_training_contract,
 )
 
@@ -230,6 +231,23 @@ def test_final_contract_rejects_metrics_only_checkpoint_policy(tmp_path: Path) -
     )
     with pytest.raises(TrainingContractError, match="checkpoint_policy=full"):
         validate_training_contract(train, data, source_provenance={"dirty": False})
+
+
+def test_final_model_contract_rejects_automatic_kda_fallback() -> None:
+    with pytest.raises(TrainingContractError, match="explicit kda_backend"):
+        validate_model_backend_contract(
+            AsterConfig(kda_ratio=3, kda_backend="auto"),
+            TrainConfig(run_class="final"),
+        )
+
+    validate_model_backend_contract(
+        AsterConfig(kda_ratio=3, kda_backend="fla"),
+        TrainConfig(run_class="final"),
+    )
+    validate_model_backend_contract(
+        AsterConfig(kda_ratio=3, kda_backend="auto"),
+        TrainConfig(run_class="decision_grade"),
+    )
 
 
 def test_final_contract_rejects_private_checkpoint_repo(tmp_path: Path) -> None:

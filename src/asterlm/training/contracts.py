@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from asterlm.artifacts import sha256_file
-from asterlm.config import DataConfig, TrainConfig
+from asterlm.config import AsterConfig, DataConfig, TrainConfig
 from asterlm.experiments import evaluate_promotion_gates
 
 DECISION_VALIDATION_ROLES = {
@@ -29,6 +29,16 @@ REQUIRED_CLEANING_FLAGS = {
 
 class TrainingContractError(RuntimeError):
     """Raised before model allocation when a protected training run is unsafe."""
+
+
+def validate_model_backend_contract(model: AsterConfig, train: TrainConfig) -> None:
+    """Prevent final runs from silently changing their recurrent implementation."""
+
+    if train.run_class == "final" and model.kda_ratio > 0 and model.kda_backend == "auto":
+        raise TrainingContractError(
+            "final KDA runs require an explicit kda_backend (normally 'fla'); "
+            "kda_backend='auto' may silently fall back to the torch correctness oracle"
+        )
 
 
 @dataclass(frozen=True, slots=True)

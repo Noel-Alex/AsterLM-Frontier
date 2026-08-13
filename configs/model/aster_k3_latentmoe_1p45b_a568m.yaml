@@ -27,7 +27,9 @@ model:
   moe_router_z_loss_weight: 0.00001
 
   kda_ratio: 3
-  kda_backend: auto
+  # Final pretraining must never silently fall back to the torch oracle when
+  # FLA is absent or incompatible. Checkpoints persist this backend contract.
+  kda_backend: fla
   kda_num_heads: 10
   kda_head_dim: 128
   kda_expand_v: 1.0
