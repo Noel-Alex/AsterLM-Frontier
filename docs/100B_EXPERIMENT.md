@@ -54,11 +54,39 @@ After both code sources complete, globally clean, cross-deduplicate, decontamina
 ```bash
 python scripts/prepare_frontier_data.py \
   --raw-corpus data/corpus-frontier-16b \
-  --raw-code data/corpus-nemotron-candidates \
-  --code-id nemotron_frontier \
+  --extra-source nemotron_math=data/corpus-nemotron-candidates/nemotron_cc_math_4plus \
+  --source-weight nemotron_math=0.05 \
+  --extra-source nemotron_cc_code=data/corpus-nemotron-candidates/nemotron_cc_code \
+  --source-weight nemotron_cc_code=0.09 \
+  --fim-source nemotron_cc_code \
+  --extra-source nemotron_synthetic_code=data/corpus-nemotron-candidates/nemotron_synthetic_code \
+  --source-weight nemotron_synthetic_code=0.05 \
+  --fim-source nemotron_synthetic_code \
   --benchmarks data/decontamination-benchmarks \
   --output data/clean-frontier
 ```
+
+Each supplementary source remains independently labeled and weighted. FIM is
+enabled only for the two code sources; the Nemotron math tranche must never be
+passed through `--raw-code` or marked as a FIM source.
+
+If NVIDIA access is still pending, seal the already materialized 87.03B-token
+pool without inventing code data:
+
+```bash
+python scripts/prepare_frontier_data.py \
+  --raw-corpus data/corpus-frontier-16b \
+  --extra-source nemotron_math=data/corpus-nemotron-candidates/nemotron_cc_math_4plus \
+  --source-weight nemotron_math=0.05 \
+  --benchmarks data/decontamination-benchmarks \
+  --output data/clean-frontier
+```
+
+The resulting manifest reports the smaller unique-token pool. Completing a
+100B-token optimizer curriculum then requires explicit deterministic replay;
+the ledger must report effective epochs and must not call replayed tokens new
+data. Adding code later requires rebuilding the clean derivative and tokenizer
+before the production run, not appending silently to an active campaign.
 
 Then train and seal the final tokenizer. The command atomically publishes `tokenizer.json` and a corpus-bound `tokenizer_manifest.json` with hashes, build parameters and source-level fertility measurements:
 

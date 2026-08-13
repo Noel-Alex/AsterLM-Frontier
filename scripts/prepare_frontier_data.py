@@ -13,6 +13,59 @@ import yaml
 from asterlm.data.clean_manifest import build_clean_corpus_manifest
 
 SOURCES = ["fineweb_edu", "dclm", "cosmopedia_v2", "finemath_4plus"]
+BASE_WEIGHTS = {
+    "fineweb_edu": 0.53,
+    "dclm": 0.11,
+    "cosmopedia_v2": 0.09,
+    "finemath_4plus": 0.13,
+}
+
+
+def parse_assignments(values: list[str], *, value_type: type = str) -> dict[str, object]:
+    parsed: dict[str, object] = {}
+    for value in values:
+        key, separator, raw = value.partition("=")
+        key = key.strip()
+        raw = raw.strip()
+        if not separator or not key or not raw:
+            raise ValueError(f"Expected ID=VALUE, got {value!r}")
+        if key in parsed:
+            raise ValueError(f"Duplicate assignment for {key!r}")
+        parsed[key] = value_type(raw)
+    return parsed
+
+
+def normalized_source_specs(
+    jobs: list[tuple[str, Path, str]],
+    *,
+    weights: dict[str, float],
+    fim_sources: set[str],
+) -> list[dict[str, object]]:
+    ids = [name for name, _, _ in jobs]
+    if len(ids) != len(set(ids)):
+        raise ValueError("Clean source ids must be unique")
+    unknown_weights = set(weights) - set(ids)
+    unknown_fim = fim_sources - set(ids)
+    if unknown_weights or unknown_fim:
+        raise ValueError(
+            f"Source policy names unknown ids: weights={sorted(unknown_weights)}, fim={sorted(unknown_fim)}"
+        )
+    missing_weights = set(ids) - set(weights)
+    if missing_weights:
+        raise ValueError(f"Missing source weights: {sorted(missing_weights)}")
+    if any(weight <= 0 for weight in weights.values()):
+        raise ValueError("All source weights must be positive")
+    total = sum(weights[name] for name in ids)
+    return [
+        {
+            "id": name,
+            "path": str(path),
+            "text_field": field,
+            "weight": weights[name] / total,
+            "fim_rate": 0.5 if name in fim_sources else 0.0,
+        }
+        for name, path, field in jobs
+    ]
 
 
 def run(command: list[str]) -> None:
@@ -32,7 +85,30 @@ def main() -> None:
         help="Optional separately audited code-corpus directory; Stack-Edu is retired",
     )
     parser.add_argument("--code-id", default="code", help="Source id for --raw-code")
-    parser.add_argument("--benchmarks", "--benchmark-dir", dest="benchmarks", default="data/decontamination-benchmarks")
+    parser.add_argument(
+        "--extra-source",
+        action="append",
+        default=[],
+        metavar="ID=PATH",
+        help="Add a separately labeled supplementary source; repeat as needed",
+    )
+    parser.add_argument(
+        "--source-weight",
+        action="append",
+        default=[],
+        metavar="ID=FLOAT",
+        help="Override/add a pre-normalization mixture weight",
+    )
+    parser.add_argument(
+        "--fim-source",
+        action="append",
+        default=[],
+        metavar="ID",
+        help="Enable 50 percent fill-in-the-middle augmentation only for this code source",
+    )
+    parser.add_argument(
+        "--benchmarks", "--benchmark-dir", dest="benchmarks", default="data/decontamination-benchmarks"
+    )
     parser.add_argument("--output", "--output-dir", dest="output", default="data/clean-frontier")
     parser.add_argument("--pii-mode", choices=["redact", "drop", "keep"], default="redact")
     parser.add_argument("--near-distance", type=int, default=3)
@@ -63,8 +139,23 @@ def main() -> None:
         print("WARNING: benchmark directory is missing; cleaning will run without decontamination")
 
     jobs = [(name, Path(args.raw_corpus) / name, "text") for name in SOURCES]
+    extra_sources = parse_assignments(args.extra_source)
+    jobs.extend((name, Path(str(path)), "text") for name, path in extra_sources.items())
+    weights = dict(BASE_WEIGHTS)
+    weights.update(
+        {
+            name: float(value)
+            for name, value in parse_assignments(args.source_weight, value_type=float).items()
+        }
+    )
+    fim_sources = set(args.fim_source)
     if args.raw_code and not args.skip_code:
+        if args.code_id in extra_sources:
+            raise ValueError(f"--code-id duplicates --extra-source id {args.code_id!r}")
         jobs.append((args.code_id, Path(args.raw_code), "text"))
+        weights.setdefault(args.code_id, 0.14)
+        fim_sources.add(args.code_id)
+    specs = normalized_source_specs(jobs, weights=weights, fim_sources=fim_sources)
     for name, source, field in jobs:
         if not source.exists():
             raise FileNotFoundError(f"Missing {source}; run scripts/download_data.py first")
@@ -126,41 +217,28 @@ def main() -> None:
             "mask_cross_document_loss": True,
             "manifest_path": str(output / "clean_manifest.json"),
             "validation_role": "architecture_holdout",
-            "sources": [
-                {"path": str(output / "fineweb_edu"), "text_field": "text", "weight": 0.53},
-                {"path": str(output / "dclm"), "text_field": "text", "weight": 0.11},
-                {"path": str(output / "cosmopedia_v2"), "text_field": "text", "weight": 0.09},
-                {"path": str(output / "finemath_4plus"), "text_field": "text", "weight": 0.13},
-            ],
-            "validation_sources": [
-                {"path": str(output / "validation" / "fineweb_edu"), "text_field": "text", "weight": 0.53},
-                {"path": str(output / "validation" / "dclm"), "text_field": "text", "weight": 0.11},
-                {"path": str(output / "validation" / "cosmopedia_v2"), "text_field": "text", "weight": 0.09},
-                {"path": str(output / "validation" / "finemath_4plus"), "text_field": "text", "weight": 0.13},
-            ],
+            "sources": [],
+            "validation_sources": [],
         }
     }
-    if args.raw_code and not args.skip_code:
+    for spec in specs:
+        source_id = str(spec["id"])
         config["data"]["sources"].append(
             {
-                "path": str(output / args.code_id),
-                "text_field": "text",
-                "weight": 0.14,
-                "fim_rate": 0.5,
+                "path": str(output / source_id),
+                "text_field": spec["text_field"],
+                "weight": spec["weight"],
+                "fim_rate": spec["fim_rate"],
             }
         )
         config["data"]["validation_sources"].append(
             {
-                "path": str(output / "validation" / args.code_id),
-                "text_field": "text",
-                "weight": 0.14,
+                "path": str(output / "validation" / source_id),
+                "text_field": spec["text_field"],
+                "weight": spec["weight"],
                 "fim_rate": 0.0,
             }
         )
-    for key in ("sources", "validation_sources"):
-        total = sum(source["weight"] for source in config["data"][key])
-        for source in config["data"][key]:
-            source["weight"] /= total
     config_path = output / "pretrain_data.yaml"
     config_path.write_text(yaml.safe_dump(config, sort_keys=False), encoding="utf-8")
     summary = {
@@ -171,6 +249,7 @@ def main() -> None:
         "validation_fraction": args.validation_fraction,
         "validation_root": str(output / "validation"),
         "sources": [name for name, _, _ in jobs],
+        "source_policy": specs,
         "shared_dedup_db": str(shared_dedup_db),
     }
     (output / "prepare_summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
