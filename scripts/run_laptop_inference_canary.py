@@ -80,7 +80,9 @@ def _ensure_allocator_reexec() -> None:
     legacy = environment.get("PYTORCH_CUDA_ALLOC_CONF")
     if modern and legacy and modern != legacy:
         raise RuntimeError("PYTORCH_ALLOC_CONF and PYTORCH_CUDA_ALLOC_CONF disagree")
-    selected = modern or legacy or "expandable_segments:True"
+    # Set this before importing torch/AsterLM. The selected WSL/CUDA stack has
+    # produced invalid expandable-segment mappings despite ample free VRAM.
+    selected = modern or legacy or "backend:native,max_split_size_mb:128"
     environment["PYTORCH_ALLOC_CONF"] = selected
     environment["PYTORCH_CUDA_ALLOC_CONF"] = selected
     if os.environ.get("ASTER_INFERENCE_CANARY_REEXEC") == "1":

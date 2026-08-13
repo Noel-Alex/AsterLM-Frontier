@@ -87,7 +87,7 @@ if [[ "$WITH_REASONING" == "1" ]]; then
   fi
 fi
 
-export PYTORCH_CUDA_ALLOC_CONF="${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}"
+export PYTORCH_CUDA_ALLOC_CONF="${PYTORCH_CUDA_ALLOC_CONF:-backend:native,max_split_size_mb:128}"
 export TOKENIZERS_PARALLELISM="${TOKENIZERS_PARALLELISM:-false}"
 
 python - <<'PY_DATA_CHECK'

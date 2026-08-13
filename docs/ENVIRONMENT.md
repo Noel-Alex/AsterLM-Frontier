@@ -78,6 +78,13 @@ Compiled CUDA dependencies may be shared; Python model/config source may not sil
 come from another checkout. Every new profile records both the imported source root and
 Git provenance.
 
+The exact package snapshot used by the August 13 RTX 4080 Laptop validation is
+`requirements/validated-wsl-cu130.txt` (Python 3.12.3, PyTorch 2.13.0,
+CUDA runtime 13.0, Triton 3.7.1, FLA 0.5.2). Treat it as the laptop
+reproducibility lock: create a fresh environment from it and then install the exact
+AsterLM Git commit with `--no-deps -e`. The portable requirement files remain broader
+so Fedora CUDA 13.1 and cloud images can be qualified separately.
+
 ## Ada precision reality
 
 The RTX 4080 Laptop GPU is Ada, compute capability 8.9. NVIDIA Transformer Engine supports FP8 on Ada. NVFP4 is a Blackwell feature. AsterLM therefore tests FP8 execution and uses low-bit storage/state methods for four-bit VRAM savings rather than claiming native FP4 tensor-core training.
@@ -96,12 +103,11 @@ For every benchmark:
 
 ## Memory allocator
 
-```bash
-export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
-export TOKENIZERS_PARALLELISM=false
-```
-
-`expandable_segments` can reduce fragmentation; it cannot make an oversized computation fit.
+Do not globally force one allocator policy. `expandable_segments` can reduce ordinary
+fragmentation, but this WSL/CUDA stack has also produced invalid virtual-memory mapping
+failures while several GiB remained free. Every decision-grade run records both allocator
+variables. Use the verified native allocator recipe for the selected laptop model unless a
+source-pinned canary proves another policy on that exact driver/runtime combination.
 
 ## FLA and Transformer Engine
 
