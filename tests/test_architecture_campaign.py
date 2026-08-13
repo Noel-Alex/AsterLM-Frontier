@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -10,6 +11,7 @@ import yaml
 from asterlm import AsterLM
 from asterlm.config import AsterConfig
 from asterlm.experiments import load_architecture_campaign, materialize_architecture_campaign
+from asterlm.layers.gdn2 import gdn2_is_available
 from scripts.run_architecture_quality_campaign import (
     _absolute_data_config,
     _execution_matrix,
@@ -179,6 +181,10 @@ def test_smoke_train_payload_is_metrics_only_by_default(tmp_path):
 )
 def test_k3_scale_frontier_parameter_geometry(path, expected_total, expected_active):
     config = AsterConfig.from_yaml(ROOT / "configs" / "model" / path)
+    # Parameter accounting is backend-independent. CPU CI intentionally omits
+    # FLA, so instantiate the readable recurrence without weakening the pinned
+    # production config itself.
+    config = replace(config, kda_backend="torch")
     with torch.device("meta"):
         model = AsterLM(config)
     assert model.effective_parameter_count() == pytest.approx(expected_total, rel=5e-4)
@@ -202,14 +208,16 @@ def test_final_challengers_isolate_mixer_and_sparse_capacity() -> None:
     assert dense_config.ffn_type == "dense"
 
     with torch.device("meta"):
-        incumbent = AsterLM(incumbent_config)
-        gdn2 = AsterLM(gdn2_config)
-        dense = AsterLM(dense_config)
+        incumbent = AsterLM(replace(incumbent_config, kda_backend="torch"))
+        dense = AsterLM(replace(dense_config, kda_backend="torch"))
     # GDN2's mixer itself is larger while the MoE body remains byte-for-byte
     # geometrically identical. Equal-active-FLOP analysis controls that 12.4%
     # difference; changing experts to hide it would confound the mixer test.
-    assert gdn2.effective_parameter_count() == 1_518_591_264
-    assert gdn2.active_parameter_count() == 638_625_760
+    if gdn2_is_available():
+        with torch.device("meta"):
+            gdn2 = AsterLM(gdn2_config)
+        assert gdn2.effective_parameter_count() == 1_518_591_264
+        assert gdn2.active_parameter_count() == 638_625_760
     assert dense.active_parameter_count() == pytest.approx(
         incumbent.active_parameter_count(), rel=0.01
     )
