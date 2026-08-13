@@ -1,0 +1,32 @@
+{
+  "schema_version": 1,
+  "status": "complete",
+  "created_at_utc": "2026-08-13T15:42:29.245541+00:00",
+  "git_commit": "70cc4a9c7bc0b5fe29110c1e43d364e1177ec649",
+  "huggingface": {
+    "repo_id": "philoweeb/AsterLM-Frontier-100B",
+    "private": false,
+    "revision": "c4ab6a19ccc8b603f6a44facb4ef1fc0e8c8da92",
+    "path": "readiness/hub-roundtrip/70cc4a9c7bc0-bd6d39a4642646afb747b4f13abfa117.json",
+    "source_sha256": "c9bb5b4f120105fb740f4056081e21d0d2067043ce75b1923062785f506eb5f9",
+    "downloaded_sha256": "c9bb5b4f120105fb740f4056081e21d0d2067043ce75b1923062785f506eb5f9",
+    "exact_bytes": true
+  },
+  "wandb": {
+    "run_path": "experiments_1/asterlm-frontier/aster-ready-70cc4a9c7b-bd6d39a4",
+    "run_id": "aster-ready-70cc4a9c7b-bd6d39a4",
+    "resumed_with_must": true,
+    "history": [
+      {
+        "aster_roundtrip_value": 17,
+        "_step": 0,
+        "aster_roundtrip_phase": 1
+      },
+      {
+        "_step": 1,
+        "aster_roundtrip_phase": 2,
+        "aster_roundtrip_value": 23
+      }
+    ]
+  }
+}

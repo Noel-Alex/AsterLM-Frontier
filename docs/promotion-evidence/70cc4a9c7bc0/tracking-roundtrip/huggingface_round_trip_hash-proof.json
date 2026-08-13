@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "gate_id": "huggingface_round_trip_hash",
+  "status": "passed",
+  "created_at_utc": "2026-08-13T15:42:48.809856+00:00",
+  "evaluator": {
+    "name": "asterlm-tracking-roundtrip",
+    "version": "1",
+    "git_commit": "70cc4a9c7bc0b5fe29110c1e43d364e1177ec649"
+  },
+  "experiment_ids": [
+    "aster-ready-70cc4a9c7b-bd6d39a4",
+    "hf:philoweeb/AsterLM-Frontier-100B@c4ab6a19ccc8b603f6a44facb4ef1fc0e8c8da92"
+  ],
+  "artifacts": [
+    {
+      "path": "docs/promotion-evidence/70cc4a9c7bc0/tracking-roundtrip/tracking-roundtrip-result.json",
+      "sha256": "616d4c8739cf45e8bd1354b45da70657bcc27b90202d7356188e1045e007d553"
+    }
+  ]
+}
