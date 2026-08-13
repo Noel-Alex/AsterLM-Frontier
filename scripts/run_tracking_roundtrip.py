@@ -134,30 +134,33 @@ def main() -> None:
     import wandb
 
     run_id = f"aster-ready-{commit[:10]}-{nonce[:8]}"
-    first = wandb.init(
-        project=args.wandb_project,
-        entity=args.wandb_entity,
-        id=run_id,
-        resume="allow",
-        name="AsterLM tracking continuity canary",
-        job_type="readiness",
-        config={"git_commit": commit, "hub_repo": args.hub_repo, "canary": True},
-    )
-    assert first is not None
-    entity = str(first.entity)
-    first.log({"aster_roundtrip_phase": 1, "aster_roundtrip_value": 17}, step=0)
-    first.finish()
-    second = wandb.init(
-        project=args.wandb_project,
-        entity=entity,
-        id=run_id,
-        resume="must",
-        name="AsterLM tracking continuity canary",
-        job_type="readiness",
-    )
-    assert second is not None
-    second.log({"aster_roundtrip_phase": 2, "aster_roundtrip_value": 23}, step=1)
-    second.finish()
+    with tempfile.TemporaryDirectory(prefix="aster-wandb-roundtrip-") as wandb_folder:
+        first = wandb.init(
+            project=args.wandb_project,
+            entity=args.wandb_entity,
+            id=run_id,
+            resume="allow",
+            name="AsterLM tracking continuity canary",
+            job_type="readiness",
+            config={"git_commit": commit, "hub_repo": args.hub_repo, "canary": True},
+            dir=wandb_folder,
+        )
+        assert first is not None
+        entity = str(first.entity)
+        first.log({"aster_roundtrip_phase": 1, "aster_roundtrip_value": 17}, step=0)
+        first.finish()
+        second = wandb.init(
+            project=args.wandb_project,
+            entity=entity,
+            id=run_id,
+            resume="must",
+            name="AsterLM tracking continuity canary",
+            job_type="readiness",
+            dir=wandb_folder,
+        )
+        assert second is not None
+        second.log({"aster_roundtrip_phase": 2, "aster_roundtrip_value": 23}, step=1)
+        second.finish()
 
     run_path = f"{entity}/{args.wandb_project}/{run_id}"
     rows: list[dict[str, Any]] = []
@@ -167,7 +170,6 @@ def main() -> None:
             remote.scan_history(
                 keys=["_step", "aster_roundtrip_phase", "aster_roundtrip_value"],
                 min_step=0,
-                max_step=1,
             )
         )
         if history_has_resume(rows):
