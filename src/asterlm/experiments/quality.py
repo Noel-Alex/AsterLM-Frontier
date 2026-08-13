@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import ctypes
+import gc
 import hashlib
 import json
 import math
@@ -16,6 +18,24 @@ from torch import nn
 
 from asterlm.config import AsterConfig
 from asterlm.model import AsterLM
+
+
+def _release_initialization_audit_memory() -> None:
+    """Return large temporary CPU model allocations before launching CUDA children."""
+
+    gc.collect()
+    if os.name != "posix":
+        return
+    try:
+        libc = ctypes.CDLL(None)
+        malloc_trim = libc.malloc_trim
+        malloc_trim.argtypes = [ctypes.c_size_t]
+        malloc_trim.restype = ctypes.c_int
+        malloc_trim(0)
+    except (AttributeError, OSError):
+        # Non-glibc providers still receive Python collection; their execution
+        # profiles must prove enough host memory in the normal fit gate.
+        return
 
 
 def _tensor_sha256(tensor: torch.Tensor) -> str:
@@ -95,6 +115,7 @@ def audit_identical_model_initialization(
             model = AsterLM(config, named_initialization_seed=seed)
         current = initialized_parameter_fingerprints(model)
         del model
+        _release_initialization_audit_memory()
         if reference is None:
             reference = current
         names = set(reference) | set(current)
@@ -154,6 +175,7 @@ def audit_named_initialization(
     )
     reference = initialized_projection_fingerprints(reference_model)
     del reference_model
+    _release_initialization_audit_memory()
 
     result: dict[str, Any] = {
         "seed": seed,
@@ -165,6 +187,7 @@ def audit_named_initialization(
         model = AsterLM(config, named_initialization_seed=seed)
         current = initialized_projection_fingerprints(model)
         del model
+        _release_initialization_audit_memory()
         shared = {
             name
             for name, value in reference.items()

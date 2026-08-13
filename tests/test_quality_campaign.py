@@ -5,6 +5,7 @@ import json
 import pytest
 
 from asterlm import AsterConfig
+from asterlm.experiments import quality
 from asterlm.experiments.quality import (
     archive_incomplete_quality_run,
     audit_identical_model_initialization,
@@ -57,6 +58,21 @@ def test_named_initialization_audit_accepts_shared_projection_parity():
     assert report["status"] == "ok"
     assert report["candidates"]["wide-state"]["shared_parameter_count"] > 0
     assert report["candidates"]["wide-state"]["mismatches"] == []
+
+
+def test_named_initialization_audit_releases_each_temporary_model(monkeypatch):
+    releases = 0
+
+    def record_release() -> None:
+        nonlocal releases
+        releases += 1
+
+    monkeypatch.setattr(quality, "_release_initialization_audit_memory", record_release)
+    audit_named_initialization(
+        [("reference", tiny()), ("candidate-a", tiny()), ("candidate-b", tiny())],
+        2027,
+    )
+    assert releases == 3
 
 
 def test_full_initialization_audit_matches_optimizer_arms():
