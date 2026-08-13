@@ -1,0 +1,53 @@
+model:
+  # Final practical dense control. It preserves the selected depth, width and
+  # KDA/MLA mixers while replacing Stable LatentMoE with a capacity-aligned
+  # dense SiLU-GLU FFN. Exact count/fit evidence must precede a quality run.
+  vocab_size: 32768
+  d_model: 1280
+  n_layers: 32
+  n_heads: 20
+  head_dim: 64
+  # 2,496 makes the dense active count ~0.54% below the incumbent rather than
+  # borrowing a much smaller historical control.
+  ffn_hidden: 2496
+  max_seq_len: 262144
+  tie_embeddings: true
+
+  ffn_type: dense
+  kda_ratio: 3
+  kda_backend: fla
+  kda_num_heads: 10
+  kda_head_dim: 128
+  kda_expand_v: 1.0
+  kda_short_conv: true
+  kda_conv_size: 4
+  kda_safe_gate: true
+  kda_lower_bound: -5.0
+  kda_allow_negative_eigenvalues: false
+
+  q_lora_rank: 512
+  latent_rms_norm: true
+  latent_rank: 96
+  rope_dim: 32
+  attention_window: 262144
+  sink_tokens: 64
+  attention_gate: true
+  qk_stat_tokens: 24
+
+  cache_dtype: bfloat16
+  rope_theta: 1000000.0
+  rope_scaling_type: yarn
+  rope_scaling_factor: 32.0
+  rope_original_max_position: 8192
+
+  norm_type: rmsnorm
+  rms_eps: 1.0e-6
+  embedding_projection: false
+  use_block_attnres: false
+  mtp_depth: 0
+  lm_loss_chunk_size: 128
+  qk_clip_tau: 100.0
+  init_std: 0.02
+  gradient_checkpointing: true
+  checkpoint_segment_size: 2
+  checkpoint_sublayers_min_tokens: 8192

@@ -482,6 +482,18 @@ candidates:
     base_model: configs/model/aster_k3_latentmoe_1p45b_a568m.yaml
     model_overrides: {}
     execution_variants: [torch-reference, cutlass-grouped-bf16, cutlass-grouped, torch-grouped, cutlass-grouped-k3-muon, cutlass-grouped-k3-muon8bit-bf16, torchao-fp8-experts-k3-muon8bit, torch-grouped-k3-muon]
+  - id: tier2-gdn2-latentmoe-selected-body
+    tier: 2
+    hypothesis: Replacing only KDA with GDN2 in the selected Stable LatentMoE body improves quality per wall time, especially for retrieval, without losing laptop fit.
+    base_model: configs/model/aster_gdn2_latentmoe_selected_body.yaml
+    model_overrides: {}
+    execution_variants: [cutlass-grouped-k3-muon8bit-bf16]
+  - id: tier2-dense-kda3-mla-final-control
+    tier: 2
+    hypothesis: A capacity-aligned dense KDA/MLA control may reach useful quality sooner despite having less total sparse capacity.
+    base_model: configs/model/aster_dense_kda3_mla_final_control.yaml
+    model_overrides: {}
+    execution_variants: [cutlass-grouped-k3-muon8bit-bf16]
   - id: tier2-k3-latentmoe-1p95b-a766m
     tier: 2
     hypothesis: The 1.95B stretch tier is the maximum-quality candidate if its full training state fits and its time-to-quality beats smaller tiers.

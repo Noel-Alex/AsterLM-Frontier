@@ -1,0 +1,31 @@
+schema_version: 1
+status: planned
+incumbent: tier2-k3-latentmoe-1p45b-a568m
+shared_execution_variant: cutlass-grouped-k3-muon8bit-bf16
+seeds: [1337, 2027]
+controls:
+  - id: tier2-gdn2-latentmoe-selected-body
+    isolates: recurrent_mixer
+  - id: tier2-dense-kda3-mla-final-control
+    isolates: sparse_capacity_and_dispatch
+rules:
+  require_named_initialization_parity: true
+  require_identical_data_order: true
+  require_no_offload: true
+  compare: [equal_tokens, equal_wall_time, equal_active_flops]
+  reject_on: [nonfinite, missing_gradients, incomplete_run, vram_overflow]
+ladder:
+  - phase: fit_and_kernel
+    tokens: 1048576
+    purpose: prove full-gradient fit, backend parity, utilization, and stable optimizer state
+  - phase: bounded_quality
+    tokens: 16777216
+    continue_when: challenger_is_not_clearly_dominated_across_both_seeds
+  - phase: decisive_quality
+    tokens: 50000000
+    continue_when: challenger_is_close_or_better_after_bounded_quality
+    maximum_tokens: 100000000
+notes:
+  - Never run the 50M phase automatically merely because the 1M fit phase passes.
+  - GDN2 and dense controls must use their best measured deployable backend, not a deliberately slow reference.
+  - Close architecture selection when the incumbent survives these two challengers; do not reopen an unbounded paper sweep.
