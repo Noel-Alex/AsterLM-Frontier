@@ -3,8 +3,10 @@ from __future__ import annotations
 import importlib.util
 from pathlib import Path
 
-
 ROOT = Path(__file__).resolve().parents[1]
+COMMITTED_MATRIX = (
+    ROOT / "docs/promotion-evidence/30e0cdd22875/native-8k-canary/matrix.json"
+)
 
 
 def _module():
@@ -32,8 +34,8 @@ def test_native_canary_importer_certifies_only_measured_system_claims() -> None:
 def test_native_canary_importer_accepts_all_three_source_pinned_trials() -> None:
     module = _module()
     assertions = module.validate_matrix(
-        module.DEFAULT_MATRIX,
-        module.load_json(module.DEFAULT_MATRIX),
+        COMMITTED_MATRIX,
+        module.load_json(COMMITTED_MATRIX),
     )
     assert len(assertions["trials"]) == 3
     assert assertions["aggregate"]["successful_repetitions"] == 3

@@ -3,8 +3,8 @@ from __future__ import annotations
 import importlib.util
 from pathlib import Path
 
-
 ROOT = Path(__file__).resolve().parents[1]
+COMMITTED_EVIDENCE = ROOT / "docs/promotion-evidence/9cde08bb42f8/quality-screen"
 
 
 def _module():
@@ -27,8 +27,8 @@ def test_quality_importer_certifies_only_matched_token_claims() -> None:
 def test_quality_importer_accepts_the_complete_source_pinned_campaign() -> None:
     module = _module()
     assertions = module.validate_campaign(
-        module.load_json(module.DEFAULT_CAMPAIGN),
-        module.load_json(module.DEFAULT_ANALYSIS),
+        module.load_json(COMMITTED_EVIDENCE / "quality-campaign.json"),
+        module.load_json(COMMITTED_EVIDENCE / "quality-analysis.json"),
     )
     assert assertions["complete_runs"] == 6
     assert assertions["matched_token"]["passed"] is True
