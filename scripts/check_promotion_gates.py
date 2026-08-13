@@ -16,8 +16,11 @@ def main() -> None:
     parser.add_argument(
         "--require-ready", action="store_true", help="Exit non-zero unless every required gate passed"
     )
+    parser.add_argument(
+        "--phase", choices=["stage1", "stage2", "stage3", "stage4"], default="stage4"
+    )
     args = parser.parse_args()
-    decision = evaluate_promotion_gates(args.gates)
+    decision = evaluate_promotion_gates(args.gates, phase=args.phase)
     print(json.dumps(decision.manifest(), indent=2))
     if args.require_ready and not decision.ready:
         raise SystemExit(2)

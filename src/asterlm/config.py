@@ -339,6 +339,9 @@ class TrainConfig:
     # fail-closed by the executable training contract in training/contracts.py.
     run_class: str = "exploratory"  # exploratory | decision_grade | final
     promotion_gates_path: str = "configs/experiments/promotion_gates.yaml"
+    # Final-run gates can be phased: base pretraining must not depend on quality
+    # evidence that can only be produced by its trained checkpoint.
+    promotion_phase: str = "stage1"  # stage1 | stage2 | stage3 | stage4
     # Architecture campaigns can initialize each ordinary projection from its
     # qualified module name. This prevents a changed KDA/MoE tensor shape from
     # shifting the RNG stream used by otherwise-identical later layers.
@@ -491,6 +494,8 @@ class TrainConfig:
     def __post_init__(self) -> None:
         if self.run_class not in {"exploratory", "decision_grade", "final"}:
             raise ValueError("run_class must be exploratory, decision_grade, or final")
+        if self.promotion_phase not in {"stage1", "stage2", "stage3", "stage4"}:
+            raise ValueError("promotion_phase must be stage1, stage2, stage3, or stage4")
         if self.execution_backend not in {
             "auto",
             "aster_local",

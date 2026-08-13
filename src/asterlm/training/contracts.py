@@ -177,7 +177,9 @@ def validate_training_contract(
                 "Final pretraining forbids CPU LoQT merge work; select an all-GPU recipe"
             )
         promotion_path = _resolved(train.promotion_gates_path)
-        decision = evaluate_promotion_gates(promotion_path)
+        decision = evaluate_promotion_gates(
+            promotion_path, phase=train.promotion_phase
+        )
         promotion_ready = decision.ready
         if not decision.ready:
             preview = ", ".join(decision.blocking_gate_ids[:8])

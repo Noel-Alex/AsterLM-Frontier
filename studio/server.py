@@ -726,12 +726,14 @@ def _campaign_readiness(
     try:
         from asterlm.experiments import evaluate_promotion_gates
 
-        decision = evaluate_promotion_gates(ROOT / "configs/experiments/promotion_gates.yaml")
+        decision = evaluate_promotion_gates(
+            ROOT / "configs/experiments/promotion_gates.yaml", phase="stage1"
+        )
         promotion_ready = decision.ready
         promotion_detail = (
-            f"all {sum(gate.required for gate in decision.gates)} required gates passed"
+            f"all {len(decision.required_gate_ids)} stage-1 gates passed"
             if decision.ready
-            else f"{len(decision.blocking_gate_ids)} required evidence gates remain"
+            else f"{len(decision.blocking_gate_ids)} stage-1 evidence gates remain"
         )
     except Exception as exc:
         promotion_ready = False

@@ -44,6 +44,12 @@ def test_100b_train_configs_sum_to_campaign_budget() -> None:
     assert configs[0].milestone_tokens[-3:] == [65_000_000_000, 80_000_000_000, 92_000_000_000]
     assert sum(len(config.milestone_tokens) for config in configs) == 28
     assert all(config.checkpoint_policy == "full" for config in configs)
+    assert [config.promotion_phase for config in configs] == [
+        "stage1",
+        "stage2",
+        "stage3",
+        "stage4",
+    ]
     assert all(config.checkpoint_pyramid_levels == 8 for config in configs)
     assert [config.checkpoint_interval_minutes for config in configs] == [30.0, 30.0, 30.0, 5.0]
     assert all(config.save_interval == 250 for config in configs)

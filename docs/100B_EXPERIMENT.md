@@ -103,6 +103,12 @@ python scripts/run_pretraining_campaign.py \
 
 The same control is available in Aster Studio at `http://localhost:8765`. The launch-readiness ledger remains fail-closed until data, tokenizer, evidence, credentials, private Hub repository and pinned Git state are ready.
 
+Promotion is stage-aware. Stage 1 is never circularly blocked by a retrieval
+claim that requires a trained stage-1 checkpoint. Before stage 2, the resulting
+checkpoint must pass the long-context retrieval/interference gate. The gate is
+revalidated against the promoted checkpoint before later context stages; the
+campaign cannot silently flow from 4K to 32K on stale proxy evidence.
+
 ### Stage 1
 
 ```bash

@@ -17,6 +17,8 @@ REQUIRED_FINAL_RUN_GATES = (
     "equal_token_quality",
     "equal_wall_clock",
     "long_context_retrieval",
+    "stage2_long_context_retrieval",
+    "stage3_long_context_retrieval",
     "repeated_warm_throughput",
     "gpu_utilization_root_cause",
     "vram",
@@ -42,6 +44,7 @@ MODAL_PROMOTION_GATES = (
 )
 
 OBSERVATIONAL_GATES = ("energy_and_power", *MODAL_PROMOTION_GATES)
+PROMOTION_PHASES = ("stage1", "stage2", "stage3", "stage4")
 
 
 @dataclass(frozen=True, slots=True)
@@ -62,6 +65,7 @@ class PromotionGate:
     status: str
     evidence: tuple[PromotionEvidence, ...]
     note: str | None
+    required_before: str | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -69,12 +73,17 @@ class PromotionDecision:
     ready: bool
     gates: tuple[PromotionGate, ...]
     blocking_gate_ids: tuple[str, ...]
+    phase: str
+    required_gate_ids: tuple[str, ...]
 
     def manifest(self) -> dict[str, Any]:
         return {
             "ready": self.ready,
+            "phase": self.phase,
             "passed": sum(gate.status == "passed" for gate in self.gates),
-            "total_required": sum(gate.required for gate in self.gates),
+            "total_required": len(self.required_gate_ids),
+            "total_eventually_required": sum(gate.required for gate in self.gates),
+            "required_gate_ids": list(self.required_gate_ids),
             "blocking_gate_ids": list(self.blocking_gate_ids),
         }
 
@@ -169,7 +178,11 @@ def _verified_evidence(
     )
 
 
-def evaluate_promotion_gates(path: str | Path) -> PromotionDecision:
+def evaluate_promotion_gates(
+    path: str | Path, *, phase: str = "stage4"
+) -> PromotionDecision:
+    if phase not in PROMOTION_PHASES:
+        raise ValueError(f"Unknown promotion phase: {phase}")
     source = Path(path)
     payload = yaml.safe_load(source.read_text(encoding="utf-8")) or {}
     if payload.get("schema_version") != 2:
@@ -205,13 +218,20 @@ def evaluate_promotion_gates(path: str | Path) -> PromotionDecision:
             if status == "passed"
             else ()
         )
+        required = bool(raw.get("required", True))
+        required_before = str(raw.get("required_before", "stage1")) if required else None
+        if required_before is not None and required_before not in PROMOTION_PHASES:
+            raise ValueError(
+                f"Gate {gate_id!r} has invalid required_before {required_before!r}"
+            )
         gates.append(
             PromotionGate(
                 gate_id=gate_id,
-                required=bool(raw.get("required", True)),
+                required=required,
                 status=status,
                 evidence=evidence,
                 note=str(raw["note"]) if raw.get("note") is not None else None,
+                required_before=required_before,
             )
         )
 
@@ -226,5 +246,24 @@ def evaluate_promotion_gates(path: str | Path) -> PromotionDecision:
         raise ValueError(
             "Observational/provider gate set changed unexpectedly"
         )
-    blocking = tuple(gate.gate_id for gate in gates if gate.required and gate.status != "passed")
-    return PromotionDecision(ready=not blocking, gates=tuple(gates), blocking_gate_ids=blocking)
+    phase_index = PROMOTION_PHASES.index(phase)
+    required_now = tuple(
+        gate.gate_id
+        for gate in gates
+        if gate.required
+        and gate.required_before is not None
+        and PROMOTION_PHASES.index(gate.required_before) <= phase_index
+    )
+    required_set = set(required_now)
+    blocking = tuple(
+        gate.gate_id
+        for gate in gates
+        if gate.gate_id in required_set and gate.status != "passed"
+    )
+    return PromotionDecision(
+        ready=not blocking,
+        gates=tuple(gates),
+        blocking_gate_ids=blocking,
+        phase=phase,
+        required_gate_ids=required_now,
+    )

@@ -51,6 +51,15 @@ gates:
   note: required by Modal dispatch, not local stage 1
 - id: long_context_retrieval
   required: true
+  required_before: stage2
+  status: not_run
+- id: stage2_long_context_retrieval
+  required: true
+  required_before: stage3
+  status: not_run
+- id: stage3_long_context_retrieval
+  required: true
+  required_before: stage4
   status: not_run
 - id: repeated_warm_throughput
   required: true

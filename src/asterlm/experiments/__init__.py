@@ -15,6 +15,7 @@ from .campaign import (
 )
 from .promotion import (
     MODAL_PROMOTION_GATES,
+    PROMOTION_PHASES,
     REQUIRED_FINAL_RUN_GATES,
     PromotionDecision,
     PromotionEvidence,
@@ -27,6 +28,7 @@ __all__ = [
     "BENCHMARK_SCHEMA_VERSION",
     "MANDATORY_BENCHMARK_FIELDS",
     "MODAL_PROMOTION_GATES",
+    "PROMOTION_PHASES",
     "REQUIRED_FINAL_RUN_GATES",
     "ArchitectureCampaign",
     "ArchitectureCandidate",

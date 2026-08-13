@@ -67,6 +67,7 @@ data:
   primary_materialized_tokens: 84031562210
   nemotron_math_materialized_tokens: 3000000834
   nemotron_code_pending_tokens: 13000000000
+  nemotron_code_access: gated_data_files_return_403_as_of_2026-08-13
   current_materialized_tokens: 87031563044
   expected_materialized_tokens_after_downloads: 100031563044
   requested_raw_tokens: 100000000000
@@ -156,6 +157,11 @@ launch_policy:
   remote_jobs_default: disabled
   architecture_search: closed
   architecture_selection: frozen
+  promotion_phases:
+    stage1: base-run correctness, quality, durability, data, tracking, and inference-runtime gates
+    stage2: stage1 gates plus long-context retrieval from a trained stage1 checkpoint
+    stage3: revalidate the long-context evidence against the promoted stage2 checkpoint before launch
+    stage4: revalidate the long-context evidence against the promoted stage3 checkpoint before launch
   required_before_stage1:
     - sealed clean corpus and decontamination manifest
     - tokenizer seal and fertility report

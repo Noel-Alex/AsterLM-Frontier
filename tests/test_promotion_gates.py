@@ -43,7 +43,7 @@ def _write_evidence(root: Path, gate_id: str) -> dict[str, str]:
 
 def test_project_final_run_is_locked_by_unpassed_required_gates_with_energy_observational_only():
     decision = evaluate_promotion_gates(GATES)
-    assert len(decision.gates) == 27
+    assert len(decision.gates) == 29
     expected_blocking = tuple(
         gate.gate_id
         for gate in decision.gates
@@ -57,6 +57,21 @@ def test_project_final_run_is_locked_by_unpassed_required_gates_with_energy_obse
         not next(gate for gate in decision.gates if gate.gate_id == gate_id).required
         for gate_id in MODAL_PROMOTION_GATES
     )
+
+
+def test_stage1_is_not_circularly_blocked_by_post_stage1_context_evidence():
+    stage1 = evaluate_promotion_gates(GATES, phase="stage1")
+    stage2 = evaluate_promotion_gates(GATES, phase="stage2")
+    stage3 = evaluate_promotion_gates(GATES, phase="stage3")
+    stage4 = evaluate_promotion_gates(GATES, phase="stage4")
+    assert "long_context_retrieval" not in stage1.required_gate_ids
+    assert "long_context_retrieval" not in stage1.blocking_gate_ids
+    assert "long_context_retrieval" in stage2.required_gate_ids
+    assert "long_context_retrieval" in stage2.blocking_gate_ids
+    assert "stage2_long_context_retrieval" not in stage2.required_gate_ids
+    assert "stage2_long_context_retrieval" in stage3.required_gate_ids
+    assert "stage3_long_context_retrieval" not in stage3.required_gate_ids
+    assert "stage3_long_context_retrieval" in stage4.required_gate_ids
 
 
 def test_passed_gate_requires_evidence(tmp_path):

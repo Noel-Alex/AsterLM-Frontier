@@ -2,6 +2,7 @@ train:
   output_dir: runs/aster-frontier-100b-stage4-32k
   seed: 1340
   run_class: final
+  promotion_phase: stage4
   device: cuda
   dtype: bfloat16
   matmul_precision: high
