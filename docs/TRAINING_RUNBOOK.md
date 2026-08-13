@@ -113,7 +113,7 @@ data/clean-frontier/pretrain_data.yaml
 data/clean-frontier/clean_manifest.json
 ```
 
-The cleaner uses one shared deduplication database across all active sources, then hashes every completed shard before publishing the manifest. Do not edit the generated data config after sealing it. Use `training_preflight.py --verify-manifest-hashes` once before a costly decision/final run; ordinary startups verify manifest identity, paths, presence, and sizes without repeatedly hashing hundreds of GiB.
+The cleaner uses one shared deduplication database across all active sources, then hashes every completed shard before publishing the manifest. Its source cursor is committed only with finalized output shards; after interruption it re-indexes any finalized-but-uncommitted shard and refuses to continue if a registered shard disappeared or changed. Re-run the same command to resume. Do not edit the generated data config after sealing it. Use `training_preflight.py --verify-manifest-hashes` once before a costly decision/final run; ordinary startups verify manifest identity, paths, presence, and sizes without repeatedly hashing hundreds of GiB.
 
 If `data/clean-frontier` was created by an older repository version that did not make local holdouts, rebuild it deliberately:
 

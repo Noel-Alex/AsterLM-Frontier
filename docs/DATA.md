@@ -111,7 +111,10 @@ Policies can redact or drop. Reports preserve counts, never raw matched secrets.
 - SimHash near-duplicate search
 - source-aware rejection accounting
 
-A persistent index avoids holding the entire corpus in RAM and allows resumable processing.
+A persistent index avoids holding the entire corpus in RAM. Cleaning checkpoints atomically
+align finalized compressed shards, dedup state, and the last fully consumed input shard. On
+restart, any shard renamed just before an interruption is re-indexed before the source cursor is
+honored; missing or modified registered shards fail closed instead of silently deleting examples.
 
 ### Benchmark decontamination
 

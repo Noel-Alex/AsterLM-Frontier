@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import sqlite3
 import subprocess
 import sys
 from pathlib import Path
@@ -331,3 +332,80 @@ def test_shared_dedup_database_removes_cross_source_duplicate(tmp_path: Path) ->
     assert reports[0]["counts"]["train_kept"] == 1
     assert reports[1]["counts"]["exact_duplicate"] == 1
     assert reports[1]["counts"].get("train_kept", 0) == 0
+
+
+def test_cleaner_recovers_finalized_shards_and_skips_completed_input(tmp_path: Path) -> None:
+    source = tmp_path / "raw"
+    source.mkdir()
+    documents = [
+        "alpha beta gamma delta epsilon zeta eta theta iota kappa " * 8,
+        "one two three four five six seven eight nine ten eleven twelve " * 8,
+    ]
+    for index, text in enumerate(documents):
+        (source / f"part-{index:03d}.jsonl").write_text(
+            json.dumps({"text": text}) + "\n", encoding="utf-8"
+        )
+    output = tmp_path / "clean"
+    database = tmp_path / "global.sqlite"
+    command = [
+        sys.executable,
+        "scripts/clean_corpus.py",
+        "--input",
+        str(source),
+        "--output",
+        str(output),
+        "--dedup-db",
+        str(database),
+        "--min-chars",
+        "1",
+        "--commit-every",
+        "1",
+    ]
+    subprocess.run(command, check=True, capture_output=True, text=True)
+    first_shards = sorted(output.glob("clean-*.jsonl.zst"))
+    assert len(first_shards) == 2
+
+    # Simulate power loss after atomic shard rename but before the SQLite
+    # transaction became durable. Recovery must rebuild hashes from the final
+    # shards before honoring the completed-source cursor.
+    with sqlite3.connect(database) as connection:
+        connection.execute("DELETE FROM bands")
+        connection.execute("DELETE FROM simhash")
+        connection.execute("DELETE FROM exact")
+        connection.execute("DELETE FROM clean_outputs")
+        connection.commit()
+    subprocess.run(command, check=True, capture_output=True, text=True)
+    report = json.loads((output / "cleaning_report.json").read_text(encoding="utf-8"))
+    assert report["seen"] == 0
+    assert report["resume_start_file_index"] == 2
+    assert report["recovered_finalized_shards"] == 2
+    assert sorted(output.glob("clean-*.jsonl.zst")) == first_shards
+    with sqlite3.connect(database) as connection:
+        assert connection.execute("SELECT COUNT(*) FROM exact").fetchone()[0] == 2
+
+
+def test_cleaner_fails_closed_when_registered_output_disappears(tmp_path: Path) -> None:
+    source = tmp_path / "raw.jsonl"
+    source.write_text(
+        json.dumps({"text": "durable clean output must never vanish silently " * 8}) + "\n",
+        encoding="utf-8",
+    )
+    output = tmp_path / "clean"
+    database = tmp_path / "global.sqlite"
+    command = [
+        sys.executable,
+        "scripts/clean_corpus.py",
+        "--input",
+        str(source),
+        "--output",
+        str(output),
+        "--dedup-db",
+        str(database),
+        "--min-chars",
+        "1",
+    ]
+    subprocess.run(command, check=True, capture_output=True, text=True)
+    next(output.glob("clean-*.jsonl.zst")).unlink()
+    failed = subprocess.run(command, check=False, capture_output=True, text=True)
+    assert failed.returncode != 0
+    assert "Committed clean shard is missing" in failed.stderr
