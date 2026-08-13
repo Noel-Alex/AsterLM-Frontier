@@ -223,7 +223,7 @@ if [[ "$WITH_TRACKING" == "1" ]]; then
   "${PIP[@]}" install -e ".[tracking]"
 fi
 
-export PYTORCH_CUDA_ALLOC_CONF="${PYTORCH_CUDA_ALLOC_CONF:-backend:native,max_split_size_mb:128}"
+export PYTORCH_CUDA_ALLOC_CONF="${PYTORCH_CUDA_ALLOC_CONF:-backend:native}"
 export TOKENIZERS_PARALLELISM="${TOKENIZERS_PARALLELISM:-false}"
 
 if [[ "$SKIP_CHECKS" == "0" ]]; then

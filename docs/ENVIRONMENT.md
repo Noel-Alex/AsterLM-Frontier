@@ -107,7 +107,10 @@ Do not globally force one allocator policy. `expandable_segments` can reduce ord
 fragmentation, but this WSL/CUDA stack has also produced invalid virtual-memory mapping
 failures while several GiB remained free. Every decision-grade run records both allocator
 variables. Use the verified native allocator recipe for the selected laptop model unless a
-source-pinned canary proves another policy on that exact driver/runtime combination.
+source-pinned canary proves another policy on that exact driver/runtime combination. The
+default is the unmodified `backend:native`; a 128 MiB split cap caused a reproducible
+second-update failure in the accumulated 1.448B quality recipe despite several GiB being
+reported free, while the unmodified native allocator continued beyond that boundary.
 
 ## FLA and Transformer Engine
 

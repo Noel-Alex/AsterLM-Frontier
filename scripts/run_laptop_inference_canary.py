@@ -82,7 +82,7 @@ def _ensure_allocator_reexec() -> None:
         raise RuntimeError("PYTORCH_ALLOC_CONF and PYTORCH_CUDA_ALLOC_CONF disagree")
     # Set this before importing torch/AsterLM. The selected WSL/CUDA stack has
     # produced invalid expandable-segment mappings despite ample free VRAM.
-    selected = modern or legacy or "backend:native,max_split_size_mb:128"
+    selected = modern or legacy or "backend:native"
     environment["PYTORCH_ALLOC_CONF"] = selected
     environment["PYTORCH_CUDA_ALLOC_CONF"] = selected
     if os.environ.get("ASTER_INFERENCE_CANARY_REEXEC") == "1":

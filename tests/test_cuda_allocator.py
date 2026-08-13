@@ -7,6 +7,7 @@ from asterlm.cuda_allocator import DEFAULT_CUDA_ALLOC_CONF, cuda_allocator_envir
 
 def test_cuda_allocator_defaults_are_explicit_for_old_and_new_pytorch_names():
     result = cuda_allocator_environment({"UNCHANGED": "yes"})
+    assert DEFAULT_CUDA_ALLOC_CONF == "backend:native"
     assert result["PYTORCH_ALLOC_CONF"] == DEFAULT_CUDA_ALLOC_CONF
     assert result["PYTORCH_CUDA_ALLOC_CONF"] == DEFAULT_CUDA_ALLOC_CONF
     assert result["UNCHANGED"] == "yes"
