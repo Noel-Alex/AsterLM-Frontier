@@ -66,7 +66,7 @@ must be reviewed together so all necessary remote-only checks are collected in t
 
 The repository is cloned at the contract's exact 40-character commit while the CUDA/PyTorch base image must be pinned by registry SHA-256 digest. The remote entrypoint verifies `git rev-parse HEAD` before it executes the hashed model, train, and data configs.
 
-Every remote run uses `--remote-durable`: full optimizer/RNG/data-state checkpoints are uploaded to the public Hugging Face repository at every configured save, milestone, and final boundary, and the run fails closed if a promised Hub upload cannot be verified. Cross-provider resume names one `runs/.../checkpoints/...` folder plus repository revision; the worker downloads only that folder and runs `verify_checkpoint` before training starts.
+Every remote run uses `--remote-durable`: full optimizer/RNG/data-state checkpoints are uploaded to the public Hugging Face repository at every configured save, milestone, and final boundary, and the run fails closed if a promised Hub upload cannot be verified. Cross-provider same-stage resume names one `runs/.../checkpoints/...` folder plus repository revision; the worker downloads only that folder and runs `verify_checkpoint` before training starts. A context-stage transition uses the separate Hub initialization field, which supplies `--init-checkpoint` and intentionally resets optimizer/scheduler state. Studio refuses contracts that specify both modes.
 
 ## GPU selection
 

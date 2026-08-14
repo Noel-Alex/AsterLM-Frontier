@@ -460,7 +460,7 @@
               <div><span>05</span><strong>Metrics, exit reason and lineage on return</strong></div>
             </div>
             <div class="form-grid cols-2 compact-form">
-              <label>Provider<select id="contract-provider"><option value="modal">Modal</option><option value="huggingface_jobs">Hugging Face Jobs</option><option value="lightning">Lightning AI</option><option value="skypilot">SkyPilot</option></select></label>
+              <label>Provider<select id="contract-provider"><option value="modal">Modal</option><option value="gcp">Google Cloud</option><option value="huggingface_jobs">Hugging Face Jobs</option><option value="lightning">Lightning AI</option><option value="skypilot">SkyPilot</option></select></label>
               <label>Profile alias<input id="contract-profile" placeholder="authorized-profile"/></label>
               <label>Model config<input id="contract-model" value="configs/model/aster_k3_latentmoe_1p45b_a568m.yaml"/></label>
               <label>Train config<input id="contract-train" value="configs/train/frontier_100b_stage1_4k.yaml"/></label>
@@ -472,10 +472,14 @@
               <label>Resume checkpoint folder<input id="contract-resume-hub-path" placeholder="optional runs/name/checkpoints/tokens-N"/></label>
               <label>Resume repository<input id="contract-resume-hub-repo" placeholder="optional; defaults to checkpoint repository"/></label>
               <label>Resume revision<input id="contract-resume-hub-revision" value="main"/></label>
+              <label>Initialize next stage from folder<input id="contract-init-hub-path" placeholder="optional prior-stage runs/.../checkpoint-final"/></label>
+              <label>Initialization repository<input id="contract-init-hub-repo" placeholder="optional; defaults to checkpoint repository"/></label>
+              <label>Initialization revision<input id="contract-init-hub-revision" value="main"/></label>
               <label>Timeout (minutes)<input id="contract-timeout" type="number" min="1" max="10080" value="180"/></label>
               <label>Estimated spend (USD)<input id="contract-spend" type="number" min="0" step="0.01" value="0"/></label>
               <label class="toggle-label"><input id="contract-cost-confirmed" type="checkbox"/><span>I confirm this estimated spend</span></label>
             </div>
+            <div class="microcopy">Use Resume only to continue the same stage with optimizer, scheduler, RNG and data cursor intact. Use Initialize next stage when moving from a completed 4K/8K/16K stage into a new context stage with a new schedule.</div>
             <div class="button-row"><button id="create-provider-contract" class="ink">Create immutable run contract</button><button id="plan-provider-launch" class="secondary" disabled>Build launch plan</button><button id="dispatch-provider-launch" class="secondary" disabled>Dispatch contract</button><button id="graceful-provider-stop" class="secondary" disabled>Safe stop + checkpoint</button><button id="terminate-provider-job" class="danger" disabled>Emergency terminate</button></div>
             <pre id="provider-contract-result" class="contract-result">No remote contract created in this session.</pre>
           </article>

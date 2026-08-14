@@ -116,6 +116,7 @@ stages:
     init_from: runs/aster-frontier-100b-stage3-16k
     environment: {FLA_DISABLE_BACKEND_DISPATCH: "1"}
 checkpointing:
+  public_hub_repository: philoweeb/AsterLM-Frontier-100B
   local_budget_gib: 150
   laptop_recovery_interval_minutes: 30
   cloud_recovery_interval_minutes: 5

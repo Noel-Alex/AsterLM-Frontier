@@ -83,6 +83,7 @@ def test_100b_train_configs_sum_to_campaign_budget() -> None:
     assert selection["model"].endswith("1p45b_a568m.yaml")
     assert len(selection["scale_finalists"]) == 3
     checkpointing = campaign["checkpointing"]
+    assert checkpointing["public_hub_repository"] == "philoweeb/AsterLM-Frontier-100B"
     assert checkpointing["huggingface_hard_cap_tb_decimal"] == 7.5
     assert checkpointing["huggingface_operational_guard_tb_decimal"] == 7.0
     assert checkpointing["permanent_checkpoint_count"] == 28

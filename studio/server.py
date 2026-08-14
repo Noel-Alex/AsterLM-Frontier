@@ -866,11 +866,21 @@ def _campaign_readiness(
         f"{free_gib:.1f} GiB free; {budget_gib:.0f} GiB checkpoint cache plus 20 GiB safety margin required",
     )
 
+    configured_hub_repo = str(
+        (payload.get("checkpointing") or {}).get("public_hub_repository") or ""
+    )
+    hub_repo_ready = bool(
+        re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", configured_hub_repo)
+    )
     add(
         "hub_repo",
         "Public checkpoint repository",
-        "input_required",
-        "enter namespace/name in the launch control; Studio never exposes or stores a token",
+        "ready" if hub_repo_ready else "input_required",
+        (
+            f"campaign checkpoints are bound to {configured_hub_repo}"
+            if hub_repo_ready
+            else "enter namespace/name in the launch control; Studio never exposes or stores a token"
+        ),
     )
     blockers = [row["id"] for row in rows if row["blocking"] and row["state"] != "ready"]
     return {

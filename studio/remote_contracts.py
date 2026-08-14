@@ -12,7 +12,7 @@ from typing import Any
 
 import yaml
 
-CONTRACT_VERSION = 4
+CONTRACT_VERSION = 5
 SAFE_ALIAS = re.compile(r"^[A-Za-z0-9_.-]+$")
 SAFE_HUB_REPO = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 SAFE_HUB_REVISION = re.compile(r"^[A-Za-z0-9._/-]+$")
@@ -75,18 +75,22 @@ def _repo_checkpoint(root: Path, value: str) -> tuple[Path, str, str]:
     raise ValueError(f"Contract resume checkpoint does not exist: {value}")
 
 
-def _hub_checkpoint(payload: dict[str, Any], default_repo: str) -> dict[str, str] | None:
-    path = str(payload.get("resume_hub_path") or "").strip().strip("/")
+def _hub_checkpoint(
+    payload: dict[str, Any], default_repo: str, *, mode: str
+) -> dict[str, str] | None:
+    if mode not in {"resume", "init"}:
+        raise ValueError(f"Unsupported Hub checkpoint mode: {mode}")
+    path = str(payload.get(f"{mode}_hub_path") or "").strip().strip("/")
     if not path:
         return None
     if path.startswith(".") or ".." in Path(path).parts or not path.startswith("runs/"):
-        raise ValueError("resume_hub_path must be a safe runs/... checkpoint folder")
-    repo = str(payload.get("resume_hub_repo") or default_repo).strip()
+        raise ValueError(f"{mode}_hub_path must be a safe runs/... checkpoint folder")
+    repo = str(payload.get(f"{mode}_hub_repo") or default_repo).strip()
     if not SAFE_HUB_REPO.fullmatch(repo):
-        raise ValueError("resume_hub_repo must use namespace/repository form")
-    revision = str(payload.get("resume_hub_revision") or "main").strip()
+        raise ValueError(f"{mode}_hub_repo must use namespace/repository form")
+    revision = str(payload.get(f"{mode}_hub_revision") or "main").strip()
     if not SAFE_HUB_REVISION.fullmatch(revision) or ".." in revision:
-        raise ValueError("resume_hub_revision contains unsafe characters")
+        raise ValueError(f"{mode}_hub_revision contains unsafe characters")
     return {"repo_id": repo, "revision": revision, "path": path}
 
 
@@ -199,9 +203,15 @@ def build_contract(
         dataset_manifest_decision_grade = manifest_input[1]
 
     resume = str(payload.get("resume") or "").strip()
-    hub_checkpoint = _hub_checkpoint(payload, hub_repo)
-    if resume and hub_checkpoint:
-        raise ValueError("Use either resume or resume_hub_path, not both")
+    hub_checkpoint = _hub_checkpoint(payload, hub_repo, mode="resume")
+    init_hub_checkpoint = _hub_checkpoint(payload, hub_repo, mode="init")
+    selected_checkpoint_modes = sum(
+        bool(value) for value in (resume, hub_checkpoint, init_hub_checkpoint)
+    )
+    if selected_checkpoint_modes > 1:
+        raise ValueError(
+            "Use only one of local resume, Hub same-stage resume, or Hub next-stage initialization"
+        )
     if resume:
         resume_path, resume_kind, resume_sha = _repo_checkpoint(root, resume)
         normalized_resume = str(resume_path.relative_to(root.resolve())).replace(os.sep, "/")
@@ -213,6 +223,8 @@ def build_contract(
         command.extend(["--resume", normalized_resume])
     elif hub_checkpoint:
         command.extend(["--resume", "__ASTER_HUB_RESUME__"])
+    elif init_hub_checkpoint:
+        command.extend(["--init-checkpoint", "__ASTER_HUB_INIT__"])
 
     repository = repository or git_state(root)
     blockers: list[str] = []
@@ -238,6 +250,7 @@ def build_contract(
         "provisioning_model": provisioning_model or None,
         "dataset_manifest_decision_grade": dataset_manifest_decision_grade,
         "resume_hub": hub_checkpoint,
+        "init_hub": init_hub_checkpoint,
         "parent_run_id": payload.get("parent_run_id"),
         "wandb_project": payload.get("wandb_project"),
     }

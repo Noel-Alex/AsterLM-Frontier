@@ -60,18 +60,20 @@ def _run_training(command: list[str]) -> int:
         signal.signal(signal.SIGTERM, old_term)
 
 
-def _materialize_hub_resume(contract: dict, destination: Path) -> Path:
-    resume = contract.get("resume_hub")
-    if not isinstance(resume, dict):
-        raise TypeError("Contract uses Hub resume sentinel without resume_hub metadata")
+def _materialize_hub_checkpoint(
+    contract: dict, *, key: str, destination: Path
+) -> Path:
+    checkpoint_record = contract.get(key)
+    if not isinstance(checkpoint_record, dict):
+        raise TypeError(f"Contract uses Hub checkpoint sentinel without {key} metadata")
     from huggingface_hub import snapshot_download
 
-    path_in_repo = str(resume["path"]).strip("/")
+    path_in_repo = str(checkpoint_record["path"]).strip("/")
     destination.mkdir(parents=True, exist_ok=True)
     snapshot_download(
-        repo_id=str(resume["repo_id"]),
+        repo_id=str(checkpoint_record["repo_id"]),
         repo_type="model",
-        revision=str(resume["revision"]),
+        revision=str(checkpoint_record["revision"]),
         allow_patterns=[f"{path_in_repo}/**"],
         local_dir=destination,
     )
@@ -125,8 +127,20 @@ def main() -> None:
         command[train_option + 1] = str(resolved_path)
     if "__ASTER_HUB_RESUME__" in command:
         resume_root = Path(os.environ.get("ASTERLM_HUB_RESUME_ROOT", "/var/cache/aster/hub-resume"))
-        checkpoint = _materialize_hub_resume(contract, resume_root / contract["contract_id"])
+        checkpoint = _materialize_hub_checkpoint(
+            contract,
+            key="resume_hub",
+            destination=resume_root / contract["contract_id"] / "resume",
+        )
         _replace_pair(command, "--resume", str(checkpoint))
+    if "__ASTER_HUB_INIT__" in command:
+        resume_root = Path(os.environ.get("ASTERLM_HUB_RESUME_ROOT", "/var/cache/aster/hub-resume"))
+        checkpoint = _materialize_hub_checkpoint(
+            contract,
+            key="init_hub",
+            destination=resume_root / contract["contract_id"] / "init",
+        )
+        _replace_pair(command, "--init-checkpoint", str(checkpoint))
     raise SystemExit(_run_training(command))
 
 

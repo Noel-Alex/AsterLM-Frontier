@@ -117,6 +117,12 @@ Host-image sources:
 
 ## Recovery contract
 
+Studio exposes Google Cloud directly in the provider selector. Remote checkpoint
+handoff has two explicit modes: **Resume** restores full optimizer, scheduler,
+RNG and data-cursor state within the same stage; **Initialize next stage** verifies
+the previous public Hub final and starts the next context stage with its own
+optimizer and schedule. The immutable contract rejects ambiguous use of both.
+
 Before GCP is promoted, test and retain evidence for:
 
 1. local uninterrupted versus local stop/restart exactness;

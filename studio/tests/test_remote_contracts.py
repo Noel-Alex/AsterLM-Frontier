@@ -97,6 +97,45 @@ def test_contract_records_cross_provider_hub_resume(tmp_path):
     assert "resume" not in contract["inputs"]
 
 
+def test_contract_distinguishes_next_stage_hub_initialization(tmp_path):
+    for name in ("model.yaml", "train.yaml", "data.yaml"):
+        (tmp_path / name).write_text(name, encoding="utf-8")
+    payload = _payload()
+    payload.update(
+        {
+            "init_hub_repo": "student/aster-checkpoints",
+            "init_hub_revision": "main",
+            "init_hub_path": "runs/stage1/checkpoint-final",
+        }
+    )
+    contract = build_contract(
+        payload,
+        root=tmp_path,
+        policy={"max_spend_usd_per_job": 30, "require_cost_confirmation": True},
+        providers=_providers(),
+        repository={"commit": "f" * 40, "dirty": False},
+    )
+    assert contract["init_hub"]["path"] == "runs/stage1/checkpoint-final"
+    assert "__ASTER_HUB_INIT__" in contract["command"]
+    assert "__ASTER_HUB_RESUME__" not in contract["command"]
+
+
+def test_contract_rejects_ambiguous_resume_and_stage_initialization(tmp_path):
+    for name in ("model.yaml", "train.yaml", "data.yaml"):
+        (tmp_path / name).write_text(name, encoding="utf-8")
+    payload = _payload()
+    payload["resume_hub_path"] = "runs/stage2/checkpoints/tokens-1"
+    payload["init_hub_path"] = "runs/stage1/checkpoint-final"
+    with pytest.raises(ValueError, match="only one"):
+        build_contract(
+            payload,
+            root=tmp_path,
+            policy={"max_spend_usd_per_job": 30, "require_cost_confirmation": True},
+            providers=_providers(),
+            repository={"commit": "f" * 40, "dirty": False},
+        )
+
+
 def test_contract_binds_decision_grade_dataset_manifest(tmp_path):
     (tmp_path / "model.yaml").write_text("model", encoding="utf-8")
     (tmp_path / "train.yaml").write_text("train", encoding="utf-8")
