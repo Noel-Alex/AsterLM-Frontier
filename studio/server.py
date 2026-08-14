@@ -868,7 +868,7 @@ def _campaign_readiness(
 
     add(
         "hub_repo",
-        "Private checkpoint repository",
+        "Public checkpoint repository",
         "input_required",
         "enter namespace/name in the launch control; Studio never exposes or stores a token",
     )

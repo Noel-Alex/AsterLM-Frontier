@@ -122,6 +122,8 @@ checkpointing:
   recovery_interval_steps: 250
   recent_full_state_checkpoints: 6
   logarithmic_history_levels: 8
+  remote_recent_full_state_checkpoints_per_stage: 6
+  remote_logarithmic_history_levels_per_stage: 8
   huggingface_hard_cap_tb_decimal: 7.5
   huggingface_operational_guard_tb_decimal: 7.0
   estimated_weights_only_checkpoint_gib: 2.70
@@ -129,8 +131,11 @@ checkpointing:
   projected_local_dense_recent_gib: 36.0
   permanent_checkpoint_count: 28
   projected_remote_permanent_checkpoint_gib: 168.0
+  projected_remote_rolling_spine_gib: 336.0
+  projected_remote_total_checkpoint_gib: 504.0
   policy: dense rolling recovery checkpoints near the frontier plus logarithmically thinned history and permanent token milestones
-  cloud_policy: save and synchronously hash-verify a public Hugging Face full-state checkpoint at least every five minutes; resume from the newest valid Hub checkpoint across providers
+  cloud_policy: save a public Hugging Face full-state checkpoint at least every five minutes; overlap transfer with training through one bounded worker; advance latest and permit pruning only after exact remote hash verification; resume from the newest valid Hub checkpoint across providers
+  remote_retention_policy: preserve every permanent token milestone and final; for each stage retain six recent recovery points plus eight logarithmically older recovery points; batch-delete only superseded verified rolling folders
   remote_quota_policy: refuse any planned upload whose pessimistic projected repository usage exceeds 7.0 TB; never cross the 7.5 TB hard ceiling
   portable_inference: scripts/infer.py --hub-repo REPO --hub-run RUN --hub-selector tokens:N
 observability:

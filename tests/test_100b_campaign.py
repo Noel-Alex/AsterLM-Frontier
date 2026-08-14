@@ -87,6 +87,10 @@ def test_100b_train_configs_sum_to_campaign_budget() -> None:
     assert checkpointing["huggingface_operational_guard_tb_decimal"] == 7.0
     assert checkpointing["permanent_checkpoint_count"] == 28
     assert checkpointing["projected_remote_permanent_checkpoint_gib"] == 168.0
+    assert checkpointing["remote_recent_full_state_checkpoints_per_stage"] == 6
+    assert checkpointing["remote_logarithmic_history_levels_per_stage"] == 8
+    assert checkpointing["projected_remote_rolling_spine_gib"] == 336.0
+    assert checkpointing["projected_remote_total_checkpoint_gib"] == 504.0
     assert "refuse" in checkpointing["remote_quota_policy"]
     assert checkpointing["laptop_recovery_interval_minutes"] == 30
     assert checkpointing["cloud_recovery_interval_minutes"] == 5

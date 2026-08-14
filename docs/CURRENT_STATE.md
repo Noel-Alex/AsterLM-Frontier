@@ -110,7 +110,13 @@ optimizer, scheduler, RNG, step/token counters, exact data cursor, configs,
 runtime/source manifests, and checksums.
 
 Checkpoint retention is dense near the training head and progressively sparse
-in history. Cloud recovery targets roughly five minutes. Local storage is capped
+in history. Cloud recovery targets roughly five minutes. A single bounded Hub
+worker overlaps upload with training, but `latest` advances only after exact
+remote hash verification. Both local and remote rolling history keep six recent
+points plus eight logarithmically older points per stage; permanent token
+milestones and finals are never removed by rolling retention. The pessimistic
+four-stage projection is approximately 504 GiB (168 GiB permanent plus 336 GiB
+rolling), below the original 0.7 TB planning envelope. Local storage is capped
 at 150 GiB; Hub storage warns at 7.0 TB and hard-stops at 7.5 TB. Resume selects
 the newest complete compatible checkpoint across local and Hub state.
 
@@ -160,7 +166,11 @@ virtual-memory mappings despite ample reported free VRAM.
 
 ## UI and Git
 
-Studio uses the restored cream theme at the fixed port 8765. The active engineering
-branch is `Noel/frontier-hardening`; compact promoted evidence lives in Git so a
-clean clone can verify it without ignored raw run directories. Negative findings
-and invalidated attempts are never erased from the research record.
+Studio uses the restored cream theme at the fixed port 8765. Nested architecture
+campaigns are included in the live run view, while the SQLite research archive
+retains the unbounded comparison history. Metrics tails are read from the end of
+the append-only file rather than rescanning the full training history. The active
+engineering branch is `Noel/frontier-hardening`; compact promoted evidence lives
+in Git so a clean clone can verify it without ignored raw run directories.
+Negative findings and invalidated attempts are never erased from the research
+record.
