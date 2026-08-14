@@ -105,6 +105,13 @@ execution_variants:
     model_overrides: {linear_backend: torch, ffn_linear_backend: torch}
     train_overrides: {compile: false, precision_backend: amp, moe_implementation: cutlass, optimizer: muon_adamw8bit, muon_state_dtype: int8_blockwise, muon_quant_block_size: 2048, muon_per_head: true, muon_megabatch_max_gib: 0.125, muon_release_gradients_after_step: true, muon_lr: 0.01, adam_lr: 0.0003, schedule_type: cosine, warmup_steps: 2, sequence_length: 2048, micro_batch_size: 1, gradient_accumulation_steps: 8, eval_interval: 16, eval_batches: 8, log_interval: 1, diagnostic_interval: 8}
     environment: {}
+  cutlass-grouped-k3-muon8bit-bf16-4k:
+    description: Stage-1-aligned 4K BF16 execution with the same 16,384-token logical batch, Ada CUTLASS experts when present, and GPU-resident blockwise INT8 Muon state.
+    comparison_role: recipe_research
+    numerical_family: bf16-torch-int8-optimizer-state
+    model_overrides: {linear_backend: torch, ffn_linear_backend: torch}
+    train_overrides: {compile: false, precision_backend: amp, moe_implementation: cutlass, optimizer: muon_adamw8bit, muon_state_dtype: int8_blockwise, muon_quant_block_size: 2048, muon_per_head: true, muon_megabatch_max_gib: 0.125, muon_release_gradients_after_step: true, muon_lr: 0.01, adam_lr: 0.0003, schedule_type: cosine, warmup_steps: 2, sequence_length: 4096, micro_batch_size: 1, gradient_accumulation_steps: 4, eval_interval: 16, eval_batches: 4, log_interval: 1, diagnostic_interval: 8}
+    environment: {}
   torchao-fp8-experts-k3-muon8bit:
     description: Prototype TorchAO rowwise-FP8 routed expert GEMMs with BF16 canonical parameters and GPU-resident INT8 Muon state; SM90/SM100 cloud candidate only because PyTorch scaled grouped MM is unavailable on SM89 Ada.
     comparison_role: recipe_research
@@ -481,7 +488,7 @@ candidates:
     hypothesis: Additional sparse capacity at 1.45B total improves quality enough to repay reduced laptop update rate.
     base_model: configs/model/aster_k3_latentmoe_1p45b_a568m.yaml
     model_overrides: {}
-    execution_variants: [torch-reference, cutlass-grouped-bf16, cutlass-grouped, torch-grouped, cutlass-grouped-k3-muon, cutlass-grouped-k3-muon8bit-bf16, torchao-fp8-experts-k3-muon8bit, torch-grouped-k3-muon]
+    execution_variants: [torch-reference, cutlass-grouped-bf16, cutlass-grouped, torch-grouped, cutlass-grouped-k3-muon, cutlass-grouped-k3-muon8bit-bf16, cutlass-grouped-k3-muon8bit-bf16-4k, torchao-fp8-experts-k3-muon8bit, torch-grouped-k3-muon]
   - id: tier2-k3-latentmoe-1p45b-mtp1
     tier: 2
     hypothesis: Joint low-rank MTP-1 improves backbone quality and supplies a useful self-speculative draft token without erasing the total-matched MoE tradeoff.
@@ -491,7 +498,7 @@ candidates:
       mtp_rank: 256
       mtp_loss_weight: 0.12
       mtp_architecture: low_rank
-    execution_variants: [cutlass-grouped-k3-muon8bit-bf16]
+    execution_variants: [cutlass-grouped-k3-muon8bit-bf16, cutlass-grouped-k3-muon8bit-bf16-4k]
   - id: tier2-gdn2-latentmoe-selected-body
     tier: 2
     hypothesis: Replacing only KDA with GDN2 in the selected Stable LatentMoE body improves quality per wall time, especially for retrieval, without losing laptop fit.
@@ -509,7 +516,7 @@ candidates:
     hypothesis: A total-parameter-matched fully active dense KDA/MLA control may convert the incumbent's sparse storage capacity into more learning compute per wall hour while still fitting the laptop.
     base_model: configs/model/aster_dense_kda3_mla_total_matched_control.yaml
     model_overrides: {}
-    execution_variants: [cutlass-grouped-k3-muon8bit-bf16]
+    execution_variants: [cutlass-grouped-k3-muon8bit-bf16, cutlass-grouped-k3-muon8bit-bf16-4k]
   - id: tier2-dense-kda3-mla-total-matched-mtp1
     tier: 2
     hypothesis: Joint low-rank MTP-1 improves the total-matched dense backbone and earns its training overhead through self-speculative acceptance.
@@ -519,7 +526,7 @@ candidates:
       mtp_rank: 256
       mtp_loss_weight: 0.12
       mtp_architecture: low_rank
-    execution_variants: [cutlass-grouped-k3-muon8bit-bf16]
+    execution_variants: [cutlass-grouped-k3-muon8bit-bf16, cutlass-grouped-k3-muon8bit-bf16-4k]
   - id: tier2-k3-latentmoe-1p95b-a766m
     tier: 2
     hypothesis: The 1.95B stretch tier is the maximum-quality candidate if its full training state fits and its time-to-quality beats smaller tiers.

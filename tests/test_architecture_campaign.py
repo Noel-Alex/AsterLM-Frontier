@@ -263,6 +263,24 @@ def test_total_matched_mtp_candidates_add_identical_jointly_trained_capacity(tmp
     )
 
 
+def test_stage1_aligned_4k_variant_preserves_logical_batch(tmp_path):
+    campaign = load_architecture_campaign(CAMPAIGN, repo_root=ROOT)
+    manifest = materialize_architecture_campaign(campaign, tmp_path)
+    variant = manifest["execution_variants"][
+        "cutlass-grouped-k3-muon8bit-bf16-4k"
+    ]["train_overrides"]
+    assert variant["sequence_length"] == 4096
+    assert variant["micro_batch_size"] == 1
+    assert variant["gradient_accumulation_steps"] == 4
+    assert (
+        variant["sequence_length"]
+        * variant["micro_batch_size"]
+        * variant["gradient_accumulation_steps"]
+        == 16_384
+    )
+    assert variant["eval_batches"] * variant["sequence_length"] == 16_384
+
+
 def test_csa_hca_proxy_is_parameter_matched_to_dense_mla(tmp_path):
     campaign = load_architecture_campaign(CAMPAIGN, repo_root=ROOT)
     manifest = materialize_architecture_campaign(campaign, tmp_path)
