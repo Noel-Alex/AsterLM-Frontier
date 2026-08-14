@@ -113,7 +113,9 @@ def test_runtime_promotion_ledger_is_resumable_and_does_not_mutate_canonical(
 ) -> None:
     canonical = tmp_path / "canonical.yaml"
     canonical.write_text(
-        "schema_version: 2\nrepo_root: ../..\ngates:\n- id: gate\n  status: not_run\n",
+        "schema_version: 2\nrepo_root: ../..\ngates:\n"
+        "- id: long_context_retrieval\n  status: not_run\n"
+        "- id: correctness_and_data_quality_clear\n  status: not_run\n",
         encoding="utf-8",
     )
     state_root = tmp_path / "runs" / "campaign"
@@ -122,12 +124,21 @@ def test_runtime_promotion_ledger_is_resumable_and_does_not_mutate_canonical(
         canonical=canonical,
     )
     assert runtime.read_text(encoding="utf-8") == canonical.read_text(encoding="utf-8")
-    runtime.write_text(runtime.read_text(encoding="utf-8").replace("not_run", "passed"))
-    assert MODULE.initialize_runtime_promotion_ledger(
+    runtime_payload = yaml.safe_load(runtime.read_text(encoding="utf-8"))
+    runtime_payload["gates"][0]["status"] = "passed"
+    runtime_payload["gates"][0]["evidence"] = [{"path": "runs/proof.json", "sha256": "a" * 64}]
+    runtime.write_text(yaml.safe_dump(runtime_payload, sort_keys=False), encoding="utf-8")
+    canonical_payload = yaml.safe_load(canonical.read_text(encoding="utf-8"))
+    canonical_payload["gates"][1]["status"] = "passed"
+    canonical_payload["gates"][1]["evidence"] = [{"path": "docs/data.json", "sha256": "b" * 64}]
+    canonical.write_text(yaml.safe_dump(canonical_payload, sort_keys=False), encoding="utf-8")
+    refreshed = yaml.safe_load(MODULE.initialize_runtime_promotion_ledger(
         state_root,
         canonical=canonical,
-    ).read_text(encoding="utf-8").endswith("status: passed\n")
-    assert canonical.read_text(encoding="utf-8").endswith("status: not_run\n")
+    ).read_text(encoding="utf-8"))
+    assert refreshed["gates"][0]["status"] == "passed"
+    assert refreshed["gates"][1]["status"] == "passed"
+    assert yaml.safe_load(canonical.read_text(encoding="utf-8"))["gates"][0]["status"] == "not_run"
 
 
 def test_long_context_transition_commands_bind_checkpoint_and_runtime_ledger(

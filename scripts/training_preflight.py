@@ -126,6 +126,7 @@ def main() -> None:
     parser.add_argument("--data", default=None)
     parser.add_argument("--checkpoint", default=None)
     parser.add_argument("--hub-repo", default=None)
+    parser.add_argument("--promotion-gates", default=None)
     parser.add_argument("--check-first-record", action="store_true")
     parser.add_argument("--json", dest="json_path", default=None, help="Optional JSON report path")
     parser.add_argument("--allow-warnings", action="store_true", help="Return success when only warnings remain")
@@ -142,6 +143,8 @@ def main() -> None:
         train = TrainConfig.from_yaml(args.train)
         if args.hub_repo:
             train.hub_repo_id = args.hub_repo
+        if args.promotion_gates:
+            train.promotion_gates_path = args.promotion_gates
     except Exception as exc:
         print(f"ERROR config parse: {exc}", file=sys.stderr)
         raise SystemExit(2) from exc

@@ -14,7 +14,7 @@ from typing import Any
 
 import yaml
 
-from asterlm.artifacts import atomic_write_json
+from asterlm.artifacts import atomic_write_json, atomic_write_text
 from asterlm.config import AsterConfig
 from asterlm.generation.hub_checkpoint import (
     checkpoint_model_compatible,
@@ -159,10 +159,32 @@ def initialize_runtime_promotion_ledger(
     """Create a resumable, ignored gate ledger without dirtying frozen source."""
 
     ledger = state_root / "promotion_gates.runtime.yaml"
-    if ledger.is_file():
-        return ledger
     state_root.mkdir(parents=True, exist_ok=True)
-    shutil.copyfile(canonical, ledger)
+    if not ledger.is_file():
+        shutil.copyfile(canonical, ledger)
+        return ledger
+
+    # Canonical source owns every launch gate except the checkpoint-produced
+    # context transitions. Refresh it on each supervisor start so a runtime
+    # ledger created before data/tokenizer promotion cannot preserve stale
+    # blockers forever.
+    canonical_payload = yaml.safe_load(canonical.read_text(encoding="utf-8")) or {}
+    runtime_payload = yaml.safe_load(ledger.read_text(encoding="utf-8")) or {}
+    runtime_gates = {
+        str(gate.get("id")): gate for gate in runtime_payload.get("gates", [])
+    }
+    transition_ids = {str(item["gate"]) for item in LONG_CONTEXT_GATES}
+    for gate in canonical_payload.get("gates", []):
+        gate_id = str(gate.get("id"))
+        runtime_gate = runtime_gates.get(gate_id)
+        if (
+            gate_id in transition_ids
+            and runtime_gate is not None
+            and runtime_gate.get("status") == "passed"
+        ):
+            gate.clear()
+            gate.update(runtime_gate)
+    atomic_write_text(ledger, yaml.safe_dump(canonical_payload, sort_keys=False))
     return ledger
 
 
@@ -374,26 +396,8 @@ def main() -> None:
 
     first = commands[0]["stage"]
     runtime_promotion_gates = initialize_runtime_promotion_ledger(state_root)
-    preflight = [
-        sys.executable,
-        "scripts/training_preflight.py",
-        "--model",
-        str(first["model"]),
-        "--train",
-        str(first["train"]),
-        "--data",
-        data,
-        "--hub-repo",
-        args.hub_repo,
-        "--check-first-record",
-        "--json",
-        str(state_root / "preflight.json"),
-    ]
-    if args.verify_manifest_hashes:
-        preflight.append("--verify-manifest-hashes")
     state_root.mkdir(parents=True, exist_ok=True)
     atomic_write_json(state_path, state)
-    subprocess.run(preflight, cwd=ROOT, check=True)
 
     environment = dict(os.environ)
     if args.wandb_entity:
@@ -406,11 +410,10 @@ def main() -> None:
 
     signal.signal(signal.SIGINT, forward)
     signal.signal(signal.SIGTERM, forward)
-    state["status"] = "running"
-    for item in commands:
-        stage = item["stage"]
-        stage_index = campaign["stages"].index(stage)
 
+    def ensure_stage_transition_gates(stage: dict[str, Any]) -> None:
+        nonlocal child
+        stage_index = campaign["stages"].index(stage)
         # A fresh provider may begin at stage 3 or 4, so materialize every
         # prerequisite proof, not only the immediately preceding transition.
         for gate in LONG_CONTEXT_GATES:
@@ -468,6 +471,45 @@ def main() -> None:
             gate_record["finished_at_unix"] = time.time()
             state["current_transition_evaluation"] = None
             atomic_write_json(state_path, state)
+
+    # Direct stage-2+ starts must reconstruct transition evidence before their
+    # preflight validates the stage-aware final-run contract.
+    ensure_stage_transition_gates(first)
+    preflight = [
+        sys.executable,
+        "scripts/training_preflight.py",
+        "--model",
+        str(first["model"]),
+        "--train",
+        str(first["train"]),
+        "--data",
+        data,
+        "--hub-repo",
+        args.hub_repo,
+        "--promotion-gates",
+        str(runtime_promotion_gates),
+        "--check-first-record",
+        "--json",
+        str(state_root / "preflight.json"),
+    ]
+    if args.verify_manifest_hashes:
+        preflight.append("--verify-manifest-hashes")
+    child = subprocess.Popen(
+        preflight,
+        cwd=ROOT,
+        env=stage_environment(environment, first),
+        **child_process_options(),
+    )
+    preflight_code = child.wait()
+    if preflight_code != 0:
+        state["status"] = "failed_preflight"
+        atomic_write_json(state_path, state)
+        raise SystemExit(preflight_code)
+
+    state["status"] = "running"
+    for item in commands:
+        stage = item["stage"]
+        ensure_stage_transition_gates(stage)
 
         run_root = stage_output_dir(stage, remote_durable=args.remote_durable)
         resume = str(run_root) if run_root.is_dir() and resolve_checkpoint(run_root) != run_root else None
