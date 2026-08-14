@@ -4,7 +4,6 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import shutil
 import signal
 import subprocess
 import sys
@@ -168,7 +167,7 @@ def initialize_runtime_promotion_ledger(
     ledger = state_root / "promotion_gates.runtime.yaml"
     state_root.mkdir(parents=True, exist_ok=True)
     if not ledger.is_file():
-        shutil.copyfile(canonical, ledger)
+        atomic_write_text(ledger, canonical.read_text(encoding="utf-8"))
         return ledger
 
     # Canonical source owns every launch gate except the checkpoint-produced
@@ -358,6 +357,11 @@ def main() -> None:
             previous_complete = complete
         if stage not in stages:
             continue
+        if complete is not None:
+            state.setdefault("already_completed_stages", []).append(
+                {"id": stage["id"], "checkpoint": str(complete)}
+            )
+            continue
         run_root = effective_output
         resume = str(run_root) if run_root.is_dir() and resolve_checkpoint(run_root) != run_root else None
         init_checkpoint = (
@@ -401,7 +405,11 @@ def main() -> None:
         print(json.dumps(state, indent=2))
         return
 
-    first = commands[0]["stage"]
+    # Discovery above is only a dry-run command preview. Do not leak a later
+    # stale completed run into live transition initialization when starting at
+    # stage 2/3/4; execution resolves only the immediate predecessor below.
+    previous_complete = None
+    first = commands[0]["stage"] if commands else campaign["stages"][-1]
     runtime_promotion_gates = initialize_runtime_promotion_ledger(state_root)
     state_root.mkdir(parents=True, exist_ok=True)
     atomic_write_json(state_path, state)
@@ -478,39 +486,40 @@ def main() -> None:
             state["current_transition_evaluation"] = None
             atomic_write_json(state_path, state)
 
-    # Direct stage-2+ starts must reconstruct transition evidence before their
-    # preflight validates the stage-aware final-run contract.
-    ensure_long_context_gates(campaign["stages"].index(first))
-    preflight = [
-        sys.executable,
-        "scripts/training_preflight.py",
-        "--model",
-        str(first["model"]),
-        "--train",
-        str(first["train"]),
-        "--data",
-        data,
-        "--hub-repo",
-        args.hub_repo,
-        "--promotion-gates",
-        str(runtime_promotion_gates),
-        "--check-first-record",
-        "--json",
-        str(state_root / "preflight.json"),
-    ]
-    if args.verify_manifest_hashes:
-        preflight.append("--verify-manifest-hashes")
-    child = subprocess.Popen(
-        preflight,
-        cwd=ROOT,
-        env=stage_environment(environment, first),
-        **child_process_options(),
-    )
-    preflight_code = child.wait()
-    if preflight_code != 0:
-        state["status"] = "failed_preflight"
-        atomic_write_json(state_path, state)
-        raise SystemExit(preflight_code)
+    if commands:
+        # Direct stage-2+ starts must reconstruct transition evidence before
+        # preflight validates the stage-aware final-run contract.
+        ensure_long_context_gates(campaign["stages"].index(first))
+        preflight = [
+            sys.executable,
+            "scripts/training_preflight.py",
+            "--model",
+            str(first["model"]),
+            "--train",
+            str(first["train"]),
+            "--data",
+            data,
+            "--hub-repo",
+            args.hub_repo,
+            "--promotion-gates",
+            str(runtime_promotion_gates),
+            "--check-first-record",
+            "--json",
+            str(state_root / "preflight.json"),
+        ]
+        if args.verify_manifest_hashes:
+            preflight.append("--verify-manifest-hashes")
+        child = subprocess.Popen(
+            preflight,
+            cwd=ROOT,
+            env=stage_environment(environment, first),
+            **child_process_options(),
+        )
+        preflight_code = child.wait()
+        if preflight_code != 0:
+            state["status"] = "failed_preflight"
+            atomic_write_json(state_path, state)
+            raise SystemExit(preflight_code)
 
     state["status"] = "running"
     for item in commands:
