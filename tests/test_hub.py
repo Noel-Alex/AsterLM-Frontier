@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+from threading import Event
 from types import SimpleNamespace
 
 import pytest
@@ -204,25 +205,38 @@ def test_remote_checkpoint_retention_keeps_recent_pyramid_and_permanent() -> Non
 
 
 class _RecordingSync:
-    def __init__(self, *, fail: bool = False) -> None:
+    def __init__(self, *, fail: bool = False, block: bool = False) -> None:
         self.fail = fail
         self.calls: list[dict[str, object]] = []
+        self.started = Event()
+        self.release = Event()
+        if not block:
+            self.release.set()
 
     def sync(self, **kwargs: object) -> dict[str, object]:
         self.calls.append(kwargs)
+        self.started.set()
+        if not self.release.wait(timeout=5):
+            raise TimeoutError("test upload was never released")
         if self.fail:
             raise RuntimeError("upload failed")
         return {"status": "verified", "seconds": 0.1}
 
 
 def test_async_upload_queue_drains_verified_tasks(tmp_path: Path) -> None:
-    sync = _RecordingSync()
+    sync = _RecordingSync(block=True)
     upload_queue = HubUploadQueue(sync, max_pending=1)  # type: ignore[arg-type]
     checkpoint = tmp_path / "checkpoint-1"
     task = HubUploadTask(tmp_path, checkpoint, "periodic", 1, 100)
     upload_queue.enqueue(task)
-    assert checkpoint.resolve() in upload_queue.pending_checkpoints()
-    report = upload_queue.drain(close=True)
+    try:
+        assert sync.started.wait(timeout=5)
+        assert checkpoint.resolve() in upload_queue.pending_checkpoints()
+    finally:
+        # Always release and close the non-daemon worker, including when an
+        # assertion fails, so a test failure cannot pin the entire CI process.
+        sync.release.set()
+        report = upload_queue.drain(close=True)
     assert report["errors"] == []
     assert report["results"][0]["status"] == "verified"
     assert upload_queue.pending_checkpoints() == set()
