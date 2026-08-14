@@ -245,7 +245,7 @@ function renderTrainingCampaign(){
   const stateLabels={ready:"ready",running:"in progress",blocked:"blocked",input_required:"launch input"};
   $("#campaign-readiness-ledger").innerHTML=(readiness.items||[]).map(item=>`<div class="checkpoint-row"><code>${esc(item.label)}</code><span class="status-pill ${item.state==="ready"?"good":item.state==="running"?"active":"warning"}">${esc(stateLabels[item.state]||item.state)}</span><span>${esc(item.detail)}</span></div>`).join("");
   const a=c.architecture||{},attn=a.attention||{},experts=a.experts||{};
-  $("#campaign-architecture").innerHTML=`<strong>${fmtTokens(a.total_parameters)} total · ${fmtTokens(a.active_parameters_per_token)} active/token · ${esc(a.layers)} layers</strong><br/>18 global recurrent KDA layers + 6 local-window MLA layers (${fmtTokens(attn.mla_window_tokens)} window). Stable LatentMoE: ${esc(experts.routed)} routed, top-${esc(experts.active_routed)}, ${esc(experts.shared)} shared. After pretraining this is a base completion model; chat/reasoning behavior comes from later post-training.`;
+  $("#campaign-architecture").innerHTML=`<strong>${fmtTokens(a.total_parameters)} total · ${fmtTokens(a.active_parameters_per_token)} active/token · ${esc(a.layers)} layers</strong><br/>24 global recurrent KDA layers + 8 local-window MLA layers (${fmtTokens(attn.mla_window_tokens)} window). Stable LatentMoE: ${esc(experts.routed)} routed, top-${esc(experts.active_routed)}, ${esc(experts.shared)} shared. After pretraining this is a base completion model; chat/reasoning behavior comes from later post-training.`;
 }
 
 function renderProviders() {
@@ -803,7 +803,7 @@ function bind() {
   $("#start-pretraining-campaign").onclick=()=>{
     const hub_repo=$("#campaign-hub-repo").value.trim();
     if(!hub_repo)return showError(new Error("Enter the public Hugging Face repository first."));
-    if(!confirm("Start the frozen 100B pretraining campaign? Preflight runs first; after it passes this allocates the GPU and continues unattended across all three stages."))return;
+    if(!confirm("Start the frozen 100B pretraining campaign? Preflight runs first; after it passes this allocates the GPU and continues unattended across all four stages, with checkpoint-bound retrieval gates between context stages."))return;
     startJob("pretraining_campaign",{
       hub_repo,
       wandb_entity:$("#campaign-wandb-entity").value.trim(),
