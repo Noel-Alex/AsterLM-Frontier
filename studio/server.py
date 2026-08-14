@@ -901,7 +901,11 @@ def training_campaign_status(
     supervisor_path = (
         ROOT / "runs" / f"{payload.get('name', 'pretraining')}-campaign" / "campaign_state.json"
     )
-    supervisor_state = read_state(supervisor_path) or {}
+    supervisor_state = current_supervisor_state(
+        payload,
+        read_state(supervisor_path) or {},
+        state_path=supervisor_path,
+    )
     runs = {row["path"]: row for row in (run_rows if run_rows is not None else runs_status())}
     completed = 0
     stages: list[dict[str, Any]] = []
@@ -947,6 +951,39 @@ def training_campaign_status(
         "clean_manifest_ready": (ROOT / str(payload["data"]["clean_manifest"])).is_file(),
         "readiness": readiness,
         "supervisor": supervisor_state,
+    }
+
+
+def current_supervisor_state(
+    campaign: dict[str, Any],
+    state: dict[str, Any],
+    *,
+    state_path: Path,
+) -> dict[str, Any]:
+    """Reject an obsolete campaign preview without erasing its historical file."""
+
+    if not state:
+        return {}
+    configured_repo = str((campaign.get("checkpointing") or {}).get("public_hub_repository") or "")
+    expected_campaign = rel(CAMPAIGN_PATH).replace("\\", "/")
+    observed_campaign = str(state.get("campaign") or "").replace("\\", "/")
+    reasons: list[str] = []
+    if observed_campaign != expected_campaign:
+        reasons.append("campaign_path_changed")
+    if state.get("name") != campaign.get("name"):
+        reasons.append("campaign_name_changed")
+    if int(state.get("goal_tokens") or 0) != int(campaign.get("goal_tokens") or 0):
+        reasons.append("token_budget_changed")
+    if str(state.get("hub_repo") or "") != configured_repo:
+        reasons.append("checkpoint_repository_changed")
+    if not reasons:
+        return {**state, "current": True}
+    return {
+        "status": "stale_historical_state",
+        "current": False,
+        "historical_status": state.get("status"),
+        "state_path": rel(state_path),
+        "stale_reasons": reasons,
     }
 
 

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from studio import server
@@ -32,3 +34,30 @@ def test_retired_stack_edu_is_rejected_from_active_workflows(monkeypatch) -> Non
         server.start_action(
             "download_source", {"source_id": "stack_edu", "target_tokens": 1_000_000}
         )
+
+
+def test_stale_campaign_preview_cannot_override_current_public_checkpoint_repo() -> None:
+    campaign = {
+        "name": "current",
+        "goal_tokens": 100,
+        "checkpointing": {"public_hub_repository": "owner/public"},
+    }
+    state = {
+        "campaign": "configs/pretraining/frontier_100b_k3.yaml",
+        "name": "current",
+        "goal_tokens": 100,
+        "hub_repo": "owner/private",
+        "status": "dry_run",
+        "commands": [["python", "obsolete.py"]],
+    }
+
+    result = server.current_supervisor_state(
+        campaign,
+        state,
+        state_path=Path("runs/current-campaign/campaign_state.json"),
+    )
+
+    assert result["status"] == "stale_historical_state"
+    assert result["current"] is False
+    assert result["stale_reasons"] == ["checkpoint_repository_changed"]
+    assert "commands" not in result
