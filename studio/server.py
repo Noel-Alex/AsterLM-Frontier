@@ -898,6 +898,10 @@ def training_campaign_status(
     run_rows: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     payload = yaml.safe_load(CAMPAIGN_PATH.read_text(encoding="utf-8")) or {}
+    supervisor_path = (
+        ROOT / "runs" / f"{payload.get('name', 'pretraining')}-campaign" / "campaign_state.json"
+    )
+    supervisor_state = read_state(supervisor_path) or {}
     runs = {row["path"]: row for row in (run_rows if run_rows is not None else runs_status())}
     completed = 0
     stages: list[dict[str, Any]] = []
@@ -942,6 +946,7 @@ def training_campaign_status(
         ),
         "clean_manifest_ready": (ROOT / str(payload["data"]["clean_manifest"])).is_file(),
         "readiness": readiness,
+        "supervisor": supervisor_state,
     }
 
 

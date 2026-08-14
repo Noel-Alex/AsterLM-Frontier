@@ -236,7 +236,9 @@ function renderTrainingCampaign(){
     [freshness,"metric freshness"],
   ];
   $("#campaign-live-metrics").innerHTML=metrics.map(([v,l])=>`<div><strong>${esc(v)}</strong><span>${esc(l)}</span></div>`).join("");
-  $("#campaign-stage-ledger").innerHTML=(c.stages||[]).map(stage=>`<div class="checkpoint-row"><code>${esc(stage.id)} · ${Number(stage.context/1024)}K</code><span>${fmtTokens(stage.completed_tokens)} / ${fmtTokens(stage.tokens)}</span><span>${(100*Number(stage.progress_fraction)).toFixed(3)}%</span><span>${esc(stage.label)}</span><span>${stage.run?.status?esc(stage.run.status):"not started"}</span></div>`).join("");
+  const stageRows=(c.stages||[]).map(stage=>`<div class="checkpoint-row"><code>${esc(stage.id)} · ${Number(stage.context/1024)}K</code><span>${fmtTokens(stage.completed_tokens)} / ${fmtTokens(stage.tokens)}</span><span>${(100*Number(stage.progress_fraction)).toFixed(3)}%</span><span>${esc(stage.label)}</span><span>${stage.run?.status?esc(stage.run.status):"not started"}</span></div>`);
+  const transitionRows=(c.supervisor?.stage_transition_evaluations||[]).map(gate=>`<div class="checkpoint-row"><code>${esc(gate.id)}</code><span>checkpoint-bound retrieval</span><span>3 tasks · 3 depths · 3 repeats</span><span>${esc(gate.checkpoint||"")}</span><span class="status-pill ${gate.status==="passed"?"good":gate.status==="running"?"active":"warning"}">${esc(gate.status||"pending")}</span></div>`);
+  $("#campaign-stage-ledger").innerHTML=[...stageRows,...transitionRows].join("");
   const readinessCount=$("#campaign-readiness-count");
   if(readinessCount){
     readinessCount.textContent=readiness.ready?"all required gates ready":`${Number(readiness.blocking_count||0)} blocking`;
@@ -245,7 +247,7 @@ function renderTrainingCampaign(){
   const stateLabels={ready:"ready",running:"in progress",blocked:"blocked",input_required:"launch input"};
   $("#campaign-readiness-ledger").innerHTML=(readiness.items||[]).map(item=>`<div class="checkpoint-row"><code>${esc(item.label)}</code><span class="status-pill ${item.state==="ready"?"good":item.state==="running"?"active":"warning"}">${esc(stateLabels[item.state]||item.state)}</span><span>${esc(item.detail)}</span></div>`).join("");
   const a=c.architecture||{},attn=a.attention||{},experts=a.experts||{};
-  $("#campaign-architecture").innerHTML=`<strong>${fmtTokens(a.total_parameters)} total · ${fmtTokens(a.active_parameters_per_token)} active/token · ${esc(a.layers)} layers</strong><br/>24 global recurrent KDA layers + 8 local-window MLA layers (${fmtTokens(attn.mla_window_tokens)} window). Stable LatentMoE: ${esc(experts.routed)} routed, top-${esc(experts.active_routed)}, ${esc(experts.shared)} shared. After pretraining this is a base completion model; chat/reasoning behavior comes from later post-training.`;
+  $("#campaign-architecture").innerHTML=`<strong>${fmtTokens(a.total_parameters)} total · ${fmtTokens(a.active_parameters_per_token)} active/token · ${esc(a.layers)} layers</strong><br/>${esc(attn.kda_layers)} global recurrent KDA layers + ${esc(attn.mla_layers)} local-window MLA layers (${fmtTokens(attn.long_context_mla_window_tokens)} window). Stable LatentMoE: ${esc(experts.routed)} routed, top-${esc(experts.active_routed)}, ${esc(experts.shared)} shared. After pretraining this is a base completion model; chat/reasoning behavior comes from later post-training.`;
 }
 
 function renderProviders() {
