@@ -238,6 +238,11 @@ def summarize_quality_run(run_dir: str | Path) -> dict[str, Any]:
         experiment = json.loads((root / "experiment.json").read_text(encoding="utf-8"))
 
     latest_eval = max(evaluations, key=lambda row: int(row.get("tokens_seen", 0)), default={})
+    terminal_evaluations = sorted(
+        evaluations,
+        key=lambda row: (int(row.get("tokens_seen", 0)), int(row.get("step", 0))),
+    )[-8:]
+    terminal_losses = [float(row["eval_main_loss"]) for row in terminal_evaluations]
     throughput = [float(row["tokens_per_second"]) for row in training]
     utilization = [
         float(row["gpu_util_percent"])
@@ -358,6 +363,13 @@ def summarize_quality_run(run_dir: str | Path) -> dict[str, Any]:
         "eval_main_loss": latest_eval.get("eval_main_loss"),
         "eval_perplexity": latest_eval.get("eval_perplexity"),
         "eval_tokens": latest_eval.get("tokens_seen"),
+        "terminal_eval_window_count": len(terminal_losses),
+        "terminal_eval_loss_mean": (
+            statistics.fmean(terminal_losses) if terminal_losses else None
+        ),
+        "terminal_eval_loss_median": (
+            statistics.median(terminal_losses) if terminal_losses else None
+        ),
         "median_training_tokens_per_second": statistics.median(throughput) if throughput else None,
         "gpu_utilization_sampling": (
             "continuous_time" if time_sampled_utilization else "step_boundary_fallback"

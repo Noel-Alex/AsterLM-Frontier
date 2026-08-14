@@ -139,6 +139,8 @@ def test_quality_summary_and_latest_checkpoint(tmp_path):
 
     summary = summarize_quality_run(run)
     assert summary["eval_main_loss"] == 3.5
+    assert summary["terminal_eval_window_count"] == 1
+    assert summary["terminal_eval_loss_mean"] == 3.5
     assert summary["median_training_tokens_per_second"] == 105.0
     assert summary["gpu_utilization_sampling"] == "continuous_time"
     assert summary["gpu_utilization_sample_count"] == 123

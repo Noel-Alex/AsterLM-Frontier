@@ -281,6 +281,11 @@ def analyze_quality_campaign(campaign_path: str | Path) -> dict[str, Any]:
     for identity, items in grouped.items():
         complete = [item for item in items if item.get("status") == "ok"]
         losses = [float(item["eval_main_loss"]) for item in complete if item.get("eval_main_loss") is not None]
+        terminal_losses = [
+            float(item["terminal_eval_loss_mean"])
+            for item in complete
+            if item.get("terminal_eval_loss_mean") is not None
+        ]
         throughput = [
             float(item["median_training_tokens_per_second"])
             for item in complete
@@ -347,6 +352,8 @@ def analyze_quality_campaign(campaign_path: str | Path) -> dict[str, Any]:
             "expected_seed_count": len(items),
             "final_eval_loss_mean": _mean(losses),
             "final_eval_loss_stdev": _stdev(losses),
+            "terminal_window_eval_loss_mean": _mean(terminal_losses),
+            "terminal_window_eval_loss_stdev": _stdev(terminal_losses),
             "final_eval_loss_by_seed": {
                 str(item["seed"]): float(item["eval_main_loss"])
                 for item in complete
