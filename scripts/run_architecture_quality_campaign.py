@@ -51,6 +51,32 @@ def _refresh_analysis(campaign_path: Path) -> None:
     )
 
 
+def _should_retry_metrics_only_oom(
+    *,
+    summary: dict[str, Any],
+    returncode: int,
+    retries_used: int,
+    retry_limit: int,
+    checkpoint_policy: str,
+) -> bool:
+    """Retry one isolated metrics-only arm after an OOM-classified child failure.
+
+    WSL/CUDA can occasionally reject a tiny device allocation while several GiB are
+    still reported free, particularly just after the campaign preflight has released
+    multiple large CPU models.  A clean child restart distinguishes that transient
+    mapping failure from a reproducible capacity failure.  Checkpoint-retaining runs
+    are deliberately excluded: their correct recovery path is an exact resume, not a
+    clean restart.
+    """
+
+    return (
+        returncode != 0
+        and summary.get("status") == "failed_oom"
+        and checkpoint_policy == "none"
+        and retries_used < retry_limit
+    )
+
+
 def _validate_data(data_path: Path, root: Path) -> DataConfig:
     config = DataConfig.from_yaml(data_path)
     for source in [*config.sources, *config.validation_sources]:
@@ -301,6 +327,16 @@ def main() -> None:
         ),
     )
     parser.add_argument("--continue-on-error", action="store_true")
+    parser.add_argument(
+        "--oom-retries",
+        type=int,
+        default=1,
+        help=(
+            "Clean child-process retries for OOM-classified metrics-only arms. "
+            "One retry is the default so transient WSL/CUDA mapping failures do not "
+            "invalidate a long campaign; checkpoint-retaining arms are never restarted."
+        ),
+    )
     parser.add_argument("--no-compile", action="store_true")
     parser.add_argument(
         "--resume-existing",
@@ -334,6 +370,8 @@ def main() -> None:
     )
     if args.tokens <= 0:
         raise ValueError("--tokens must be positive")
+    if args.oom_retries < 0:
+        raise ValueError("--oom-retries cannot be negative")
     if not tokenizer.is_file():
         raise FileNotFoundError(f"Tokenizer does not exist: {tokenizer}")
     _validate_data(data_path, root)
@@ -403,6 +441,10 @@ def main() -> None:
         manifest["cuda_toolchain_resume_check"] = cuda_toolchain
         manifest.setdefault("interrupted_attempts", [])
         manifest.setdefault("runs", {})
+        manifest["oom_retry_policy"] = {
+            "metrics_only_clean_retries": args.oom_retries,
+            "checkpoint_retaining_runs_restart": False,
+        }
         execution_commit = str(manifest["source_provenance"]["git_commit"])
     else:
         initialization_audits = (
@@ -438,6 +480,10 @@ def main() -> None:
             "initialization_audits": initialization_audits,
             "cuda_toolchain": cuda_toolchain,
             "interrupted_attempts": [],
+            "oom_retry_policy": {
+                "metrics_only_clean_retries": args.oom_retries,
+                "checkpoint_retaining_runs_restart": False,
+            },
             "runs": {},
         }
         execution_commit = str(source["git_commit"])
@@ -549,11 +595,47 @@ def main() -> None:
             environment_delta = dict(effective_variant["environment"])
             environment.update(environment_delta)
             environment = cuda_allocator_environment(environment)
-            print("$", " ".join(command), flush=True)
-            completed = subprocess.run(
-                command, cwd=pinned.path, env=environment, check=False
-            )
-            summary = summarize_quality_run(run_dir)
+            retries_used = 0
+            while True:
+                print("$", " ".join(command), flush=True)
+                completed = subprocess.run(
+                    command, cwd=pinned.path, env=environment, check=False
+                )
+                summary = summarize_quality_run(run_dir)
+                if not _should_retry_metrics_only_oom(
+                    summary=summary,
+                    returncode=completed.returncode,
+                    retries_used=retries_used,
+                    retry_limit=args.oom_retries,
+                    checkpoint_policy=args.checkpoint_policy,
+                ):
+                    break
+                archive = archive_incomplete_quality_run(
+                    run_dir,
+                    output
+                    / "interrupted-attempts"
+                    / f"seed-{seed}"
+                    / candidate_id,
+                )
+                retries_used += 1
+                manifest["interrupted_attempts"].append(
+                    {
+                        "seed": seed,
+                        "candidate_id": candidate_id,
+                        "execution_variant": variant_id,
+                        "reason": "automatic_metrics_only_oom_retry",
+                        "retry_number": retries_used,
+                        "archive": _portable(archive, root),
+                        "summary": summary,
+                    }
+                )
+                atomic_write_json(output / "quality-campaign.json", manifest)
+                _refresh_analysis(output / "quality-campaign.json")
+                print(
+                    f"retrying OOM-classified metrics-only arm in a clean child "
+                    f"({retries_used}/{args.oom_retries})",
+                    flush=True,
+                )
             summary.update(
                 {
                     "candidate_id": candidate_id,
@@ -574,6 +656,7 @@ def main() -> None:
                         "numerical_family"
                     ],
                     "environment": environment_delta,
+                    "automatic_oom_retries_used": retries_used,
                 }
             )
             manifest["runs"][f"{seed}:{candidate_id}:{variant_id}"] = summary

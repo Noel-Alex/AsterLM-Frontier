@@ -199,3 +199,32 @@ def test_resume_contract_rejects_changed_token_budget():
             tokens=8192,
             smoke=False,
         )
+
+
+def test_metrics_only_oom_gets_one_clean_retry():
+    runner = load_runner_module()
+    assert runner._should_retry_metrics_only_oom(
+        summary={"status": "failed_oom"},
+        returncode=1,
+        retries_used=0,
+        retry_limit=1,
+        checkpoint_policy="none",
+    )
+    assert not runner._should_retry_metrics_only_oom(
+        summary={"status": "failed_oom"},
+        returncode=1,
+        retries_used=1,
+        retry_limit=1,
+        checkpoint_policy="none",
+    )
+
+
+def test_checkpoint_retaining_oom_is_never_clean_restarted():
+    runner = load_runner_module()
+    assert not runner._should_retry_metrics_only_oom(
+        summary={"status": "failed_oom"},
+        returncode=1,
+        retries_used=0,
+        retry_limit=1,
+        checkpoint_policy="full",
+    )
