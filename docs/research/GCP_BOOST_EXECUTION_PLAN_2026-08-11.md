@@ -122,6 +122,10 @@ handoff has two explicit modes: **Resume** restores full optimizer, scheduler,
 RNG and data-cursor state within the same stage; **Initialize next stage** verifies
 the previous public Hub final and starts the next context stage with its own
 optimizer and schedule. The immutable contract rejects ambiguous use of both.
+For production curriculum work, **Frozen campaign stage** is the safer default:
+it runs exactly one named stage through the stage-aware supervisor, resolves the
+GPU-specific train recipe, reconstructs missing promotion evidence, and stops
+before any later stage can consume credit.
 
 Before GCP is promoted, test and retain evidence for:
 

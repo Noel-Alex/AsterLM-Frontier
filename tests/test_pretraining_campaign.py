@@ -108,6 +108,22 @@ def test_campaign_requires_adjacent_stage_continuation() -> None:
             MODULE.load_campaign(path)
 
 
+def test_campaign_stage_range_is_explicit_and_ordered() -> None:
+    campaign = MODULE.load_campaign(ROOT / "configs/pretraining/frontier_100b_k3.yaml")
+    selected = MODULE.select_campaign_stages(
+        campaign,
+        start_stage="stage2",
+        stop_after_stage="stage2",
+    )
+    assert [stage["id"] for stage in selected] == ["stage2"]
+    with pytest.raises(ValueError, match="cannot precede"):
+        MODULE.select_campaign_stages(
+            campaign,
+            start_stage="stage3",
+            stop_after_stage="stage2",
+        )
+
+
 def test_runtime_promotion_ledger_is_resumable_and_does_not_mutate_canonical(
     tmp_path: Path,
 ) -> None:

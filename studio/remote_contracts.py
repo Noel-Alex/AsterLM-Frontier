@@ -184,27 +184,75 @@ def build_contract(
     if provisioning_model and provisioning_model not in SAFE_PROVISIONING:
         raise ValueError("provisioning_model must be STANDARD or SPOT")
 
+    job_kind = str(payload.get("job_kind") or "training")
+    if job_kind not in {"training", "campaign_stage"}:
+        raise ValueError("job_kind must be training or campaign_stage")
     inputs: dict[str, dict[str, str]] = {}
-    command = ["python", "scripts/studio_train.py", "--mode", "pretrain"]
     input_paths: dict[str, Path] = {}
-    for key, option in (("model", "--model"), ("train", "--train"), ("data", "--data")):
-        relative = str(payload.get(key) or "")
+
+    def add_input(key: str, relative: str) -> str:
         path = _repo_file(root, relative)
         normalized = str(path.relative_to(root.resolve())).replace(os.sep, "/")
         inputs[key] = {"path": normalized, "sha256": _sha256(path)}
         input_paths[key] = path
-        command.extend([option, normalized])
-    command.extend(["--hub-repo", hub_repo])
-    command.append("--remote-durable")
+        return normalized
+
+    resume = str(payload.get("resume") or "").strip()
+    hub_checkpoint = _hub_checkpoint(payload, hub_repo, mode="resume")
+    init_hub_checkpoint = _hub_checkpoint(payload, hub_repo, mode="init")
+    if job_kind == "campaign_stage":
+        if any((resume, hub_checkpoint, init_hub_checkpoint)):
+            raise ValueError(
+                "campaign_stage resolves same-stage resume and prior-stage initialization automatically"
+            )
+        campaign_relative = str(
+            payload.get("campaign") or "configs/pretraining/frontier_100b_k3.yaml"
+        )
+        campaign_path = _repo_file(root, campaign_relative)
+        campaign_payload = yaml.safe_load(campaign_path.read_text(encoding="utf-8")) or {}
+        campaign_stage = str(payload.get("campaign_stage") or "")
+        matches = [
+            stage
+            for stage in campaign_payload.get("stages", [])
+            if str(stage.get("id")) == campaign_stage
+        ]
+        if len(matches) != 1:
+            raise ValueError(f"Unknown or duplicate campaign_stage: {campaign_stage}")
+        stage = matches[0]
+        campaign_normalized = add_input("campaign", campaign_relative)
+        add_input("model", str(stage["model"]))
+        add_input("train", str(stage["train"]))
+        add_input("data", str((campaign_payload.get("data") or {})["clean_config"]))
+        command = [
+            "python",
+            "scripts/run_pretraining_campaign.py",
+            "--campaign",
+            campaign_normalized,
+            "--hub-repo",
+            hub_repo,
+            "--start-stage",
+            campaign_stage,
+            "--stop-after-stage",
+            campaign_stage,
+            "--remote-durable",
+        ]
+    else:
+        command = ["python", "scripts/studio_train.py", "--mode", "pretrain"]
+        for key, option in (
+            ("model", "--model"),
+            ("train", "--train"),
+            ("data", "--data"),
+        ):
+            normalized = add_input(key, str(payload.get(key) or ""))
+            command.extend([option, normalized])
+        command.extend(["--hub-repo", hub_repo, "--remote-durable"])
+
     manifest_input = _dataset_manifest(root, input_paths["data"])
     dataset_manifest_decision_grade = False
     if manifest_input is not None:
         inputs["dataset_manifest"] = manifest_input[0]
         dataset_manifest_decision_grade = manifest_input[1]
 
-    resume = str(payload.get("resume") or "").strip()
-    hub_checkpoint = _hub_checkpoint(payload, hub_repo, mode="resume")
-    init_hub_checkpoint = _hub_checkpoint(payload, hub_repo, mode="init")
     selected_checkpoint_modes = sum(
         bool(value) for value in (resume, hub_checkpoint, init_hub_checkpoint)
     )
@@ -236,6 +284,10 @@ def build_contract(
     created = datetime.now(UTC).isoformat()
     identity = {
         "version": CONTRACT_VERSION,
+        "job_kind": job_kind,
+        "campaign_stage": (
+            str(payload.get("campaign_stage")) if job_kind == "campaign_stage" else None
+        ),
         "provider": provider_id,
         "profile_alias": profile,
         "git_commit": repository.get("commit"),

@@ -91,6 +91,25 @@ def require_launchable_campaign(campaign: dict[str, Any]) -> None:
             raise RuntimeError(f"Launchable campaign stage {stage['id']} has no model")
 
 
+def select_campaign_stages(
+    campaign: dict[str, Any],
+    *,
+    start_stage: str | None,
+    stop_after_stage: str | None,
+) -> list[dict[str, Any]]:
+    stages = list(campaign["stages"])
+    by_id = {str(stage["id"]): index for index, stage in enumerate(stages)}
+    if start_stage is not None and start_stage not in by_id:
+        raise ValueError(f"Unknown campaign stage: {start_stage}")
+    if stop_after_stage is not None and stop_after_stage not in by_id:
+        raise ValueError(f"Unknown campaign stage: {stop_after_stage}")
+    start = by_id[start_stage] if start_stage is not None else 0
+    stop = by_id[stop_after_stage] if stop_after_stage is not None else len(stages) - 1
+    if stop < start:
+        raise ValueError("--stop-after-stage cannot precede --start-stage")
+    return stages[start : stop + 1]
+
+
 def stage_environment(base: dict[str, str], stage: dict[str, Any]) -> dict[str, str]:
     overrides = stage.get("environment") or {}
     if not isinstance(overrides, dict):
@@ -310,6 +329,12 @@ def main() -> None:
     parser.add_argument("--hub-repo", required=True, help="Public namespace/repository")
     parser.add_argument("--wandb-entity", default=None)
     parser.add_argument("--start-stage", default=None)
+    parser.add_argument("--stop-after-stage", default=None)
+    parser.add_argument(
+        "--stage-train-override",
+        default=None,
+        help="Resolved provider-specific train config; valid only for one selected stage",
+    )
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--verify-manifest-hashes", action="store_true")
     parser.add_argument(
@@ -326,12 +351,18 @@ def main() -> None:
     campaign = load_campaign(campaign_path)
     if not args.dry_run:
         require_launchable_campaign(campaign)
-    stages = list(campaign["stages"])
-    if args.start_stage:
-        indices = [index for index, stage in enumerate(stages) if stage["id"] == args.start_stage]
-        if not indices:
-            raise ValueError(f"Unknown campaign stage: {args.start_stage}")
-        stages = stages[indices[0] :]
+    stages = select_campaign_stages(
+        campaign,
+        start_stage=args.start_stage,
+        stop_after_stage=args.stop_after_stage,
+    )
+    if args.stage_train_override:
+        if len(stages) != 1:
+            raise ValueError("--stage-train-override requires exactly one selected stage")
+        override = Path(args.stage_train_override).resolve()
+        if not override.is_file():
+            raise FileNotFoundError(override)
+        stages[0]["train"] = str(override)
     data = str(campaign["data"]["clean_config"])
     state_root = ROOT / "runs" / f"{campaign['name']}-campaign"
     state_path = state_root / "campaign_state.json"
@@ -409,7 +440,7 @@ def main() -> None:
     # stale completed run into live transition initialization when starting at
     # stage 2/3/4; execution resolves only the immediate predecessor below.
     previous_complete = None
-    first = commands[0]["stage"] if commands else campaign["stages"][-1]
+    first = commands[0]["stage"] if commands else stages[-1]
     runtime_promotion_gates = initialize_runtime_promotion_ledger(state_root)
     state_root.mkdir(parents=True, exist_ok=True)
     atomic_write_json(state_path, state)
@@ -585,20 +616,24 @@ def main() -> None:
         atomic_write_json(state_path, state)
     # The final 32K checkpoint, not its stage-3 predecessor, owns the supported
     # 256K retrieval claim. Campaign completion is fail-closed on that postflight.
-    ensure_long_context_gates(len(campaign["stages"]))
-    completion_decision = evaluate_promotion_gates(
-        runtime_promotion_gates,
-        phase="campaign_complete",
-    )
-    state["completion_promotion"] = completion_decision.manifest()
-    if not completion_decision.ready:
-        state["status"] = "failed_completion_promotion"
-        atomic_write_json(state_path, state)
-        raise RuntimeError(
-            "Campaign completion is promotion-locked by: "
-            + ", ".join(completion_decision.blocking_gate_ids)
+    last_requested_index = campaign["stages"].index(stages[-1])
+    if last_requested_index == len(campaign["stages"]) - 1:
+        ensure_long_context_gates(len(campaign["stages"]))
+        completion_decision = evaluate_promotion_gates(
+            runtime_promotion_gates,
+            phase="campaign_complete",
         )
-    state["status"] = "complete"
+        state["completion_promotion"] = completion_decision.manifest()
+        if not completion_decision.ready:
+            state["status"] = "failed_completion_promotion"
+            atomic_write_json(state_path, state)
+            raise RuntimeError(
+                "Campaign completion is promotion-locked by: "
+                + ", ".join(completion_decision.blocking_gate_ids)
+            )
+        state["status"] = "complete"
+    else:
+        state["status"] = "complete_requested_stage_range"
     state["current_stage"] = None
     state["finished_at_unix"] = time.time()
     atomic_write_json(state_path, state)

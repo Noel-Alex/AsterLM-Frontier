@@ -461,6 +461,8 @@
             </div>
             <div class="form-grid cols-2 compact-form">
               <label>Provider<select id="contract-provider"><option value="modal">Modal</option><option value="gcp">Google Cloud</option><option value="huggingface_jobs">Hugging Face Jobs</option><option value="lightning">Lightning AI</option><option value="skypilot">SkyPilot</option></select></label>
+              <label>Job mode<select id="contract-job-kind"><option value="campaign_stage">Frozen campaign stage</option><option value="training">Advanced single trainer</option></select></label>
+              <label>Campaign stage<select id="contract-campaign-stage"><option value="stage1">Stage 1 · 4K</option><option value="stage2">Stage 2 · 8K</option><option value="stage3">Stage 3 · 16K</option><option value="stage4">Stage 4 · 32K + final 256K gate</option></select></label>
               <label>Profile alias<input id="contract-profile" placeholder="authorized-profile"/></label>
               <label>Model config<input id="contract-model" value="configs/model/aster_k3_latentmoe_1p45b_a568m.yaml"/></label>
               <label>Train config<input id="contract-train" value="configs/train/frontier_100b_stage1_4k.yaml"/></label>
@@ -479,7 +481,7 @@
               <label>Estimated spend (USD)<input id="contract-spend" type="number" min="0" step="0.01" value="0"/></label>
               <label class="toggle-label"><input id="contract-cost-confirmed" type="checkbox"/><span>I confirm this estimated spend</span></label>
             </div>
-            <div class="microcopy">Use Resume only to continue the same stage with optimizer, scheduler, RNG and data cursor intact. Use Initialize next stage when moving from a completed 4K/8K/16K stage into a new context stage with a new schedule.</div>
+            <div class="microcopy">Frozen campaign stage is the safe default: it finds the newest same-stage checkpoint, reconstructs required earlier retrieval gates, initializes only from the immediate prior final, and stops after the selected stage. The manual Resume/Initialize fields below apply only to Advanced single trainer mode.</div>
             <div class="button-row"><button id="create-provider-contract" class="ink">Create immutable run contract</button><button id="plan-provider-launch" class="secondary" disabled>Build launch plan</button><button id="dispatch-provider-launch" class="secondary" disabled>Dispatch contract</button><button id="graceful-provider-stop" class="secondary" disabled>Safe stop + checkpoint</button><button id="terminate-provider-job" class="danger" disabled>Emergency terminate</button></div>
             <pre id="provider-contract-result" class="contract-result">No remote contract created in this session.</pre>
           </article>

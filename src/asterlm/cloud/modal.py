@@ -226,7 +226,7 @@ def build_modal_launch_plan(
     return {
         "schema_version": 1,
         "provider": "modal",
-        "job_kind": "training",
+        "job_kind": str(contract.get("job_kind") or "training"),
         "contract_id": contract["contract_id"],
         "contract_path": str(contract_path),
         "contract_sha256": contract_digest,

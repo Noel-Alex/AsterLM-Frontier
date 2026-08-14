@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 
 import pytest
+import yaml
 
 from studio.remote_contracts import build_contract, persist_contract
 
@@ -23,6 +24,27 @@ def _payload() -> dict:
 
 def _providers(ready: bool = True) -> list[dict]:
     return [{"id": "modal", "ready": ready, "profiles": ["student"]}]
+
+
+def _campaign_files(root) -> None:
+    for name in ("model.yaml", "train.yaml", "data.yaml"):
+        (root / name).write_text(name, encoding="utf-8")
+    (root / "campaign.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "data": {"clean_config": "data.yaml"},
+                "stages": [
+                    {
+                        "id": "stage2",
+                        "model": "model.yaml",
+                        "train": "train.yaml",
+                    }
+                ],
+            },
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
 
 
 def test_gcp_contract_selects_real_dispatch_adapter(tmp_path):
@@ -118,6 +140,54 @@ def test_contract_distinguishes_next_stage_hub_initialization(tmp_path):
     assert contract["init_hub"]["path"] == "runs/stage1/checkpoint-final"
     assert "__ASTER_HUB_INIT__" in contract["command"]
     assert "__ASTER_HUB_RESUME__" not in contract["command"]
+
+
+def test_campaign_stage_contract_uses_gate_aware_single_stage_supervisor(tmp_path):
+    _campaign_files(tmp_path)
+    payload = _payload()
+    payload.update(
+        {
+            "job_kind": "campaign_stage",
+            "campaign": "campaign.yaml",
+            "campaign_stage": "stage2",
+        }
+    )
+    contract = build_contract(
+        payload,
+        root=tmp_path,
+        policy={"max_spend_usd_per_job": 30, "require_cost_confirmation": True},
+        providers=_providers(),
+        repository={"commit": "f" * 40, "dirty": False},
+    )
+    assert contract["job_kind"] == "campaign_stage"
+    assert contract["command"][:2] == [
+        "python",
+        "scripts/run_pretraining_campaign.py",
+    ]
+    assert contract["command"][contract["command"].index("--start-stage") + 1] == "stage2"
+    assert contract["command"][contract["command"].index("--stop-after-stage") + 1] == "stage2"
+    assert {"campaign", "model", "train", "data"}.issubset(contract["inputs"])
+
+
+def test_campaign_stage_contract_owns_checkpoint_handoff(tmp_path):
+    _campaign_files(tmp_path)
+    payload = _payload()
+    payload.update(
+        {
+            "job_kind": "campaign_stage",
+            "campaign": "campaign.yaml",
+            "campaign_stage": "stage2",
+            "resume_hub_path": "runs/stage2/checkpoints/tokens-1",
+        }
+    )
+    with pytest.raises(ValueError, match="automatically"):
+        build_contract(
+            payload,
+            root=tmp_path,
+            policy={"max_spend_usd_per_job": 30, "require_cost_confirmation": True},
+            providers=_providers(),
+            repository={"commit": "f" * 40, "dirty": False},
+        )
 
 
 def test_contract_rejects_ambiguous_resume_and_stage_initialization(tmp_path):

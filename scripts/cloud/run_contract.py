@@ -60,6 +60,16 @@ def _run_training(command: list[str]) -> int:
         signal.signal(signal.SIGTERM, old_term)
 
 
+def _approved_command_kind(command: object) -> str:
+    if not isinstance(command, list) or not all(isinstance(item, str) for item in command):
+        raise RuntimeError("Contract command must be a list of strings")
+    if command[:3] == ["python", "scripts/studio_train.py", "--mode"]:
+        return "training"
+    if command[:2] == ["python", "scripts/run_pretraining_campaign.py"]:
+        return "campaign_stage"
+    raise RuntimeError("Contract command is not an approved Aster training entrypoint")
+
+
 def _materialize_hub_checkpoint(
     contract: dict, *, key: str, destination: Path
 ) -> Path:
@@ -96,12 +106,7 @@ def main() -> None:
     if contract.get("provider") != os.environ.get("ASTERLM_REMOTE_PROVIDER"):
         raise RuntimeError("Remote provider identity does not match contract")
     command = list(contract.get("command") or [])
-    if not isinstance(command, list) or command[:3] != [
-        "python",
-        "scripts/studio_train.py",
-        "--mode",
-    ]:
-        raise RuntimeError("Contract command is not an approved Aster training entrypoint")
+    command_kind = _approved_command_kind(command)
     for item in contract.get("inputs", {}).values():
         path = Path(item["path"])
         digest = _tree_sha256(path) if item.get("kind") == "directory" else _file_sha256(path)
@@ -111,8 +116,7 @@ def main() -> None:
         from asterlm.artifacts import atomic_write_json, atomic_write_text
         from asterlm.cloud.execution_profiles import resolve_gpu_execution_profile
 
-        train_option = command.index("--train")
-        source_train = Path(command[train_option + 1])
+        source_train = Path(str((contract.get("inputs") or {})["train"]["path"]))
         resolved, identity = resolve_gpu_execution_profile(
             source_train,
             str(contract["gpu"]),
@@ -124,7 +128,11 @@ def main() -> None:
         atomic_write_json(identity_path, identity)
         os.environ["ASTERLM_REMOTE_EXECUTION_PROFILE"] = str(identity_path)
         os.environ["ASTERLM_REMOTE_GPU"] = str(contract["gpu"])
-        command[train_option + 1] = str(resolved_path)
+        if command_kind == "campaign_stage":
+            command.extend(["--stage-train-override", str(resolved_path)])
+        else:
+            train_option = command.index("--train")
+            command[train_option + 1] = str(resolved_path)
     if "__ASTER_HUB_RESUME__" in command:
         resume_root = Path(os.environ.get("ASTERLM_HUB_RESUME_ROOT", "/var/cache/aster/hub-resume"))
         checkpoint = _materialize_hub_checkpoint(

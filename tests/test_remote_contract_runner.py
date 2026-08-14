@@ -4,6 +4,8 @@ import importlib.util
 import signal
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[1]
 SPEC = importlib.util.spec_from_file_location(
     "aster_remote_contract_runner", ROOT / "scripts/cloud/run_contract.py"
@@ -11,6 +13,18 @@ SPEC = importlib.util.spec_from_file_location(
 assert SPEC is not None and SPEC.loader is not None
 RUNNER = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(RUNNER)
+
+
+def test_remote_runner_allows_only_two_explicit_training_entrypoints():
+    assert RUNNER._approved_command_kind(
+        ["python", "scripts/studio_train.py", "--mode", "pretrain"]
+    ) == "training"
+    assert RUNNER._approved_command_kind(
+        ["python", "scripts/run_pretraining_campaign.py", "--campaign", "campaign.yaml"]
+    ) == "campaign_stage"
+
+    with pytest.raises(RuntimeError, match="approved"):
+        RUNNER._approved_command_kind(["python", "arbitrary.py"])
 
 
 def test_remote_runner_forwards_sigterm_to_training_process_group(monkeypatch):

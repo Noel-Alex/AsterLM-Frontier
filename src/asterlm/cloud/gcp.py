@@ -328,6 +328,7 @@ def build_gcp_launch_plan(
     return {
         "schema_version": 1,
         "provider": "gcp",
+        "job_kind": str(contract.get("job_kind") or "training"),
         "contract_id": contract["contract_id"],
         "profile_alias": profile.alias,
         "gcloud_configuration": profile.gcloud_configuration,

@@ -873,6 +873,9 @@ function bind() {
     try{
       const contract=await post("/api/provider/contract",{
         provider:$("#contract-provider").value,
+        job_kind:$("#contract-job-kind").value,
+        campaign_stage:$("#contract-campaign-stage").value,
+        campaign:"configs/pretraining/frontier_100b_k3.yaml",
         profile_alias:$("#contract-profile").value.trim(),
         model:$("#contract-model").value.trim(),
         train:$("#contract-train").value.trim(),
