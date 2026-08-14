@@ -32,9 +32,13 @@ def test_campaign_is_token_honest_and_stage_command_is_portable() -> None:
         hub_repo="owner/private",
         resume=None,
         init_checkpoint="runs/stage1/checkpoint-final",
+        promotion_gates="runs/campaign/promotion_gates.runtime.yaml",
     )
     assert command[1:4] == ["scripts/studio_train.py", "--mode", "pretrain"]
     assert command[-2:] == ["--init-checkpoint", "runs/stage1/checkpoint-final"]
+    assert command[command.index("--promotion-gates") + 1].endswith(
+        "promotion_gates.runtime.yaml"
+    )
 
 
 def test_remote_stage_command_enables_durable_ephemeral_policy() -> None:
@@ -102,3 +106,47 @@ def test_campaign_requires_adjacent_stage_continuation() -> None:
         path.write_text(yaml.safe_dump(campaign, sort_keys=False), encoding="utf-8")
         with pytest.raises(ValueError, match="immediately preceding"):
             MODULE.load_campaign(path)
+
+
+def test_runtime_promotion_ledger_is_resumable_and_does_not_mutate_canonical(
+    tmp_path: Path,
+) -> None:
+    canonical = tmp_path / "canonical.yaml"
+    canonical.write_text(
+        "schema_version: 2\nrepo_root: ../..\ngates:\n- id: gate\n  status: not_run\n",
+        encoding="utf-8",
+    )
+    state_root = tmp_path / "runs" / "campaign"
+    runtime = MODULE.initialize_runtime_promotion_ledger(
+        state_root,
+        canonical=canonical,
+    )
+    assert runtime.read_text(encoding="utf-8") == canonical.read_text(encoding="utf-8")
+    runtime.write_text(runtime.read_text(encoding="utf-8").replace("not_run", "passed"))
+    assert MODULE.initialize_runtime_promotion_ledger(
+        state_root,
+        canonical=canonical,
+    ).read_text(encoding="utf-8").endswith("status: passed\n")
+    assert canonical.read_text(encoding="utf-8").endswith("status: not_run\n")
+
+
+def test_long_context_transition_commands_bind_checkpoint_and_runtime_ledger(
+    tmp_path: Path,
+) -> None:
+    campaign = MODULE.load_campaign(ROOT / "configs/pretraining/frontier_100b_k3.yaml")
+    checkpoint = tmp_path / "provider-volume" / "stage1" / "checkpoint-final"
+    evaluate, promote = MODULE.long_context_gate_command(
+        gate=MODULE.LONG_CONTEXT_GATES[0],
+        prior_stage=campaign["stages"][0],
+        checkpoint=checkpoint,
+        state_root=tmp_path / "runs" / "campaign",
+        promotion_gates=tmp_path / "runs" / "campaign" / "promotion_gates.runtime.yaml",
+    )
+    assert evaluate[evaluate.index("--checkpoint") + 1] == str(checkpoint)
+    assert evaluate[evaluate.index("--lengths") + 1] == "8192,16384,32768"
+    assert promote[promote.index("--expected-checkpoint-root") + 1] == str(
+        checkpoint.parent
+    )
+    assert promote[promote.index("--gates") + 1].endswith(
+        "promotion_gates.runtime.yaml"
+    )

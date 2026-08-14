@@ -132,6 +132,15 @@ def main() -> None:
     parser.add_argument(
         "--output", type=Path, default=ROOT / "docs/promotion-evidence"
     )
+    parser.add_argument(
+        "--expected-checkpoint-root",
+        type=Path,
+        default=None,
+        help=(
+            "Override the canonical run root when the completed checkpoint lives "
+            "on a provider volume or in a verified Hugging Face download cache"
+        ),
+    )
     parser.add_argument("--min-exact-accuracy", type=float, default=0.5)
     args = parser.parse_args()
     if not 0.0 <= args.min_exact_accuracy <= 1.0:
@@ -142,7 +151,11 @@ def main() -> None:
     assertions = validate_summary(
         summary,
         args.gate,
-        expected_checkpoint_root=ROOT / str(contract["run"]),
+        expected_checkpoint_root=(
+            args.expected_checkpoint_root.resolve()
+            if args.expected_checkpoint_root is not None
+            else ROOT / str(contract["run"])
+        ),
         min_exact_accuracy=args.min_exact_accuracy,
     )
     checkpoint = Path(assertions["checkpoint"])

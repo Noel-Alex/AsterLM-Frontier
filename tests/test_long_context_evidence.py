@@ -65,3 +65,16 @@ def test_retrieval_proof_rejects_proxy_checkpoint_and_task_collapse(tmp_path: Pa
             expected_checkpoint_root=expected,
             min_exact_accuracy=0.5,
         )
+
+
+def test_provider_checkpoint_root_is_accepted_when_explicitly_bound(tmp_path: Path) -> None:
+    provider_root = tmp_path / "provider-volume" / "stage1"
+    checkpoint = provider_root / "checkpoint-final"
+    checkpoint.mkdir(parents=True)
+    result = validate_summary(
+        _summary(checkpoint),
+        "long_context_retrieval",
+        expected_checkpoint_root=provider_root,
+        min_exact_accuracy=0.5,
+    )
+    assert result["checkpoint"] == str(checkpoint.resolve())

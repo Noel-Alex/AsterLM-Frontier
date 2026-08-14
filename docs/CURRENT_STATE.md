@@ -1,6 +1,6 @@
 # AsterLM Frontier current state
 
-**Authoritative snapshot: 2026-08-13.** This file owns current status. Dated
+**Authoritative snapshot: 2026-08-14.** This file owns current status. Dated
 handoffs and historical findings remain evidence but do not override it.
 
 ## Selected pretraining incumbent
@@ -40,28 +40,24 @@ tokens. Training is planned at 4K, 8K, 16K, then 32K. A 256K inference target an
 claim before trained-checkpoint retrieval, natural-context perplexity, stability,
 latency, and cache gates pass.
 
-CSA/HCA, mHC, sparse gather attention, GDN2, AttnRes, and MTP exist as research
-paths. They enter production only through matched learning and deployment tests.
+CSA/HCA, mHC, sparse gather attention, and AttnRes remain future research paths;
+they are not aliases for the selected KDA implementation. GDN2 was tested and
+rejected for this run. One jointly trained MTP head is undergoing the final
+bounded objective test; that decision cannot reopen the frozen MoE body.
 
 ## Scientific status
 
-The incumbent has earned fit, gradient coverage, utilization, kernel parity,
-runtime, recovery, and one-seed scale-quality evidence. The final two-seed
-production-recipe scale campaign is in progress. Its gate requires the 1.448B
-arm to beat the 868M arm separately for each seed at equal wall time, equal tokens,
-and equal active FLOPs. A failure is a real rejection signal and must not be
-papered over.
+Architecture selection is closed. The decisive comparison matched **total**
+parameters: the 1,448,120,880-parameter MoE faced a 1,445,907,696-parameter dense
+control (0.153% fewer total parameters), with identical seeds, data and token
+budgets. Across two seeds the MoE had lower validation loss in both runs
+(6.64918 mean versus 6.71653) and 18.8% higher aggregate throughput
+(2,522 versus 2,123 tok/s). The earlier active-parameter-matched dense arm is
+retained only as a diagnostic and has no selection authority.
 
-The old 220M K3-vs-dense result remains recorded: K3 won slightly per token but
-lost equal wall time. Backend and scale have changed since then. Before declaring
-architecture selection closed, run two bounded falsification tracks:
-
-1. KDA/KDA/KDA/MLA versus GDN2/GDN2/GDN2/MLA with the same Stable LatentMoE body.
-2. The selected sparse model versus a strong dense model under each model's best
-   deployable recipe and actual time-to-quality.
-
-These are narrow challengers, not permission to reopen an unbounded architecture
-search.
+The sole remaining architecture-adjacent test is MTP0 versus jointly trained
+MTP1 on this already-selected MoE. It decides only whether the pretraining
+objective carries a draft head; it does not compare or alter the model body.
 
 ## Data status
 
@@ -97,9 +93,12 @@ importer verifies all of this.
 | Stage 3 | 3B | 16K | context-extension policy, evidence-gated |
 | Stage 4 | 2B | 32K | context-extension policy, qualified high-memory GPU |
 
-18.4B and 50B are scientific review points. The campaign supervisor must run
-checkpoint evaluation and promote the next stage automatically only after its
-required gates pass; a YAML transition alone is insufficient.
+18.4B and 50B are scientific review points. The campaign supervisor now runs
+the resumable, checkpoint-bound long-context evaluation before each context
+promotion, imports hash-verified evidence into an ignored runtime ledger, and
+launches the next stage only after the corresponding gate passes. Starting at
+stage 3 or 4 on a fresh provider reconstructs every prerequisite proof from the
+completed public Hub finals rather than trusting stale local state.
 
 ## Checkpoints and telemetry
 
@@ -149,12 +148,11 @@ specific numerical/backend family.
 
 ## Current mandatory blockers
 
-- `equal_wall_clock`: final two-seed production-recipe scale proof not yet imported.
-- `correctness_and_data_quality_clear`: final clean corpus/tokenizer not yet sealed.
-
-Before an irreversible Stage 1 start, also complete clean-clone CI, the narrow
-GDN2/dense falsification tests, a multi-hour checkpoint/resume/tracking/thermal
-canary, and the automatic stage-evaluation supervisor.
+- `correctness_and_data_quality_clear`: final clean corpus/tokenizer is not yet sealed.
+- The bounded MTP objective gate must finish so all four model configs can be
+  frozen consistently as MTP0 or MTP1 before the irreversible Stage 1 start.
+- Clean-clone CI and the multi-hour checkpoint/resume/tracking/thermal canary
+  remain launch-readiness checks, not permission to reopen architecture search.
 
 ## Environment
 

@@ -137,6 +137,16 @@ checkpoint must pass the long-context retrieval/interference gate. The gate is
 revalidated against the promoted checkpoint before later context stages; the
 campaign cannot silently flow from 4K to 32K on stale proxy evidence.
 
+The unattended supervisor performs those transitions itself. Each evaluation
+is token-exact and resumable, uses three retrieval task families at three depths
+and three repeats, and is bound to the completed checkpoint manifest. Evidence
+is copied and hashed into `runs/<campaign>/promotion-evidence`, then promoted in
+an ignored runtime ledger so the source checkout stays clean. A provider that
+starts directly at a later stage downloads and verifies every required earlier
+Hub final and reconstructs missing gates before training. Evaluation failures
+stop the campaign; SIGINT/SIGTERM is forwarded to the active evaluator or
+trainer process.
+
 ### Stage 1
 
 ```bash

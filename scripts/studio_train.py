@@ -255,6 +255,11 @@ def main() -> None:
     )
     parser.add_argument("--hub-repo", default=None)
     parser.add_argument(
+        "--promotion-gates",
+        default=None,
+        help="Promotion ledger override (used by unattended campaign transitions)",
+    )
+    parser.add_argument(
         "--remote-durable",
         action="store_true",
         help="Require persistent output plus verified full-state Hub upload at every save",
@@ -263,6 +268,8 @@ def main() -> None:
 
     train_config = TrainConfig.from_yaml(args.train)
     model_config = AsterConfig.from_yaml(args.model)
+    if args.promotion_gates:
+        train_config.promotion_gates_path = args.promotion_gates
     if args.resume:
         train_config.resume = args.resume
     if args.hub_repo:
