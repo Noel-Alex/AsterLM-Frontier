@@ -383,6 +383,8 @@ class Trainer:
                         if train_config.hub_storage_hard_cap_tb_decimal is not None
                         else None
                     ),
+                    keep_last_checkpoints=train_config.keep_last_checkpoints,
+                    checkpoint_pyramid_levels=train_config.checkpoint_pyramid_levels,
                 )
                 print(f"Hugging Face experiment backup enabled: {hub_repo_id}")
                 if train_config.hub_async_upload:
@@ -823,11 +825,17 @@ class Trainer:
         protected: set[Path],
     ) -> None:
         for result in report["results"]:
+            remote_pruned = [
+                *result.get("remote_pruned_before_upload", []),
+                *result.get("remote_pruned_after_upload", []),
+            ]
             self._log(
                 {
                     "hub_sync_seconds": result.get("seconds"),
                     "hub_sync_ok": 1,
                     "hub_sync_checkpoint": result.get("checkpoint"),
+                    "hub_remote_pruned_count": len(remote_pruned),
+                    "hub_remote_pruned_checkpoints": ",".join(remote_pruned),
                 }
             )
         for error in report["errors"]:
@@ -861,9 +869,14 @@ class Trainer:
         if self.hub_upload_queue is None:
             return
         report = self.hub_upload_queue.collect_completed()
+        # Use the pending snapshot captured under the same queue lock as the
+        # result/error lists. A worker may finish immediately after collection;
+        # a second live pending read could otherwise expose a failed checkpoint
+        # to pruning before its error is harvested at the next boundary.
+        protected = {Path(path).resolve() for path in report.get("pending", [])}
         self._process_hub_upload_report(
             report,
-            protected=self.hub_upload_queue.pending_checkpoints(),
+            protected=protected,
         )
 
     def _flush_hub_uploads(self, *, close: bool = False) -> None:

@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import argparse
-import collections
 import json
 import math
 import mimetypes
@@ -55,6 +54,14 @@ _EXECUTION_BACKEND_CACHE: dict[str, Any] = {"updated": 0.0, "rows": []}
 _EXECUTION_BACKEND_LOCK = threading.Lock()
 _RESEARCH_ARCHIVE: ResearchArchive | None = None
 _RESEARCH_ARCHIVE_LOCK = threading.Lock()
+_RUN_PATH_CACHE: dict[str, Any] = {"updated": 0.0, "paths": []}
+_RUN_PATH_LOCK = threading.Lock()
+_PROVIDER_STATUS_CACHE: dict[str, Any] = {
+    "updated": 0.0,
+    "settings_key": "",
+    "rows": [],
+}
+_PROVIDER_STATUS_LOCK = threading.Lock()
 
 DEFAULT_SETTINGS: dict[str, Any] = {
     "download": {
@@ -203,6 +210,24 @@ def validate_settings(value: dict[str, Any]) -> None:
     max_spend = float(providers.get("max_spend_usd_per_job", 0.0))
     if not math.isfinite(max_spend) or max_spend < 0:
         raise ValueError("Provider max_spend_usd_per_job must be a finite non-negative number")
+
+
+def cached_provider_status(*, max_age_seconds: float = 30.0) -> list[dict[str, Any]]:
+    provider_settings = settings().get("providers") or {}
+    settings_key = json.dumps(provider_settings, sort_keys=True)
+    now = time.time()
+    with _PROVIDER_STATUS_LOCK:
+        if (
+            _PROVIDER_STATUS_CACHE["rows"]
+            and _PROVIDER_STATUS_CACHE["settings_key"] == settings_key
+            and now - float(_PROVIDER_STATUS_CACHE["updated"]) < max_age_seconds
+        ):
+            return list(_PROVIDER_STATUS_CACHE["rows"])
+        rows = provider_status(provider_settings)
+        _PROVIDER_STATUS_CACHE.update(
+            {"updated": now, "settings_key": settings_key, "rows": rows}
+        )
+        return list(rows)
 
 
 def research_archive() -> ResearchArchive:
@@ -541,8 +566,22 @@ def execution_backend_status(ttl_seconds: float = 30.0) -> list[dict[str, Any]]:
 def tail_lines(path: Path, limit: int = 300) -> list[str]:
     if not path.is_file():
         return []
-    with path.open("r", encoding="utf-8", errors="replace") as handle:
-        return list(collections.deque(handle, maxlen=max(1, min(limit, 5000))))
+    bounded_limit = max(1, min(limit, 5000))
+    block_size = 64 * 1024
+    chunks: list[bytes] = []
+    newline_count = 0
+    with path.open("rb") as handle:
+        handle.seek(0, os.SEEK_END)
+        position = handle.tell()
+        while position > 0 and newline_count <= bounded_limit:
+            size = min(block_size, position)
+            position -= size
+            handle.seek(position)
+            chunk = handle.read(size)
+            chunks.append(chunk)
+            newline_count += chunk.count(b"\n")
+    content = b"".join(reversed(chunks)).decode("utf-8", errors="replace")
+    return [line + "\n" for line in content.splitlines()[-bounded_limit:]]
 
 
 def metrics_for_run(run_path: Path, limit: int = 500) -> list[dict[str, Any]]:
@@ -588,12 +627,61 @@ def checkpoint_list(run_path: Path) -> list[dict[str, Any]]:
     return result
 
 
-def runs_status() -> list[dict[str, Any]]:
+def discover_run_paths(*, max_age_seconds: float = 10.0) -> list[Path]:
+    """Find direct and nested run roots without rescanning on every UI poll."""
+
     runs_root = ROOT / "runs"
-    rows: list[dict[str, Any]] = []
     if not runs_root.exists():
-        return rows
-    for path in sorted((p for p in runs_root.iterdir() if p.is_dir()), key=lambda p: p.stat().st_mtime, reverse=True):
+        return []
+    now = time.time()
+    with _RUN_PATH_LOCK:
+        if (
+            _RUN_PATH_CACHE["paths"]
+            and now - float(_RUN_PATH_CACHE["updated"]) < max_age_seconds
+        ):
+            return list(_RUN_PATH_CACHE["paths"])
+        candidates = {
+            path.parent for path in runs_root.glob("*/experiment.json")
+        }
+        # Quality campaigns have a stable
+        # group/campaign/seed/candidate/variant layout. Restricting discovery to
+        # these known roots avoids walking large checkpoint and profiler trees.
+        for group in ("architecture-campaign", "optimizer-campaign"):
+            candidates.update(
+                path.parent
+                for path in (runs_root / group).glob("*/*/*/*/experiment.json")
+            )
+        candidates.update(
+            path.parent
+            for path in (runs_root / "promotion-canary").glob("*/*/experiment.json")
+        )
+        for path in runs_root.iterdir():
+            if not path.is_dir():
+                continue
+            if any(
+                (path / filename).is_file()
+                for filename in ("run_manifest.json", "metrics.jsonl", "latest.txt")
+            ) or next(path.glob("checkpoint-*"), None) is not None:
+                candidates.add(path)
+
+        def modified(path: Path) -> float:
+            mtimes = [path.stat().st_mtime]
+            for filename in ("experiment.json", "metrics.jsonl", "run_manifest.json"):
+                candidate = path / filename
+                if candidate.is_file():
+                    mtimes.append(candidate.stat().st_mtime)
+            return max(mtimes)
+
+        paths = sorted(candidates, key=modified, reverse=True)
+        _RUN_PATH_CACHE.update({"updated": now, "paths": paths})
+        return list(paths)
+
+
+def runs_status() -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    # Bound per-refresh work while keeping the recently updated live experiment
+    # first. The research archive owns unbounded historical discovery.
+    for path in discover_run_paths()[:12]:
         manifest = read_state(path / "run_manifest.json")
         experiment = read_state(path / "experiment.json")
         metrics = metrics_for_run(path, 120)
@@ -797,9 +885,10 @@ def training_campaign_status(
     *,
     providers: list[dict[str, Any]] | None = None,
     jobs: list[dict[str, Any]] | None = None,
+    run_rows: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     payload = yaml.safe_load(CAMPAIGN_PATH.read_text(encoding="utf-8")) or {}
-    runs = {row["path"]: row for row in runs_status()}
+    runs = {row["path"]: row for row in (run_rows if run_rows is not None else runs_status())}
     completed = 0
     stages: list[dict[str, Any]] = []
     active: dict[str, Any] | None = None
@@ -825,7 +914,7 @@ def training_campaign_status(
     target = int(payload.get("goal_tokens", 0))
     live = ((active or {}).get("run") or {}).get("latest") or {}
     throughput = live.get("tokens_per_second_ema") or live.get("tokens_per_second")
-    provider_rows = providers if providers is not None else provider_status(settings().get("providers"))
+    provider_rows = providers if providers is not None else cached_provider_status()
     job_rows = jobs if jobs is not None else JOBS.list()
     readiness = _campaign_readiness(payload, providers=provider_rows, jobs=job_rows)
     return {
@@ -1188,7 +1277,7 @@ def start_action(action: str, payload: dict[str, Any]) -> dict[str, Any]:
         alias = sanitize_source(str(payload["profile_alias"]))
         declared = {
             item
-            for row in provider_status(settings().get("providers"))
+            for row in cached_provider_status()
             if row.get("id") == "modal"
             for item in row.get("declared_profiles", [])
         }
@@ -1658,7 +1747,8 @@ def overview() -> dict[str, Any]:
     rows = dataset_status()
     clean = clean_corpora_status()
     jobs = JOBS.list()
-    providers = provider_status(settings().get("providers"))
+    providers = cached_provider_status()
+    run_rows = runs_status()
     return {
         "version": "1.1",
         "time": time.time(),
@@ -1667,12 +1757,16 @@ def overview() -> dict[str, Any]:
         "clean_corpora": clean,
         "raw_materialized_tokens": sum(int(item["tokens"]) for item in rows),
         "jobs": jobs,
-        "runs": runs_status(),
+        "runs": run_rows,
         "capabilities": cap,
         "execution_backends": execution_backend_status(),
         "settings": settings(),
         "providers": providers,
-        "training_campaign": training_campaign_status(providers=providers, jobs=jobs),
+        "training_campaign": training_campaign_status(
+            providers=providers,
+            jobs=jobs,
+            run_rows=run_rows,
+        ),
     }
 
 
@@ -1790,7 +1884,7 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/api/execution-backends":
                 return self.send_json(execution_backend_status())
             if path == "/api/providers":
-                return self.send_json(provider_status(settings().get("providers")))
+                return self.send_json(cached_provider_status())
             if path == "/api/provider/contracts":
                 return self.send_json(list_contracts(REMOTE_CONTRACT_ROOT))
             if path == "/api/provider/jobs":
@@ -1837,7 +1931,7 @@ class Handler(BaseHTTPRequestHandler):
                     payload,
                     root=ROOT,
                     policy=current.get("providers") or {},
-                    providers=provider_status(current.get("providers")),
+                    providers=cached_provider_status(max_age_seconds=0.0),
                 )
                 target = persist_contract(REMOTE_CONTRACT_ROOT, contract)
                 contract["path"] = rel(target)

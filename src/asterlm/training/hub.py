@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import queue
+import re
 import threading
 import time
 from dataclasses import dataclass, field
@@ -48,6 +49,8 @@ class HubRunSync:
     include_optimizer: bool = True
     storage_guard_bytes: int | None = None
     storage_hard_cap_bytes: int | None = None
+    keep_last_checkpoints: int = 6
+    checkpoint_pyramid_levels: int = 8
     api: Any = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
@@ -131,6 +134,77 @@ class HubRunSync:
     def _run_prefix(output_dir: Path) -> str:
         return f"runs/{output_dir.name}"
 
+    @staticmethod
+    def _checkpoint_step(name: str) -> tuple[int, str]:
+        match = re.match(r"checkpoint-(\d+)", name)
+        return (int(match.group(1)) if match else -1, name)
+
+    def prune_remote_checkpoints(self, *, output_dir: str | Path) -> list[str]:
+        """Apply dense-recent plus logarithmic Hub recovery retention.
+
+        A checkpoint containing ``KEEP`` is a token milestone or final and is
+        never removed. All deletions are batched in one Hub commit. The method is
+        called only by the single upload worker, so uploads and retention cannot
+        race one another.
+        """
+
+        if self.keep_last_checkpoints < 0 or self.checkpoint_pyramid_levels < 0:
+            raise ValueError("checkpoint retention values must be non-negative")
+        prefix = f"{self._run_prefix(Path(output_dir))}/checkpoints/"
+        files = list(
+            self.api.list_repo_files(
+                repo_id=self.repo_id,
+                repo_type="model",
+                revision=self.revision,
+            )
+        )
+        names: set[str] = set()
+        permanent: set[str] = set()
+        for path in files:
+            if not str(path).startswith(prefix):
+                continue
+            relative = str(path)[len(prefix) :]
+            name, separator, leaf = relative.partition("/")
+            if not separator or not name:
+                continue
+            names.add(name)
+            if leaf == "KEEP":
+                permanent.add(name)
+        rolling = sorted(names - permanent, key=self._checkpoint_step)
+        recent_start = (
+            max(0, len(rolling) - self.keep_last_checkpoints)
+            if self.keep_last_checkpoints > 0
+            else len(rolling)
+        )
+        keep = set(rolling[recent_start:])
+        cursor = recent_start
+        width = max(1, self.keep_last_checkpoints)
+        for _ in range(self.checkpoint_pyramid_levels):
+            if cursor <= 0:
+                break
+            start = max(0, cursor - width)
+            keep.add(rolling[cursor - 1])
+            cursor = start
+            width *= 2
+        remove = [name for name in rolling if name not in keep]
+        if not remove:
+            return []
+        from huggingface_hub import CommitOperationDelete
+
+        self.api.create_commit(
+            repo_id=self.repo_id,
+            repo_type="model",
+            revision=self.revision,
+            operations=[
+                CommitOperationDelete(path_in_repo=f"{prefix}{name}", is_folder=True)
+                for name in remove
+            ],
+            commit_message=(
+                f"Prune {Path(output_dir).name} recovery checkpoints by retention policy"
+            ),
+        )
+        return remove
+
     def sync(
         self,
         *,
@@ -144,6 +218,10 @@ class HubRunSync:
         checkpoint = Path(checkpoint)
         prefix = self._run_prefix(root)
         started = time.time()
+
+        # Reclaim already-verified rolling history before the pessimistic storage
+        # forecast. Permanent milestones/finals and the dense recent spine remain.
+        remote_pruned_before = self.prune_remote_checkpoints(output_dir=root)
 
         if not self.include_optimizer:
             raise RuntimeError(
@@ -230,6 +308,10 @@ class HubRunSync:
         metadata["verified_file_count"] = verification["verified_file_count"]
         metadata["remote_commit"] = getattr(commit_info, "oid", None)
         metadata["resume_state"] = local_manifest.get("resume_state", {})
+        metadata["remote_pruned_before_upload"] = remote_pruned_before
+        metadata["remote_pruned_after_upload"] = self.prune_remote_checkpoints(
+            output_dir=root
+        )
         atomic_write_json(state_path, metadata)
         verification_dir = root / "hub-verifications"
         atomic_write_json(

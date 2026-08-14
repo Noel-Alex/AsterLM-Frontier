@@ -27,12 +27,19 @@ class _RemoteFile:
 class _FakeApi:
     def __init__(self, files: dict[str, _RemoteFile]) -> None:
         self.files = files
+        self.commits: list[dict[str, object]] = []
 
     def get_paths_info(self, *, paths: list[str], **_: object) -> list[_RemoteFile]:
         return [self.files[path] for path in paths if path in self.files]
 
     def list_repo_tree(self, **_: object) -> list[_RemoteFile]:
         return list(self.files.values())
+
+    def list_repo_files(self, **_: object) -> list[str]:
+        return list(self.files)
+
+    def create_commit(self, **kwargs: object) -> None:
+        self.commits.append(kwargs)
 
 
 def _sync(api: _FakeApi) -> HubRunSync:
@@ -43,6 +50,8 @@ def _sync(api: _FakeApi) -> HubRunSync:
     sync.include_optimizer = True
     sync.storage_guard_bytes = None
     sync.storage_hard_cap_bytes = None
+    sync.keep_last_checkpoints = 6
+    sync.checkpoint_pyramid_levels = 8
     sync.api = api
     return sync
 
@@ -160,6 +169,40 @@ def test_storage_preflight_fails_before_operational_guard(tmp_path: Path) -> Non
         sync.storage_preflight(root=tmp_path, checkpoint=checkpoint)
 
 
+def test_remote_checkpoint_retention_keeps_recent_pyramid_and_permanent() -> None:
+    prefix = "runs/demo/checkpoints"
+    files: dict[str, _RemoteFile] = {}
+    for step in range(1, 17):
+        path = f"{prefix}/checkpoint-{step:08d}/checkpoint_manifest.json"
+        files[path] = _RemoteFile(path, 1, "blob")
+    permanent = f"{prefix}/checkpoint-00000005-tok-500/KEEP"
+    files[permanent] = _RemoteFile(permanent, 1, "blob")
+    api = _FakeApi(files)
+    sync = _sync(api)
+    sync.keep_last_checkpoints = 2
+    sync.checkpoint_pyramid_levels = 2
+
+    removed = sync.prune_remote_checkpoints(output_dir=Path("runs/demo"))
+
+    assert removed == [
+        "checkpoint-00000001",
+        "checkpoint-00000002",
+        "checkpoint-00000003",
+        "checkpoint-00000004",
+        "checkpoint-00000005",
+        "checkpoint-00000006",
+        "checkpoint-00000007",
+        "checkpoint-00000008",
+        "checkpoint-00000009",
+        "checkpoint-00000010",
+        "checkpoint-00000011",
+        "checkpoint-00000013",
+    ]
+    operations = api.commits[0]["operations"]
+    assert len(operations) == len(removed)  # type: ignore[arg-type]
+    assert "checkpoint-00000005-tok-500" not in removed
+
+
 class _RecordingSync:
     def __init__(self, *, fail: bool = False) -> None:
         self.fail = fail
@@ -205,6 +248,7 @@ def test_async_upload_queue_collects_finished_work_without_closing(tmp_path: Pat
 
     assert report["errors"] == []
     assert report["results"][0]["checkpoint"] == str(first)
+    assert report["pending"] == []
     assert upload_queue.collect_completed()["results"] == []
     second = tmp_path / "checkpoint-2"
     upload_queue.enqueue(HubUploadTask(tmp_path, second, "periodic", 2, 200))
