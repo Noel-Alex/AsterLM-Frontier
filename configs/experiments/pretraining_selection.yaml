@@ -16,7 +16,7 @@ selection:
     muon_megabatch_max_gib: 0.125
     muon_release_gradients_after_step: true
     schedule_type: cosine
-    allocator: expandable_segments:True
+    allocator: backend:native
   recovery_control:
     optimizer: adamw
     adam_lr: 0.0005

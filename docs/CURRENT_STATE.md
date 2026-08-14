@@ -166,9 +166,10 @@ specific numerical/backend family.
 
 The validated WSL lock is `requirements/validated-wsl-cu130.txt`: Python 3.12.3,
 PyTorch 2.13.0, CUDA runtime 13.0, Triton 3.7.1, FLA 0.5.2. Fedora CUDA 13.1 and
-each cloud image are separate targets. The laptop WSL stack uses the native CUDA
-allocator with a 128 MiB split bound; expandable segments have repeatedly failed
-virtual-memory mappings despite ample reported free VRAM.
+each cloud image are separate targets. The laptop WSL stack uses the unmodified
+`backend:native` CUDA allocator; expandable segments have repeatedly failed
+virtual-memory mappings, and a 128 MiB split cap failed on the second accumulated
+update despite ample reported free VRAM.
 
 ## UI and Git
 

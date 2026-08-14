@@ -19,9 +19,9 @@ import torch
 import yaml
 
 from asterlm.artifacts import atomic_write_json
+from asterlm.cuda_allocator import cuda_allocator_environment
 from asterlm.source_provenance import assert_expected_checkout_source
 from asterlm.training.checkpoint import resolve_checkpoint, verify_checkpoint
-
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_OUTPUT = ROOT / "runs/promotion-canary/k3-interrupted-recovery"
@@ -237,10 +237,8 @@ def main() -> None:
         "--data",
         str(data_config),
     ]
-    environment = dict(os.environ)
+    environment = cuda_allocator_environment(os.environ)
     environment["ASTER_MOE_IMPL"] = "cutlass"
-    environment["PYTORCH_ALLOC_CONF"] = "expandable_segments:True"
-    environment["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
     started = time.time()
     with log_first.open("w", encoding="utf-8") as log:
         process = subprocess.Popen(
