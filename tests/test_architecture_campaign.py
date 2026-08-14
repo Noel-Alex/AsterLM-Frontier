@@ -236,6 +236,33 @@ def test_final_challengers_isolate_mixer_and_sparse_capacity() -> None:
     )
 
 
+def test_total_matched_mtp_candidates_add_identical_jointly_trained_capacity(tmp_path):
+    campaign = load_architecture_campaign(CAMPAIGN, repo_root=ROOT)
+    manifest = materialize_architecture_campaign(campaign, tmp_path)
+    ids = (
+        "tier2-k3-latentmoe-1p45b-mtp1",
+        "tier2-dense-kda3-mla-total-matched-mtp1",
+    )
+    configs = {
+        candidate_id: AsterConfig.from_yaml(
+            Path(manifest["candidates"][candidate_id]["materialized_config"])
+        )
+        for candidate_id in ids
+    }
+    with torch.device("meta"):
+        moe = AsterLM(replace(configs[ids[0]], kda_backend="torch"))
+        dense = AsterLM(replace(configs[ids[1]], kda_backend="torch"))
+    assert configs[ids[0]].mtp_depth == configs[ids[1]].mtp_depth == 1
+    assert configs[ids[0]].mtp_loss_weight == configs[ids[1]].mtp_loss_weight == 0.12
+    assert moe.effective_parameter_count() == 1_449_105_200
+    assert dense.effective_parameter_count() == 1_446_892_016
+    assert moe.effective_parameter_count() - 1_448_120_880 == 984_320
+    assert dense.effective_parameter_count() - 1_445_907_696 == 984_320
+    assert dense.effective_parameter_count() == pytest.approx(
+        moe.effective_parameter_count(), rel=0.002
+    )
+
+
 def test_csa_hca_proxy_is_parameter_matched_to_dense_mla(tmp_path):
     campaign = load_architecture_campaign(CAMPAIGN, repo_root=ROOT)
     manifest = materialize_architecture_campaign(campaign, tmp_path)

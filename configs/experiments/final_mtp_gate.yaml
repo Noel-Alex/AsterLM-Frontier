@@ -1,0 +1,37 @@
+schema_version: 1
+status: planned
+purpose: jointly_train_and_validate_native_self_speculation
+base_body_decision:
+  compare:
+    - tier2-k3-latentmoe-1p45b-a568m
+    - tier2-dense-kda3-mla-total-matched-control
+  rule: choose_the_total_matched_body_before_mtp_promotion
+mtp_candidates:
+  tier2-k3-latentmoe-1p45b-a568m: tier2-k3-latentmoe-1p45b-mtp1
+  tier2-dense-kda3-mla-total-matched-control: tier2-dense-kda3-mla-total-matched-mtp1
+shared_mtp:
+  architecture: low_rank
+  depth: 1
+  rank: 256
+  auxiliary_loss_weight: 0.12
+  parameters_added_to_either_body: 984320
+rules:
+  primary_quality_metric: eval_main_loss
+  never_rank_by: total_loss
+  compare: [equal_tokens, equal_wall_time, equal_active_flops]
+  require_joint_training: true
+  require_exact_greedy_equivalence: true
+  require_incremental_cached_verifier: true
+  require_measured_accepted_tokens_per_second_gain: true
+  reject_on: [nonfinite, missing_gradients, incomplete_run, vram_overflow]
+ladder:
+  - phase: fit_and_kernel
+    tokens: 1048576
+  - phase: bounded_quality
+    tokens: 16777216
+  - phase: incremental_speculation
+    metric: accepted_tokens_per_second
+notes:
+  - Enabling MTP after pretraining is invalid unless its module receives a separate training or distillation phase.
+  - The existing full-prefix reference verifier proves exactness and acceptance only; it is not a production speed claim.
+  - MTP-2 remains a later challenger only if MTP-1 clears quality and incremental latency gates.
