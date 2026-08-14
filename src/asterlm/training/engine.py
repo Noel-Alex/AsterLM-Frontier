@@ -693,6 +693,10 @@ class Trainer:
         permanent: bool = False,
         tag: str | None = None,
     ) -> Path:
+        # Reconcile uploads completed since the previous checkpoint. This keeps
+        # ephemeral disks bounded without waiting for work still in flight, and
+        # surfaces remote failures at a safe optimizer-update boundary.
+        self._harvest_hub_uploads()
         should_upload = self.hub is not None and (
             self.train_config.hub_upload_every_save
             or (reason.startswith("milestone-") and self.train_config.hub_upload_milestones)
@@ -812,14 +816,12 @@ class Trainer:
             )
         return path
 
-    def _flush_hub_uploads(self, *, close: bool = False) -> None:
-        if self.hub_upload_queue is None:
-            return
-        upload_queue = self.hub_upload_queue
-        report = upload_queue.drain(close=close)
-        protected = upload_queue.pending_checkpoints()
-        if close:
-            self.hub_upload_queue = None
+    def _process_hub_upload_report(
+        self,
+        report: dict[str, Any],
+        *,
+        protected: set[Path],
+    ) -> None:
         for result in report["results"]:
             self._log(
                 {
@@ -836,6 +838,9 @@ class Trainer:
                     "hub_sync_error": error.get("error"),
                 }
             )
+            checkpoint = error.get("checkpoint")
+            if checkpoint:
+                protected.add(Path(str(checkpoint)).resolve())
         if report["errors"] and self.train_config.hub_fail_on_error:
             raise RuntimeError(f"Asynchronous Hub upload failed: {report['errors']}")
         prune_rolling_checkpoints(
@@ -849,7 +854,27 @@ class Trainer:
                 self.train_config.output_dir,
                 max_total_gib=self.train_config.checkpoint_local_budget_gib,
                 keep_last=self.train_config.keep_last_checkpoints,
+                protected=protected,
             )
+
+    def _harvest_hub_uploads(self) -> None:
+        if self.hub_upload_queue is None:
+            return
+        report = self.hub_upload_queue.collect_completed()
+        self._process_hub_upload_report(
+            report,
+            protected=self.hub_upload_queue.pending_checkpoints(),
+        )
+
+    def _flush_hub_uploads(self, *, close: bool = False) -> None:
+        if self.hub_upload_queue is None:
+            return
+        upload_queue = self.hub_upload_queue
+        report = upload_queue.drain(close=close)
+        protected = upload_queue.pending_checkpoints()
+        if close:
+            self.hub_upload_queue = None
+        Trainer._process_hub_upload_report(self, report, protected=protected)
 
     def _clear_optimizer_state_for(self, parameters: list[torch.nn.Parameter]) -> None:
         if not self.train_config.loqt_reset_optimizer_state:

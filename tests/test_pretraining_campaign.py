@@ -37,6 +37,46 @@ def test_campaign_is_token_honest_and_stage_command_is_portable() -> None:
     assert command[-2:] == ["--init-checkpoint", "runs/stage1/checkpoint-final"]
 
 
+def test_remote_stage_command_enables_durable_ephemeral_policy() -> None:
+    campaign = MODULE.load_campaign(ROOT / "configs/pretraining/frontier_100b_k3.yaml")
+    command = MODULE.stage_command(
+        campaign["stages"][0],
+        data=campaign["data"]["clean_config"],
+        hub_repo="owner/public-checkpoints",
+        resume=None,
+        init_checkpoint=None,
+        remote_durable=True,
+    )
+    assert "--remote-durable" in command
+
+
+def test_remote_campaign_tracks_the_effective_persistent_run_root(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    campaign = MODULE.load_campaign(ROOT / "configs/pretraining/frontier_100b_k3.yaml")
+    monkeypatch.setenv("ASTERLM_REMOTE_RUN_ROOT", str(tmp_path / "provider-volume"))
+    output = MODULE.stage_output_dir(campaign["stages"][0], remote_durable=True)
+    assert output == tmp_path / "provider-volume" / "aster-frontier-100b-stage1-4k"
+
+
+def test_stage_transition_prefers_a_completed_local_checkpoint(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    local = tmp_path / "checkpoint-final"
+    monkeypatch.setattr(MODULE, "completed_checkpoint", lambda _output: local)
+    monkeypatch.setattr(
+        MODULE,
+        "download_hub_checkpoint",
+        lambda *_args, **_kwargs: pytest.fail("Hub should not be queried"),
+    )
+    resolved = MODULE.completed_checkpoint_or_hub(
+        tmp_path,
+        hub_repo="owner/public-checkpoints",
+        model_path="configs/model/aster_k3_latentmoe_1p45b_a568m.yaml",
+    )
+    assert resolved == local
+
+
 def test_frozen_scale_campaign_is_launchable() -> None:
     campaign = MODULE.load_campaign(ROOT / "configs/pretraining/frontier_100b_k3.yaml")
     MODULE.require_launchable_campaign(campaign)

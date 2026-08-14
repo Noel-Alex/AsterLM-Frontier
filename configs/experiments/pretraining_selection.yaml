@@ -28,13 +28,17 @@ selection:
     scale_quality: runs/architecture-campaign/k3-scale-quality-1m-fa88f30-v2/quality-analysis.json
     native_4k_fit: runs/tmp/1p45b-a568m-int8-full-4k-auto-final.json
     native_8k_prior_fit: runs/tmp/1p45b-int8-8k-seg2-fit.json
+    total_parameter_matched_dense: runs/architecture-campaign/final-total-matched-dense-fit-2seed-20260814/quality-analysis.json
+    total_parameter_matched_moe: runs/architecture-campaign/final-challenger-fit-2seed-trim-20260813/quality-analysis.json
   scale_finalists:
     - {model: configs/model/aster_k3_latentmoe_868m_a483m.yaml, total_parameters: 868300000, active_parameters_per_token: 483400000}
     - {model: configs/model/aster_k3_latentmoe_1p45b_a568m.yaml, total_parameters: 1448120880, active_parameters_per_token: 568155376}
     - {model: configs/model/aster_k3_latentmoe_1p95b_a766m.yaml, total_parameters: 1954000000, active_parameters_per_token: 765900000}
   broad_screening_enabled: false
   correction: The 270M proxy evidence selects K3 mechanisms and the Ada backend, not final model scale.
-  decision: The 1.448B candidate improves equal-token and equal-wall loss over 868M in the completed matched scale screen, while 18/20/24-expert expansions failed the sustained laptop fit gate. It is the largest defensible no-offload laptop architecture.
+  body_comparison_basis: total_parameters
+  active_matched_dense_role: diagnostic_only
+  decision: The 1.448B MoE improves equal-token loss in both seeds and aggregate throughput over the 1.446B total-parameter-matched dense control, while 18/20/24-expert expansions failed the sustained laptop fit gate. It is the largest defensible no-offload laptop architecture.
   reopen_only_on:
     - nonfinite_training
     - exact_resume_failure

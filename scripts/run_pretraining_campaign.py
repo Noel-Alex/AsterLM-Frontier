@@ -14,6 +14,11 @@ from typing import Any
 import yaml
 
 from asterlm.artifacts import atomic_write_json
+from asterlm.config import AsterConfig
+from asterlm.generation.hub_checkpoint import (
+    checkpoint_model_compatible,
+    download_hub_checkpoint,
+)
 from asterlm.training.checkpoint import resolve_checkpoint, verify_checkpoint
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -97,6 +102,7 @@ def stage_command(
     hub_repo: str,
     resume: str | None,
     init_checkpoint: str | None,
+    remote_durable: bool = False,
 ) -> list[str]:
     command = [
         sys.executable,
@@ -112,6 +118,8 @@ def stage_command(
         "--hub-repo",
         hub_repo,
     ]
+    if remote_durable:
+        command.append("--remote-durable")
     if resume:
         command.extend(["--resume", resume])
     elif init_checkpoint:
@@ -120,7 +128,9 @@ def stage_command(
 
 
 def completed_checkpoint(output_dir: str | Path) -> Path | None:
-    root = ROOT / output_dir
+    root = Path(output_dir)
+    if not root.is_absolute():
+        root = ROOT / root
     if not root.is_dir():
         return None
     checkpoint = resolve_checkpoint(root)
@@ -128,6 +138,46 @@ def completed_checkpoint(output_dir: str | Path) -> Path | None:
         return None
     manifest = verify_checkpoint(checkpoint)
     return checkpoint if manifest.get("reason") == "complete" else None
+
+
+def stage_output_dir(stage: dict[str, Any], *, remote_durable: bool) -> Path:
+    """Resolve the output directory exactly as ``studio_train.py`` will."""
+
+    configured = Path(str(stage["output_dir"]))
+    if remote_durable:
+        remote_root = Path(os.environ.get("ASTERLM_REMOTE_RUN_ROOT", "/opt/aster/runs"))
+        return remote_root / configured.name
+    return configured if configured.is_absolute() else ROOT / configured
+
+
+def completed_checkpoint_or_hub(
+    output_dir: str | Path,
+    *,
+    hub_repo: str,
+    model_path: str | Path,
+) -> Path:
+    """Resolve a completed prior stage locally or from its verified Hub final."""
+
+    local = completed_checkpoint(output_dir)
+    if local is not None:
+        return local
+    run = Path(output_dir).name
+    checkpoint, _record = download_hub_checkpoint(
+        hub_repo,
+        run=run,
+        selector="final",
+    )
+    manifest = verify_checkpoint(checkpoint)
+    if manifest.get("reason") != "complete":
+        raise RuntimeError(f"Hub final for {run} is not a completed stage checkpoint")
+    requested = AsterConfig.from_yaml(ROOT / model_path)
+    saved = AsterConfig.from_yaml(checkpoint / "model_config.yaml")
+    compatible, mismatches = checkpoint_model_compatible(requested, saved)
+    if not compatible:
+        raise RuntimeError(
+            f"Hub final for {run} is incompatible with the prior stage model: {mismatches}"
+        )
+    return checkpoint
 
 
 def main() -> None:
@@ -141,6 +191,14 @@ def main() -> None:
     parser.add_argument("--start-stage", default=None)
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--verify-manifest-hashes", action="store_true")
+    parser.add_argument(
+        "--remote-durable",
+        action="store_true",
+        help=(
+            "Use the ephemeral-provider contract: five-minute full-state saves, "
+            "verified public Hub upload at every save, and newest-Hub auto-resume"
+        ),
+    )
     args = parser.parse_args()
 
     campaign_path = (ROOT / args.campaign).resolve()
@@ -170,17 +228,24 @@ def main() -> None:
     commands: list[dict[str, Any]] = []
     previous_complete: Path | None = None
     for stage in campaign["stages"]:
-        complete = completed_checkpoint(stage["output_dir"])
+        effective_output = stage_output_dir(stage, remote_durable=args.remote_durable)
+        complete = completed_checkpoint(effective_output)
         if complete is not None:
             previous_complete = complete
         if stage not in stages:
             continue
-        run_root = ROOT / stage["output_dir"]
+        run_root = effective_output
         resume = str(run_root) if run_root.is_dir() and resolve_checkpoint(run_root) != run_root else None
         init_checkpoint = (
             None
             if resume or not stage.get("init_from")
-            else str(previous_complete or (ROOT / str(stage["init_from"])))
+            else str(
+                previous_complete
+                or stage_output_dir(
+                    {"output_dir": stage["init_from"]},
+                    remote_durable=args.remote_durable,
+                )
+            )
         )
         commands.append(
             {
@@ -191,6 +256,7 @@ def main() -> None:
                     hub_repo=args.hub_repo,
                     resume=resume,
                     init_checkpoint=init_checkpoint,
+                    remote_durable=args.remote_durable,
                 ),
             }
         )
@@ -246,14 +312,18 @@ def main() -> None:
     state["status"] = "running"
     for item in commands:
         stage = item["stage"]
-        run_root = ROOT / stage["output_dir"]
+        run_root = stage_output_dir(stage, remote_durable=args.remote_durable)
         resume = str(run_root) if run_root.is_dir() and resolve_checkpoint(run_root) != run_root else None
         init_checkpoint: str | None = None
         if stage.get("init_from") and not resume:
             if previous_complete is None:
-                previous_complete = completed_checkpoint(str(stage["init_from"]))
-            if previous_complete is None:
-                raise RuntimeError(f"{stage['id']} requires the completed prior stage checkpoint")
+                stage_index = campaign["stages"].index(stage)
+                prior_stage = campaign["stages"][stage_index - 1]
+                previous_complete = completed_checkpoint_or_hub(
+                    stage_output_dir(prior_stage, remote_durable=args.remote_durable),
+                    hub_repo=args.hub_repo,
+                    model_path=prior_stage["model"],
+                )
             init_checkpoint = str(previous_complete)
         command = stage_command(
             stage,
@@ -261,6 +331,7 @@ def main() -> None:
             hub_repo=args.hub_repo,
             resume=resume,
             init_checkpoint=init_checkpoint,
+            remote_durable=args.remote_durable,
         )
         record = {
             "id": stage["id"],
@@ -287,7 +358,7 @@ def main() -> None:
             state["status"] = record["status"]
             atomic_write_json(state_path, state)
             raise SystemExit(code)
-        checkpoint = completed_checkpoint(stage["output_dir"])
+        checkpoint = completed_checkpoint(run_root)
         if checkpoint is None:
             record["status"] = "failed_missing_complete_checkpoint"
             state["status"] = "failed"

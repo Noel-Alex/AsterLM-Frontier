@@ -195,6 +195,23 @@ def test_async_upload_queue_surfaces_worker_errors(tmp_path: Path) -> None:
     assert "upload failed" in report["errors"][0]["error"]
 
 
+def test_async_upload_queue_collects_finished_work_without_closing(tmp_path: Path) -> None:
+    upload_queue = HubUploadQueue(_RecordingSync(), max_pending=1)  # type: ignore[arg-type]
+    first = tmp_path / "checkpoint-1"
+    upload_queue.enqueue(HubUploadTask(tmp_path, first, "periodic", 1, 100))
+    upload_queue._queue.join()
+
+    report = upload_queue.collect_completed()
+
+    assert report["errors"] == []
+    assert report["results"][0]["checkpoint"] == str(first)
+    assert upload_queue.collect_completed()["results"] == []
+    second = tmp_path / "checkpoint-2"
+    upload_queue.enqueue(HubUploadTask(tmp_path, second, "periodic", 2, 200))
+    final = upload_queue.drain(close=True)
+    assert final["results"][0]["checkpoint"] == str(second)
+
+
 def test_trainer_close_flush_preserves_queue_for_protection_audit(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

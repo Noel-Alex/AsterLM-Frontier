@@ -346,6 +346,25 @@ class HubUploadQueue:
         with self._lock:
             return set(self._pending)
 
+    def collect_completed(self) -> dict[str, Any]:
+        """Return completed uploads without waiting for in-flight work.
+
+        The trainer calls this at checkpoint boundaries so verified local payloads
+        can be retired while the single upload worker continues in the background.
+        Errors are surfaced at the next safe optimizer-update boundary instead of
+        being hidden until process shutdown.
+        """
+
+        with self._lock:
+            result = {
+                "results": list(self._results),
+                "errors": list(self._errors),
+                "pending": [str(path) for path in sorted(self._pending)],
+            }
+            self._results.clear()
+            self._errors.clear()
+        return result
+
     def _run(self) -> None:
         while True:
             task = self._queue.get()
@@ -389,12 +408,4 @@ class HubUploadQueue:
             self._closed = True
             self._queue.put(None)
             self._worker.join()
-        with self._lock:
-            result = {
-                "results": list(self._results),
-                "errors": list(self._errors),
-                "pending": [str(path) for path in sorted(self._pending)],
-            }
-            self._results.clear()
-            self._errors.clear()
-        return result
+        return self.collect_completed()
