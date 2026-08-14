@@ -19,6 +19,7 @@ REQUIRED_FINAL_RUN_GATES = (
     "long_context_retrieval",
     "stage2_long_context_retrieval",
     "stage3_long_context_retrieval",
+    "final_long_context_retrieval",
     "repeated_warm_throughput",
     "gpu_utilization_root_cause",
     "vram",
@@ -44,7 +45,7 @@ MODAL_PROMOTION_GATES = (
 )
 
 OBSERVATIONAL_GATES = ("energy_and_power", *MODAL_PROMOTION_GATES)
-PROMOTION_PHASES = ("stage1", "stage2", "stage3", "stage4")
+PROMOTION_PHASES = ("stage1", "stage2", "stage3", "stage4", "campaign_complete")
 
 
 @dataclass(frozen=True, slots=True)

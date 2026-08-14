@@ -147,6 +147,12 @@ Hub final and reconstructs missing gates before training. Evaluation failures
 stop the campaign; SIGINT/SIGTERM is forwarded to the active evaluator or
 trainer process.
 
+After stage 4 finishes, the supervisor evaluates the actual 100B-token final at
+65,536, 131,072 and 262,144 tokens before marking the campaign complete. This
+postflight is deliberately bound to the 32K-trained final rather than borrowing
+stage-3 evidence. The 1M configuration remains a stretch candidate for later
+inference qualification and is not implied by the 262K gate.
+
 ### Stage 1
 
 ```bash

@@ -161,3 +161,6 @@ def test_long_context_transition_commands_bind_checkpoint_and_runtime_ledger(
     assert promote[promote.index("--gates") + 1].endswith(
         "promotion_gates.runtime.yaml"
     )
+    assert MODULE.LONG_CONTEXT_GATES[-1]["gate"] == "final_long_context_retrieval"
+    assert MODULE.LONG_CONTEXT_GATES[-1]["required_before_index"] == 4
+    assert MODULE.LONG_CONTEXT_GATES[-1]["lengths"] == "65536,131072,262144"

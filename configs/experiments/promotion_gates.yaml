@@ -60,6 +60,10 @@ gates:
   required: true
   required_before: stage4
   status: not_run
+- id: final_long_context_retrieval
+  required: true
+  required_before: campaign_complete
+  status: not_run
 - id: repeated_warm_throughput
   required: true
   status: passed

@@ -33,6 +33,11 @@ GATE_CONTRACTS = {
         "minimum_tokens": 3_000_000_000,
         "lengths": {32768, 65536, 131072},
     },
+    "final_long_context_retrieval": {
+        "run": "runs/aster-frontier-100b-stage4-32k",
+        "minimum_tokens": 2_000_000_000,
+        "lengths": {65536, 131072, 262144},
+    },
 }
 REQUIRED_TASKS = {"exact_key", "repeated_key", "two_hop"}
 REQUIRED_DEPTHS = {0.1, 0.5, 0.9}

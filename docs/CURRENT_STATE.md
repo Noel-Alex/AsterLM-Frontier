@@ -99,6 +99,9 @@ promotion, imports hash-verified evidence into an ignored runtime ledger, and
 launches the next stage only after the corresponding gate passes. Starting at
 stage 3 or 4 on a fresh provider reconstructs every prerequisite proof from the
 completed public Hub finals rather than trusting stale local state.
+After stage 4, the completed 32K-trained final must itself pass retrieval and
+interference cases through 262K before the campaign is marked complete; the 1M
+configuration remains a separate stretch candidate.
 
 ## Checkpoints and telemetry
 

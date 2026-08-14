@@ -168,6 +168,7 @@ launch_policy:
     stage2: stage1 gates plus long-context retrieval from a trained stage1 checkpoint
     stage3: revalidate the long-context evidence against the promoted stage2 checkpoint before launch
     stage4: revalidate the long-context evidence against the promoted stage3 checkpoint before launch
+    campaign_complete: require retrieval/interference evidence through 262K from the completed 32K-trained final checkpoint
   required_before_stage1:
     - sealed clean corpus and decontamination manifest
     - tokenizer seal and fertility report

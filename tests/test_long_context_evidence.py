@@ -78,3 +78,19 @@ def test_provider_checkpoint_root_is_accepted_when_explicitly_bound(tmp_path: Pa
         min_exact_accuracy=0.5,
     )
     assert result["checkpoint"] == str(checkpoint.resolve())
+
+
+def test_final_checkpoint_gate_reaches_the_supported_256k_target(tmp_path: Path) -> None:
+    root = tmp_path / "stage4"
+    checkpoint = root / "checkpoint-final"
+    checkpoint.mkdir(parents=True)
+    summary = _summary(checkpoint)
+    summary["checkpoint_manifest"]["tokens_seen"] = 2_000_000_000
+    summary["lengths"] = [65536, 131072, 262144]
+    result = validate_summary(
+        summary,
+        "final_long_context_retrieval",
+        expected_checkpoint_root=root,
+        min_exact_accuracy=0.5,
+    )
+    assert result["required_lengths"][-1] == 262144

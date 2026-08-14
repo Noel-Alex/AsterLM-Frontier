@@ -16,6 +16,7 @@ import yaml
 
 from asterlm.artifacts import atomic_write_json, atomic_write_text
 from asterlm.config import AsterConfig
+from asterlm.experiments import evaluate_promotion_gates
 from asterlm.generation.hub_checkpoint import (
     checkpoint_model_compatible,
     download_hub_checkpoint,
@@ -45,6 +46,12 @@ LONG_CONTEXT_GATES = (
         "prior_stage_index": 2,
         "required_before_index": 3,
         "lengths": "32768,65536,131072",
+    },
+    {
+        "gate": "final_long_context_retrieval",
+        "prior_stage_index": 3,
+        "required_before_index": 4,
+        "lengths": "65536,131072,262144",
     },
 )
 
@@ -411,13 +418,12 @@ def main() -> None:
     signal.signal(signal.SIGINT, forward)
     signal.signal(signal.SIGTERM, forward)
 
-    def ensure_stage_transition_gates(stage: dict[str, Any]) -> None:
+    def ensure_long_context_gates(required_before_index: int) -> None:
         nonlocal child
-        stage_index = campaign["stages"].index(stage)
         # A fresh provider may begin at stage 3 or 4, so materialize every
         # prerequisite proof, not only the immediately preceding transition.
         for gate in LONG_CONTEXT_GATES:
-            if int(gate["required_before_index"]) > stage_index:
+            if int(gate["required_before_index"]) > required_before_index:
                 continue
             gate_id = str(gate["gate"])
             if promotion_gate_passed(runtime_promotion_gates, gate_id):
@@ -474,7 +480,7 @@ def main() -> None:
 
     # Direct stage-2+ starts must reconstruct transition evidence before their
     # preflight validates the stage-aware final-run contract.
-    ensure_stage_transition_gates(first)
+    ensure_long_context_gates(campaign["stages"].index(first))
     preflight = [
         sys.executable,
         "scripts/training_preflight.py",
@@ -509,7 +515,7 @@ def main() -> None:
     state["status"] = "running"
     for item in commands:
         stage = item["stage"]
-        ensure_stage_transition_gates(stage)
+        ensure_long_context_gates(campaign["stages"].index(stage))
 
         run_root = stage_output_dir(stage, remote_durable=args.remote_durable)
         resume = str(run_root) if run_root.is_dir() and resolve_checkpoint(run_root) != run_root else None
@@ -568,6 +574,21 @@ def main() -> None:
         record["checkpoint"] = str(checkpoint)
         previous_complete = checkpoint
         atomic_write_json(state_path, state)
+    # The final 32K checkpoint, not its stage-3 predecessor, owns the supported
+    # 256K retrieval claim. Campaign completion is fail-closed on that postflight.
+    ensure_long_context_gates(len(campaign["stages"]))
+    completion_decision = evaluate_promotion_gates(
+        runtime_promotion_gates,
+        phase="campaign_complete",
+    )
+    state["completion_promotion"] = completion_decision.manifest()
+    if not completion_decision.ready:
+        state["status"] = "failed_completion_promotion"
+        atomic_write_json(state_path, state)
+        raise RuntimeError(
+            "Campaign completion is promotion-locked by: "
+            + ", ".join(completion_decision.blocking_gate_ids)
+        )
     state["status"] = "complete"
     state["current_stage"] = None
     state["finished_at_unix"] = time.time()
