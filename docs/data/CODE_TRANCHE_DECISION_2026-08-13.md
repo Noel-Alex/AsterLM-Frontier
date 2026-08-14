@@ -7,6 +7,17 @@ materialized prose/math tokens, but the intended 13B-token code tranche still
 requires a deliberate source and license decision. No replacement dataset is
 counted merely because its repository exists or can be streamed.
 
+### Access recheck — 2026-08-14
+
+The local Hugging Face credential is valid for account `philoweeb`. A read-only
+Hub audit enumerated 167 Parquet files in `Nemotron-CC-Code-v1` and 316 matching
+`Synthetic-Code` Parquet files in `Nemotron-Pretraining-Code-v1`, then requested
+metadata for one real data object from each repository. Both object requests
+returned HTTP 403 gated-access errors. This verifies that the blocker is the two
+human dataset agreements, not authentication, repository discovery, tooling, or
+an accidental download failure. No dataset bytes were downloaded during the
+check.
+
 ## Preferred source
 
 The preferred candidate remains:
