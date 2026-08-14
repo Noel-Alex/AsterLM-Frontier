@@ -494,6 +494,12 @@ candidates:
     base_model: configs/model/aster_dense_kda3_mla_final_control.yaml
     model_overrides: {}
     execution_variants: [cutlass-grouped-k3-muon8bit-bf16]
+  - id: tier2-dense-kda3-mla-total-matched-control
+    tier: 2
+    hypothesis: A total-parameter-matched fully active dense KDA/MLA control may convert the incumbent's sparse storage capacity into more learning compute per wall hour while still fitting the laptop.
+    base_model: configs/model/aster_dense_kda3_mla_total_matched_control.yaml
+    model_overrides: {}
+    execution_variants: [cutlass-grouped-k3-muon8bit-bf16]
   - id: tier2-k3-latentmoe-1p95b-a766m
     tier: 2
     hypothesis: The 1.95B stretch tier is the maximum-quality candidate if its full training state fits and its time-to-quality beats smaller tiers.

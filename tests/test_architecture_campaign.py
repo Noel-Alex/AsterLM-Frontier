@@ -201,6 +201,9 @@ def test_final_challengers_isolate_mixer_and_sparse_capacity() -> None:
     dense_config = AsterConfig.from_yaml(
         ROOT / "configs/model/aster_dense_kda3_mla_final_control.yaml"
     )
+    total_matched_dense_config = AsterConfig.from_yaml(
+        ROOT / "configs/model/aster_dense_kda3_mla_total_matched_control.yaml"
+    )
     assert gdn2_config.pattern == ["gdn2", "gdn2", "gdn2", "latent"] * 8
     assert incumbent_config.pattern == ["kda", "kda", "kda", "latent"] * 8
     assert gdn2_config.ffn_type == incumbent_config.ffn_type == "latent_moe"
@@ -210,6 +213,9 @@ def test_final_challengers_isolate_mixer_and_sparse_capacity() -> None:
     with torch.device("meta"):
         incumbent = AsterLM(replace(incumbent_config, kda_backend="torch"))
         dense = AsterLM(replace(dense_config, kda_backend="torch"))
+        total_matched_dense = AsterLM(
+            replace(total_matched_dense_config, kda_backend="torch")
+        )
     # GDN2's mixer itself is larger while the MoE body remains byte-for-byte
     # geometrically identical. Equal-active-FLOP analysis controls that 12.4%
     # difference; changing experts to hide it would confound the mixer test.
@@ -220,6 +226,13 @@ def test_final_challengers_isolate_mixer_and_sparse_capacity() -> None:
         assert gdn2.active_parameter_count() == 638_625_760
     assert dense.active_parameter_count() == pytest.approx(
         incumbent.active_parameter_count(), rel=0.01
+    )
+    assert total_matched_dense.effective_parameter_count() == 1_445_907_696
+    assert total_matched_dense.effective_parameter_count() == pytest.approx(
+        incumbent.effective_parameter_count(), rel=0.002
+    )
+    assert total_matched_dense.active_parameter_count() == (
+        total_matched_dense.effective_parameter_count()
     )
 
 

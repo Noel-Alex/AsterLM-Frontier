@@ -6,8 +6,12 @@ seeds: [1337, 2027]
 controls:
   - id: tier2-gdn2-latentmoe-selected-body
     isolates: recurrent_mixer
+  - id: tier2-dense-kda3-mla-total-matched-control
+    isolates: equal_total_capacity_sparse_vs_fully_active_compute
+diagnostics:
   - id: tier2-dense-kda3-mla-final-control
-    isolates: sparse_capacity_and_dispatch
+    role: active_compute_matched_lower_bound_only
+    selection_authority: none
 rules:
   require_named_initialization_parity: true
   require_identical_data_order: true
@@ -28,4 +32,5 @@ ladder:
 notes:
   - Never run the 50M phase automatically merely because the 1M fit phase passes.
   - GDN2 and dense controls must use their best measured deployable backend, not a deliberately slow reference.
-  - Close architecture selection when the incumbent survives these two challengers; do not reopen an unbounded paper sweep.
+  - The final dense-versus-MoE body decision is total-parameter matched; the earlier 565M active-matched dense arm is diagnostic only.
+  - Close architecture selection when the incumbent survives these bounded challengers; do not reopen an unbounded paper sweep.
