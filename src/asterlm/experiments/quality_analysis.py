@@ -370,6 +370,33 @@ def analyze_quality_campaign(campaign_path: str | Path) -> dict[str, Any]:
             "mean_gpu_util_percent": _mean(
                 [float(item["mean_gpu_util_percent"]) for item in complete if item.get("mean_gpu_util_percent") is not None]
             ),
+            "median_gpu_util_percent": statistics.median(
+                [
+                    float(item["median_gpu_util_percent"])
+                    for item in complete
+                    if item.get("median_gpu_util_percent") is not None
+                ]
+            )
+            if any(item.get("median_gpu_util_percent") is not None for item in complete)
+            else None,
+            "p10_gpu_util_percent": statistics.median(
+                [
+                    float(item["p10_gpu_util_percent"])
+                    for item in complete
+                    if item.get("p10_gpu_util_percent") is not None
+                ]
+            )
+            if any(item.get("p10_gpu_util_percent") is not None for item in complete)
+            else None,
+            "p90_gpu_util_percent": statistics.median(
+                [
+                    float(item["p90_gpu_util_percent"])
+                    for item in complete
+                    if item.get("p90_gpu_util_percent") is not None
+                ]
+            )
+            if any(item.get("p90_gpu_util_percent") is not None for item in complete)
+            else None,
             "peak_vram_gib": max(
                 [float(item["peak_vram_gib"]) for item in complete if item.get("peak_vram_gib") is not None],
                 default=None,

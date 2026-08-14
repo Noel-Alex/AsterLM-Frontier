@@ -609,6 +609,10 @@ class ResearchArchive:
             if aggregate is not None
             else record.get("eval_main_loss")
         )
+        metric_source = aggregate if aggregate is not None else record
+        gpu_utilization = metric_source.get("median_gpu_util_percent")
+        if gpu_utilization is None:
+            gpu_utilization = metric_source.get("mean_gpu_util_percent")
         raw = {
             "analysis": matrix_relative,
             "campaign_type": campaign.get("campaign_type", "architecture_quality"),
@@ -678,11 +682,7 @@ class ResearchArchive:
                 if aggregate is not None
                 else record.get("median_training_tokens_per_second")
             ),
-            "gpu_utilization": _as_float(
-                (aggregate or {}).get("mean_gpu_util_percent")
-                if aggregate is not None
-                else record.get("mean_gpu_util_percent")
-            ),
+            "gpu_utilization": _as_float(gpu_utilization),
             "peak_allocated_gib": _as_float(
                 (aggregate or {}).get("peak_vram_gib")
                 if aggregate is not None

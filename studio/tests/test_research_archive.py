@@ -191,6 +191,7 @@ def test_archive_indexes_quality_runs_and_aggregate_metrics(tmp_path) -> None:
                 "eval_main_loss": 3.5,
                 "median_training_tokens_per_second": 1200,
                 "mean_gpu_util_percent": 91,
+                "median_gpu_util_percent": 94,
                 "peak_vram_gib": 4.5,
                 "run_survival_rate": 1.0,
                 "gradient_nonfinite_count": 0,
@@ -238,6 +239,7 @@ def test_archive_indexes_quality_runs_and_aggregate_metrics(tmp_path) -> None:
                 "active_flops_to_common_loss_mean": 1000000,
                 "median_training_tokens_per_second": 1200,
                 "mean_gpu_util_percent": 91,
+                "median_gpu_util_percent": 94,
                 "peak_vram_gib": 4.5,
                 "run_survival_rate": 1.0,
                 "gradient_nonfinite_count": 0,
@@ -283,6 +285,7 @@ def test_archive_indexes_quality_runs_and_aggregate_metrics(tmp_path) -> None:
     assert aggregate["gradient_clip_percent"] == 12.5
     assert aggregate["optimizer_wall_percent"] == 8
     assert aggregate["muon_relative_update_rms"] == 0.004
+    assert aggregate["gpu_utilization"] == 94
     assert individual["result_path"] == "runs/quality/seed-7/k3/muon/experiment.json"
     assert individual["total_parameters"] == 270
     assert individual["active_parameters"] == 188

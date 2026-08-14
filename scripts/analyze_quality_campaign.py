@@ -26,7 +26,7 @@ def main() -> None:
         "",
         f"Status: **{result['analysis_status']}** ({result['complete_runs']}/{result['expected_runs']} runs)",
         "",
-        "| Candidate | Final loss | Equal-wall loss | Equal-FLOP loss | tok/s | GPU | VRAM GiB |",
+        "| Candidate | Final loss | Equal-wall loss | Equal-FLOP loss | tok/s | GPU med / p90 | VRAM GiB |",
         "| --- | ---: | ---: | ---: | ---: | ---: | ---: |",
     ]
     for identity, row in result["candidates"].items():
@@ -35,7 +35,8 @@ def main() -> None:
             f"{_format(row['equal_wall_loss_mean'])} | "
             f"{_format(row['equal_active_flops_loss_mean'])} | "
             f"{_format(row['median_training_tokens_per_second'], 0)} | "
-            f"{_format(row['mean_gpu_util_percent'], 1)} | {_format(row['peak_vram_gib'], 2)} |"
+            f"{_format(row['median_gpu_util_percent'], 1)} / "
+            f"{_format(row['p90_gpu_util_percent'], 1)} | {_format(row['peak_vram_gib'], 2)} |"
         )
     markdown = output.with_suffix(".md")
     markdown.write_text("\n".join(lines) + "\n", encoding="utf-8")
