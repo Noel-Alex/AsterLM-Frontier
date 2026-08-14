@@ -114,6 +114,11 @@ def test_quality_summary_and_latest_checkpoint(tmp_path):
             "tokens_seen": 3072,
             "step": 2,
             "tokens_per_second": 110.0,
+            "gpu_time_sample_count": 123,
+            "gpu_util_time_mean_percent": 94.0,
+            "gpu_util_time_p10_percent": 88.0,
+            "gpu_util_time_p50_percent": 96.0,
+            "gpu_util_time_p90_percent": 99.0,
             "wall_clock_total_seconds": 40.0,
             "loss": 3.0,
             "grad_norm_pre_clip": 1.0,
@@ -135,9 +140,12 @@ def test_quality_summary_and_latest_checkpoint(tmp_path):
     summary = summarize_quality_run(run)
     assert summary["eval_main_loss"] == 3.5
     assert summary["median_training_tokens_per_second"] == 105.0
-    assert summary["median_gpu_util_percent"] == 90.0
-    assert summary["p10_gpu_util_percent"] == 90.0
-    assert summary["p90_gpu_util_percent"] == 90.0
+    assert summary["gpu_utilization_sampling"] == "continuous_time"
+    assert summary["gpu_utilization_sample_count"] == 123
+    assert summary["mean_gpu_util_percent"] == 94.0
+    assert summary["median_gpu_util_percent"] == 96.0
+    assert summary["p10_gpu_util_percent"] == 88.0
+    assert summary["p90_gpu_util_percent"] == 99.0
     assert summary["learning_curve"][0]["wall_clock_total_seconds"] == 40.0
     assert summary["gradient_norm_p95"] == 1.95
     assert summary["gradient_clip_fraction"] == 0.5

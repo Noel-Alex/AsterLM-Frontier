@@ -2,7 +2,11 @@ from __future__ import annotations
 
 import torch
 
-from asterlm.training.telemetry import static_system_manifest
+from asterlm.training.telemetry import (
+    ContinuousGpuSampler,
+    _dmon_percentile,
+    static_system_manifest,
+)
 from scripts.profile_training import summarize_gpu_samples, summarize_torch_profiler_events
 
 
@@ -16,6 +20,28 @@ def test_gpu_power_summary_records_mean_for_total_energy_estimation():
     assert summary["measured_sample_count"] == 2
     assert summary["mean_power_draw"] == 100.0
     assert summary["median_utilization_gpu"] == 90.0
+
+
+def test_continuous_gpu_sampler_parses_nvidia_dmon_rows_without_headers():
+    assert ContinuousGpuSampler.parse_row(
+        "0 94 86 - 97 49 0 0 0 0 9001 1845 10064 0 -"
+    ) == {
+        "gpu_power_w": 94.0,
+        "gpu_temperature_c": 86.0,
+        "gpu_util_percent": 97.0,
+        "gpu_mem_util_percent": 49.0,
+        "gpu_mem_clock_mhz": 9001.0,
+        "gpu_sm_clock_mhz": 1845.0,
+        "gpu_memory_used_mib": 10064.0,
+    }
+    assert ContinuousGpuSampler.parse_row("# gpu pwr gtemp") is None
+
+
+def test_continuous_gpu_percentiles_interpolate_histogram_ranks():
+    histogram = [0] * 101
+    for value in (84, 89, 96, 96):
+        histogram[value] += 1
+    assert _dmon_percentile(histogram, 0.5) == 92.5
 
 
 def test_torch_profiler_summary_is_machine_readable_and_device_time_sorted():

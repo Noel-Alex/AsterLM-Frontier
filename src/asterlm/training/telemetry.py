@@ -5,6 +5,7 @@ import os
 import platform
 import shutil
 import subprocess
+import threading
 import time
 import zipfile
 from dataclasses import dataclass
@@ -61,15 +62,188 @@ def static_system_manifest(device: torch.device) -> dict[str, Any]:
     return manifest
 
 
+def _visible_nvidia_device(device: torch.device) -> str:
+    logical_index = int(device.index or 0)
+    visible = os.environ.get("CUDA_VISIBLE_DEVICES", "").strip()
+    if visible:
+        entries = [entry.strip() for entry in visible.split(",") if entry.strip()]
+        if logical_index < len(entries):
+            return entries[logical_index]
+    return str(logical_index)
+
+
+def _dmon_percentile(histogram: list[int], fraction: float) -> float | None:
+    total = sum(histogram)
+    if total <= 0:
+        return None
+
+    def value_at(rank: int) -> float:
+        seen = 0
+        for value, count in enumerate(histogram):
+            seen += count
+            if seen > rank:
+                return float(value)
+        return float(len(histogram) - 1)
+
+    position = (total - 1) * fraction
+    lower = int(position)
+    upper = min(lower + 1, total - 1)
+    weight = position - lower
+    return value_at(lower) * (1.0 - weight) + value_at(upper) * weight
+
+
+class ContinuousGpuSampler:
+    """Low-overhead, phase-independent GPU telemetry from one persistent dmon process."""
+
+    def __init__(self, device: torch.device, *, energy_joules: float = 0.0) -> None:
+        self.device = device
+        self.energy_joules = float(energy_joules)
+        self._lock = threading.Lock()
+        self._stop = threading.Event()
+        self._process: subprocess.Popen[str] | None = None
+        self._thread: threading.Thread | None = None
+        self._samples = 0
+        self._util_sum = 0.0
+        self._util_histogram = [0] * 101
+        self._power_sum = 0.0
+        self._power_samples = 0
+        self._last_power_w: float | None = None
+        self._last_time: float | None = None
+        self._latest: dict[str, float] = {}
+
+    @staticmethod
+    def parse_row(line: str) -> dict[str, float] | None:
+        fields = line.split()
+        if not fields or fields[0].startswith("#") or len(fields) < 15:
+            return None
+
+        def value(index: int) -> float | None:
+            try:
+                return float(fields[index])
+            except (IndexError, ValueError):
+                return None
+
+        mapped = {
+            "gpu_power_w": value(1),
+            "gpu_temperature_c": value(2),
+            "gpu_util_percent": value(4),
+            "gpu_mem_util_percent": value(5),
+            "gpu_mem_clock_mhz": value(10),
+            "gpu_sm_clock_mhz": value(11),
+            "gpu_memory_used_mib": value(12),
+        }
+        return {key: item for key, item in mapped.items() if item is not None}
+
+    def start(self) -> bool:
+        if self.device.type != "cuda" or shutil.which("nvidia-smi") is None:
+            return False
+        try:
+            self._process = subprocess.Popen(
+                [
+                    "nvidia-smi",
+                    "dmon",
+                    "-s",
+                    "pucm",
+                    "-d",
+                    "1",
+                    "-i",
+                    _visible_nvidia_device(self.device),
+                ],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                text=True,
+                bufsize=1,
+            )
+        except OSError:
+            self._process = None
+            return False
+        self._thread = threading.Thread(
+            target=self._run,
+            name="aster-continuous-gpu-telemetry",
+            daemon=True,
+        )
+        self._thread.start()
+        return True
+
+    def _run(self) -> None:
+        process = self._process
+        if process is None or process.stdout is None:
+            return
+        for line in process.stdout:
+            if self._stop.is_set():
+                break
+            sample = self.parse_row(line)
+            if not sample:
+                continue
+            now = time.monotonic()
+            with self._lock:
+                utilization = sample.get("gpu_util_percent")
+                if utilization is not None:
+                    bounded = max(0.0, min(100.0, utilization))
+                    self._samples += 1
+                    self._util_sum += bounded
+                    self._util_histogram[round(bounded)] += 1
+                power = sample.get("gpu_power_w")
+                if power is not None:
+                    self._power_sum += power
+                    self._power_samples += 1
+                if self._last_time is not None and self._last_power_w is not None:
+                    self.energy_joules += self._last_power_w * max(0.0, now - self._last_time)
+                self._last_time = now
+                if power is not None:
+                    self._last_power_w = power
+                self._latest = sample
+
+    def snapshot(self) -> dict[str, float]:
+        with self._lock:
+            result = dict(self._latest)
+            result["gpu_time_sample_count"] = float(self._samples)
+            if self._samples:
+                result["gpu_util_time_mean_percent"] = self._util_sum / self._samples
+                for label, fraction in (("p10", 0.10), ("p50", 0.50), ("p90", 0.90)):
+                    percentile = _dmon_percentile(self._util_histogram, fraction)
+                    if percentile is not None:
+                        result[f"gpu_util_time_{label}_percent"] = percentile
+            if self._power_samples:
+                result["gpu_power_time_mean_w"] = self._power_sum / self._power_samples
+            result["gpu_energy_joules_total"] = self.energy_joules
+            result["gpu_energy_kwh_total"] = self.energy_joules / 3_600_000.0
+            return result
+
+    def running(self) -> bool:
+        return self._process is not None and self._process.poll() is None
+
+    def close(self) -> None:
+        self._stop.set()
+        process = self._process
+        if process is not None and process.poll() is None:
+            process.terminate()
+            try:
+                process.wait(timeout=3)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait(timeout=3)
+        if self._thread is not None:
+            self._thread.join(timeout=3)
+
+
 @dataclass
 class SystemSampler:
     device: torch.device
     min_interval: float = 5.0
+    continuous_gpu: bool = False
     _last_time: float = 0.0
     _last: dict[str, float] | None = None
     energy_joules: float = 0.0
     _last_energy_time: float | None = None
     _last_power_w: float | None = None
+    _continuous: ContinuousGpuSampler | None = None
+
+    def start_continuous(self) -> None:
+        if self._continuous is None and self.continuous_gpu and self.device.type == "cuda":
+            monitor = ContinuousGpuSampler(self.device, energy_joules=self.energy_joules)
+            if monitor.start():
+                self._continuous = monitor
 
     def sample(self, force: bool = False) -> dict[str, float]:
         now = time.monotonic()
@@ -97,43 +271,61 @@ class SystemSampler:
             )
             stats = torch.cuda.memory_stats(self.device)
             out["cuda_inactive_split_gb"] = stats.get("inactive_split_bytes.all.current", 0) / 2**30
-            query = _run(
-                [
-                    "nvidia-smi",
-                    "--query-gpu=temperature.gpu,power.draw,clocks.sm,clocks.mem,utilization.gpu,utilization.memory,memory.used",
-                    "--format=csv,noheader,nounits",
-                    "-i",
-                    str(self.device.index or 0),
-                ]
-            )
-            if query:
-                try:
-                    vals = [float(x.strip()) for x in query.splitlines()[0].split(",")]
-                    keys = [
-                        "gpu_temperature_c",
-                        "gpu_power_w",
-                        "gpu_sm_clock_mhz",
-                        "gpu_mem_clock_mhz",
-                        "gpu_util_percent",
-                        "gpu_mem_util_percent",
-                        "gpu_memory_used_mib",
+            monitor = self._continuous
+            continuous = monitor.snapshot() if monitor is not None else {}
+            if monitor is not None and not continuous.get("gpu_time_sample_count", 0) and not monitor.running():
+                monitor.close()
+                self._continuous = None
+                monitor = None
+            if continuous.get("gpu_time_sample_count", 0) > 0:
+                out.update(continuous)
+                self.energy_joules = float(out.get("gpu_energy_joules_total", self.energy_joules))
+            else:
+                query = _run(
+                    [
+                        "nvidia-smi",
+                        "--query-gpu=temperature.gpu,power.draw,clocks.sm,clocks.mem,utilization.gpu,utilization.memory,memory.used",
+                        "--format=csv,noheader,nounits",
+                        "-i",
+                        _visible_nvidia_device(self.device),
                     ]
-                    out.update(dict(zip(keys, vals, strict=True)))
-                except (TypeError, ValueError):
-                    # `nvidia-smi` may emit N/A for unsupported counters. Other
-                    # process and CUDA metrics remain valid for this sample.
-                    pass
-            power = out.get("gpu_power_w")
-            if self._last_energy_time is not None and self._last_power_w is not None:
-                self.energy_joules += self._last_power_w * max(0.0, now - self._last_energy_time)
-            self._last_energy_time = now
-            if power is not None:
-                self._last_power_w = power
-            out["gpu_energy_joules_total"] = self.energy_joules
-            out["gpu_energy_kwh_total"] = self.energy_joules / 3_600_000.0
+                )
+                if query:
+                    try:
+                        vals = [float(x.strip()) for x in query.splitlines()[0].split(",")]
+                        keys = [
+                            "gpu_temperature_c",
+                            "gpu_power_w",
+                            "gpu_sm_clock_mhz",
+                            "gpu_mem_clock_mhz",
+                            "gpu_util_percent",
+                            "gpu_mem_util_percent",
+                            "gpu_memory_used_mib",
+                        ]
+                        out.update(dict(zip(keys, vals, strict=True)))
+                    except (TypeError, ValueError):
+                        # `nvidia-smi` may emit N/A for unsupported counters. Other
+                        # process and CUDA metrics remain valid for this sample.
+                        pass
+                power = out.get("gpu_power_w")
+                if monitor is None:
+                    if self._last_energy_time is not None and self._last_power_w is not None:
+                        self.energy_joules += self._last_power_w * max(
+                            0.0, now - self._last_energy_time
+                        )
+                    self._last_energy_time = now
+                    if power is not None:
+                        self._last_power_w = power
+                out["gpu_energy_joules_total"] = self.energy_joules
+                out["gpu_energy_kwh_total"] = self.energy_joules / 3_600_000.0
         self._last_time = now
         self._last = out
         return dict(out)
+
+    def close(self) -> None:
+        if self._continuous is not None:
+            self._continuous.close()
+            self._continuous = None
 
 
 def gradient_diagnostics(model: torch.nn.Module) -> dict[str, Any]:

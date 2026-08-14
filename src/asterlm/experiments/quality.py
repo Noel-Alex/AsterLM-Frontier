@@ -244,6 +244,15 @@ def summarize_quality_run(run_dir: str | Path) -> dict[str, Any]:
         for row in training
         if isinstance(row.get("gpu_util_percent"), (int, float))
     ]
+    time_sampled_utilization = next(
+        (
+            row
+            for row in reversed(training)
+            if isinstance(row.get("gpu_time_sample_count"), (int, float))
+            and float(row["gpu_time_sample_count"]) > 0
+        ),
+        {},
+    )
     peak_vram = [
         float(row["cuda_peak_allocated_gb"])
         for row in training
@@ -350,10 +359,28 @@ def summarize_quality_run(run_dir: str | Path) -> dict[str, Any]:
         "eval_perplexity": latest_eval.get("eval_perplexity"),
         "eval_tokens": latest_eval.get("tokens_seen"),
         "median_training_tokens_per_second": statistics.median(throughput) if throughput else None,
-        "mean_gpu_util_percent": statistics.fmean(utilization) if utilization else None,
-        "median_gpu_util_percent": statistics.median(utilization) if utilization else None,
-        "p10_gpu_util_percent": percentile(utilization, 0.10),
-        "p90_gpu_util_percent": percentile(utilization, 0.90),
+        "gpu_utilization_sampling": (
+            "continuous_time" if time_sampled_utilization else "step_boundary_fallback"
+        ),
+        "gpu_utilization_sample_count": (
+            int(time_sampled_utilization["gpu_time_sample_count"])
+            if time_sampled_utilization
+            else len(utilization)
+        ),
+        "mean_gpu_util_percent": time_sampled_utilization.get(
+            "gpu_util_time_mean_percent",
+            statistics.fmean(utilization) if utilization else None,
+        ),
+        "median_gpu_util_percent": time_sampled_utilization.get(
+            "gpu_util_time_p50_percent",
+            statistics.median(utilization) if utilization else None,
+        ),
+        "p10_gpu_util_percent": time_sampled_utilization.get(
+            "gpu_util_time_p10_percent", percentile(utilization, 0.10)
+        ),
+        "p90_gpu_util_percent": time_sampled_utilization.get(
+            "gpu_util_time_p90_percent", percentile(utilization, 0.90)
+        ),
         "peak_vram_gib": max(peak_vram) if peak_vram else None,
         "wall_clock_total_seconds": max(wall_seconds) if wall_seconds else None,
         "run_survived": experiment.get("status") == "ok",

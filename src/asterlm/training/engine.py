@@ -259,6 +259,7 @@ class Trainer:
         self.system_sampler = SystemSampler(
             self.device,
             min_interval=train_config.system_metrics_interval,
+            continuous_gpu=True,
             energy_joules=float(previous_metrics.get("gpu_energy_joules_total", 0.0)),
         )
         self.tensorboard = None
@@ -938,6 +939,7 @@ class Trainer:
         last_eval_metrics: dict[str, float] = {}
 
         try:
+            self.system_sampler.start_continuous()
             while self.step < cfg.max_steps:
                 if cfg.max_tokens is not None and self.tokens_seen >= cfg.max_tokens:
                     break
@@ -1236,6 +1238,9 @@ class Trainer:
                     self.wandb.log_artifact(artifact, aliases=["latest"])
             raise
         finally:
+            # Stop the independent utilization clock at the end of training;
+            # final Hub-drain latency is durability overhead, not GPU load.
+            self.system_sampler.close()
             if self.hub_upload_queue is not None:
                 self._flush_hub_uploads(close=True)
             if self.tensorboard is not None:

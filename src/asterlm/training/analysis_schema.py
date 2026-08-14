@@ -14,6 +14,7 @@ def build_analysis_manifest(config: TrainConfig) -> dict[str, Any]:
         "cadence": {
             "training_window_steps": config.log_interval,
             "system_min_seconds": config.system_metrics_interval,
+            "gpu_continuous_seconds": 1,
             "deep_diagnostics_steps": config.diagnostic_interval,
             "evaluation_steps": config.eval_interval,
             "checkpoint_steps": config.save_interval,
@@ -63,6 +64,7 @@ def build_analysis_manifest(config: TrainConfig) -> dict[str, Any]:
         },
         "notes": [
             "Energy is observational only and never ranks training decisions.",
+            "GPU utilization distributions use a phase-independent persistent dmon stream; step-boundary sampling is fallback-only.",
             "Wildcard metric names are schema families; concrete keys remain append-only in metrics.jsonl.",
             "Heavy diagnostics are periodic to preserve training throughput.",
         ],

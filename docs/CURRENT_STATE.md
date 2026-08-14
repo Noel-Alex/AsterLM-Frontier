@@ -66,7 +66,7 @@ Math tokens beyond the 84.032B primary pool. NVIDIA code shards are still gated
 and absent. A raw-token count does not satisfy the final contract.
 
 The source/access audit and directly materialized permissive fallback are recorded
-in [`data/CODE_TRANCHE_DECISION_2026-08-13.md`](data/CODE_TRANCHE_DECISION_2026-08-13.md).
+in [`docs/data/CODE_TRANCHE_DECISION_2026-08-13.md`](data/CODE_TRANCHE_DECISION_2026-08-13.md).
 
 The cleaning/promotion path is fail-closed and requires:
 
@@ -127,6 +127,11 @@ parameter health, throughput, utilization, VRAM, clocks, temperature, energy,
 router/expert balance and specialization, data cursors, wall time, tokens,
 estimated FLOPs, evaluation results, checkpoint events, and diagnostics. Energy
 is observational only and never an optimization objective.
+Production training measures GPU load with a persistent one-second `nvidia-smi
+dmon` stream independent of optimizer-step boundaries and records cumulative
+mean/P10/P50/P90 utilization. The older end-of-step samples remain available as
+fallback evidence but are explicitly labeled because phase aliasing can
+understate sustained load.
 
 ## Inference
 
